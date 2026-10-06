@@ -1,32 +1,39 @@
 <div align="center">
 
-# ⚡ CommandCode Proxy
+# 🔀 Multi-Upstream Gateway · 多上游 AI 网关
 
-[![version](https://img.shields.io/github/package-json/v/wjf1/commandcode-proxy?style=flat-square&color=6366f1&label=v4)](https://github.com/wjf1/commandcode-proxy/blob/main/package.json)
-[![CI](https://img.shields.io/github/actions/workflow/status/wjf1/commandcode-proxy/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/wjf1/commandcode-proxy/actions/workflows/ci.yml)
+[![repo](https://img.shields.io/badge/repo-wjf1%2Fmulti--upstream--gateway-6366f1?style=flat-square)](https://github.com/wjf1/multi-upstream-gateway)
+[![version](https://img.shields.io/github/package-json/v/wjf1/multi-upstream-gateway?style=flat-square&color=6366f1&label=v)](https://github.com/wjf1/multi-upstream-gateway/blob/main/package.json)
 [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-94a3b8?style=flat-square)](./LICENSE)
 
-**本地部署的 OpenAI / Anthropic 双协议网关，透明代理 CommandCode AI**
+**本地部署的多上游 AI 网关：一套 OpenAI / Anthropic 双协议入口，统一接入多个 AI 上游**
+
+当前已接线上游：**CommandCode**（可用）。Freebuff 与腾讯 CodeBuddy（WorkBuddy）为路线图目标 ——
+Freebuff 模块已移植入树但**尚未接入运行时**，详见[项目状态](#status)与[多上游路线图](#roadmap)。
 
 任何 OpenAI 风格客户端（Cursor、Continue、Aider、OpenWebUI、Hermes、你自己的代码）直接指向它，
-即可透明使用 CommandCode 后端模型 —— 自带中文仪表盘、用量成本分析与多账号额度轮换。
+即可透明使用上游模型 —— 自带中文仪表盘、用量成本分析、多账号额度轮换与合规风险告知门。
 
-[快速开始](#quickstart) · [用法](#usage) · [错误码](#errors) · [配置](#config) · [架构](#architecture) · [安全](#security)
+[项目状态](#status) · [路线图](#roadmap) · [快速开始](#quickstart) · [用法](#usage) · [配置](#config) · [架构](#architecture) · [安全](#security) · [来源与署名](#credits)
 
 **中文** | [English](#english-anchor)
 
 </div>
 
 > [!WARNING]
-> 非官方社区工具。逆向自官方 CommandCode CLI wire 协议（`/alpha/generate`），与 CommandCode 无任何关联。上游协议变动时可能失效。
+> **非官方社区工具，且仍在开发中**。本仓库自 [`wjf1/commandcode-proxy`](https://github.com/wjf1/commandcode-proxy)（MIT）**v4.22.4 分化而来**，
+> 与 CommandCode 无任何关联；逆向自官方 CommandCode CLI wire 协议（`/alpha/generate`），上游协议变动时可能失效。
+> **多上游能力尚未完成**（当前仅 CommandCode 一个上游可用），请勿把「已入树但未接线」的能力当作可用。
 
 ---
 
 ## 📑 目录
 
+- [项目状态](#status)（P0 移植完成度 / 当前可用能力边界）
+- [多上游路线图](#roadmap)
 - [界面截图](#screenshots)
-- [功能特性](#features)（协议兼容 / 可靠性与安全 / 仪表盘与用量洞察 / 工程与运维）
+- [功能特性](#features)（协议兼容 / 可靠性与安全 / 多上游与合规硬化 / 仪表盘与用量洞察 / 工程与运维）
 - [快速开始](#quickstart)
 - [用法](#usage)
 - [错误码与重试语义](#errors)
@@ -34,7 +41,42 @@
 - [开发](#development)
 - [架构](#architecture)
 - [安全校验](#security)
+- [来源与署名](#credits)
 - [免责声明与许可证](#license)
+
+---
+
+## 🚦 项目状态
+<a id="status"></a>
+
+**版本线：v5.0.0** —— 自该线起另起产品版本序列，勿与上游 `commandcode-proxy` 的 v4.22.x 混用。
+
+**P0 语义移植（Phase A~F）已完成并部署**（2026-10-07）：
+
+| 阶段 | 内容 | 状态 |
+|---|---|:---:|
+| A | 工程基座（依赖精确锁版、`npm run verify`、src+tests 双工程 typecheck） | ✅ |
+| B | 审计批次 B 安全语义（管理面鉴权、审计日志、SSRF 校验等） | ✅ |
+| C | 新增模块（Provider 契约层、统一配置、凭据加密、限流、风险门、Freebuff） | ✅ |
+| D | 接缝接线（安全链 / 风险门 / 审计 / 用量维度接入运行时） | ✅ |
+| E | 面板移植（骨架化 + 脚本外置 + hash 路由 + 主题 + 风险告知弹窗） | ✅ |
+| F | 全量回归与阶段门（658 用例 / 覆盖率 65.87% / `npm audit` 0 漏洞 / 50 并发 P99 126ms） | ✅ |
+
+> [!IMPORTANT]
+> **能力边界（务必先读）**：仓库中**已入树但尚未接线**的模块**不可用** —— 包括 Freebuff 上游（`src/providers/freebuff/`）、
+> 账号池与 WorkBuddy 相关规划。**当前实际可用上游只有 CommandCode 一个**，其行为 = 上游 v4.22.4 基线 + 下述 P0 硬化项。
+
+## 🗺 多上游路线图
+<a id="roadmap"></a>
+
+| 上游 | 说明 | 状态 |
+|---|---|:---:|
+| **CommandCode** | 现有上游；OpenAI / Anthropic 双协议翻译 | ✅ 可用 |
+| **Freebuff** | 多 Token 轮询、401 冷却、预热首请求（`src/providers/freebuff/`，7 文件） | 🚧 已移植，**未接线**（P1 / T202+） |
+| **腾讯 CodeBuddy（WorkBuddy）** | 联邦透传方案，见 `docs/wb-source-diff-report.md` §7 | 📋 规划中（T204'） |
+
+Provider 契约位于 `src/providers/core/`（`interface` / `router` / `registry`），已预留三源命名空间与六步路由。
+P1 计划：T202（Freebuff Anthropic 桥 + tools schema 规范化）→ T203 → T204' → T208~T212（面板五页）→ T213（三源接线）→ T214（P1 阶段门）。
 
 ---
 
@@ -94,6 +136,16 @@
 - **用量明细透传给客户端** — Anthropic 路由在收尾 `message_delta`（非流式为 `message.usage`）报出 `input_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens`，OpenAI 路由报出 `prompt_tokens_details.cached_tokens`。客户端因此能看到**缓存命中量**与**上游真实输入量**，而不是只有本地估算的输入总量。两个出口的 `input_tokens` 口径**不同且各自遵循本家规范**：Anthropic 侧 `input_tokens` **只算未命中缓存的输入**，总输入 = `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`（缓存字段**必须**相加）；OpenAI 侧 `prompt_tokens` 已含缓存读，`cached_tokens` 是其子集（**不要**相加）
 - **每日预算告警 + 更新检查** — `DAILY_BUDGET_USD` 当日花费超阈值弹 toast；启动时查询 GitHub Releases，仪表盘头部显示"新版本"徽章
 - **明细导出** — 用量页一键导出 CSV（含 BOM，Excel 直开）
+
+### 🧩 多上游与合规硬化（v5.0.0 新增）
+
+- **合规风险告知门（T106）** — 默认 `acceptedRiskDisclaimer=false`：**未确认前所有 `/v1/*` 返回 403 `RISK_DISCLAIMER_NOT_ACCEPTED`**（响应带 `x-request-id`）。在面板确认一次即可放行（`POST /api/risk/accept`，管理面鉴权、**热生效**），或设 `ACCEPTED_RISK_DISCLAIMER=1`。面板弹窗**无关闭按钮、Esc 不生效**——这是刻意的。
+- **凭据加密存储** — 账号凭据以 **AES-256-GCM** 落盘 `credentials.enc`（`CREDENTIAL_ENCRYPTION_KEY`）；存在明文凭据且未设该密钥时**拒绝启动**。**该密钥丢失即无法解密凭据，必须单独备份。**
+- **统一配置（unified config）** — `config.json` 迁移为 `providers.*` 形态，Zod 校验 + 热重载；`config.json` 中的明文账号行从 `.env` 自动摘除；迁移失败逐字节回滚；测试环境跳过迁移。
+- **数据面审计日志** — 只记 `ts/route/model/tokens/status/duration` 元数据，**绝不记录消息正文**；面板被拒写操作同样留痕。
+- **管理面鉴权与请求 ID 全链路** — `admin-guard` 覆盖管理面写操作；`x-request-id` 贯通路由与上游调用；pino redact 与危险 `NODE_DEBUG` 项剥离。
+- **Provider 契约层与用量维度** — `src/providers/core/`（契约 / 六步路由 / 模型命名空间注册表）；用量记录新增 `provider` / `native` 字段与 `summarizeByProvider`，为多上游分别计量做准备。
+- **面板外置化** — `public/index.html` 骨架化（约 560 行）+ `public/js/*.js`，新增 `/js/*` 静态路由（no-cache）；hash 路由、明暗主题、首启引导卡。**仍为零外链依赖（离线可用）。**
 
 ---
 
@@ -278,21 +330,38 @@ agent 驱动的自测方案见 [HERMES_TEST_PROMPT.md](./HERMES_TEST_PROMPT.md)�
 
 ```
 src/
-├── index.ts                      # 启动引导、额度轮换调度、可选鉴权钩子
+├── index.ts                      # 启动引导：安全链/风险门/凭据钩子注册、额度轮换调度、崩溃保护
 ├── types/index.ts                # OpenAI / Anthropic / CC-wire 契约
+├── providers/                    # ★ 多上游层（v5.0.0）
+│   ├── core/interface.ts         #   Provider 契约（ProviderName / IProvider / 用量模型）
+│   ├── core/router.ts            #   六步路由：模型 → 上游归属
+│   ├── core/registry.ts          #   模型命名空间注册表（commandcode → freebuff → workbuddy）
+│   └── freebuff/                 #   Freebuff 上游（7 文件；已入树，尚未接线）
 ├── adapters/commandcode/
 │   ├── adapter.ts                # 翻译引擎（两种协议 ↔ CC wire，含中文注释）
+│   ├── anthropic-response.ts     # Anthropic 响应组装
+│   ├── reasoning.ts              # 推理档位对齐
+│   ├── pipeline/                 # 上游流水线（流内错误预判 / 探针）
 │   └── upstream.ts               # HTTP 客户端：重试、空闲看门狗、中止
 ├── routes/
 │   ├── chat.ts                   # POST /v1/chat/completions
 │   ├── messages.ts               # POST /v1/messages
 │   ├── models.ts                 # GET /v1/models、refresh
-│   ├── dashboard.ts              # 管理 API 与静态资源路由
-│   └── sse-common.ts             # 双出口共享：SSE 头/事件解析/持久化
+│   ├── dashboard.ts              # 管理 API、/api/risk/accept、静态资源与 /js/* 路由
+│   └── sse-common.ts             # 双出口共享：SSE 头/事件解析/持久化 + 请求 ID
 └── utils/
-    ├── config.ts                 # 账号、OAuth 流程、额度轮换
+    ├── unified-config.ts         # ★ 统一配置（Zod 校验 + 热重载）
+    ├── credential-store.ts       # ★ 凭据加密存储（AES-256-GCM）
+    ├── risk-gate.ts              # ★ 合规风险告知门（默认拦截 /v1/*）
+    ├── admin-guard.ts            # ★ 管理面鉴权
+    ├── audit-log.ts              # ★ 数据面审计（仅元数据，绝不记正文）
+    ├── security-guard.ts         # ★ 上游 URL 安全校验（SSRF fail-closed）
+    ├── safe-fetch.ts             # ★ 二跳安全取回
+    ├── sanitize.ts               # ★ 输入净化
+    ├── rate-limiter.ts           # ★ 每分钟请求/token 限流
+    ├── config.ts                 # 账号、OAuth 流程、额度轮换、配置迁移
     ├── models.ts                 # 目录同步 + 官方定价富化 + 模糊解析
-    ├── usage-store.ts            # 会话明细持久化 + 聚合统计
+    ├── usage-store.ts            # 会话明细持久化 + 聚合统计（含 provider 维度）
     ├── plans.ts                  # 套餐档位表 + 模型可用性
     ├── quota-tracker.ts          # 额度采样与燃烧速率预测
     ├── request-context.ts        # 会话/项目归因提取
@@ -300,9 +369,12 @@ src/
     ├── paths.ts                  # 路径解析（logger/config/models 共用）
     └── logger.ts                 # 净化环形缓冲日志 + 文件落盘
 public/
-├── index.html                    # 仪表盘 SPA（中文界面）
+├── index.html                    # 仪表盘骨架（约 560 行，中文界面）
+├── js/{core,overview,accounts,usage,models,logs}.js   # ★ 面板脚本（外置）
 └── vendor/                       # 本地化的 tailwind / font-awesome / chart.js
 ```
+
+> ★ 标记为 v5.0.0 移植新增。
 
 ## 🔒 安全校验 · Upstream URL safety
 <a id="security"></a>
@@ -319,6 +391,18 @@ public/
 - **重定向阻断（v4.20.0）**：所有上游请求一律 `redirect: 'manual'`。默认 `conservative`：上游返回 3xx 即按错误终止，永不跟随；`UPSTREAM_REDIRECT=follow` 显式放行后逐跳复检目标——私网/回环/保留地址（含 169.254.169.254 等云元数据）**永不跟随且不受 allowlist 影响**，同 host 跳转保留 POST 与请求体，跨 host 跳转剥离 `Authorization` 凭据头，链条最多 5 跳。
 - **DNS rebinding 防护（v4.20.0）**：`DNS_REBINDING_GUARD=on`（默认）在每个上游请求出口做"请求前解析 + 校验"，域名解析结果含私网/保留地址即拒绝（fail-closed）；`off` 显式回退。IP 字面量、localhost、allowlist 命中主机跳过解析校验。已知残余：lookup 与建连之间存在 TOCTOU 窗口，彻底封闭需固定解析结果建连。
 - **日志密钥脱敏（v4.20.0）**：`LOG_REDACTION=on`（默认）对落盘/环形缓冲/仪表盘的日志行按密钥形态打码（`Bearer`、`api-key`、`sk-` 令牌、query token），防止密钥经 proxy.log 与日志页外泄；`off` 显式回退。
+- **合规风险告知门（v5.0.0）**：默认 `acceptedRiskDisclaimer=false`，未确认前 `/v1/*` 一律 403（`RISK_DISCLAIMER_NOT_ACCEPTED`）；确认动作走管理面鉴权的 `POST /api/risk/accept`（热生效）或 `ACCEPTED_RISK_DISCLAIMER=1`。被拒绝的写操作会进审计日志。
+- **凭据静态加密（v5.0.0）**：账号凭据以 **AES-256-GCM** 存储于 `credentials.enc`，密钥取自 `CREDENTIAL_ENCRYPTION_KEY`（**环境变量，不入版本库、不入 config.json**）；启动时若存在明文凭据而未设密钥则**拒绝启动**（fail-closed，避免静默降级为明文）。
+
+## 🔗 来源与署名
+<a id="credits"></a>
+
+本仓库是 [`wjf1/commandcode-proxy`](https://github.com/wjf1/commandcode-proxy)（MIT，作者 wjf1）在 **v4.22.4** 基线上的**语义化分化**。
+过程中**完整保留了上游 git 历史**（`main` = 上游 v4.22.4 `87b1a05`），因此仍可合并上游改动，上游的贡献与历史均可追溯。
+
+- **上游来源**：commandcode-proxy —— 本项目的 CommandCode 上游适配层、OpenAI/Anthropic 双协议翻译与仪表盘基础来自该项目。
+- **分化原因**：目标从「单上游透明代理」演进为「多上游 AI 网关」（CommandCode / Freebuff / 腾讯 CodeBuddy），并引入一套破坏性硬化（合规风险门、凭据加密、统一配置、面板重写）。这些改动与上游的演进方向不再重合，作为补丁系列维护会造成持续的满冲突，故独立成库。
+- **许可证**：沿用上游 **MIT** 许可证，详见 [LICENSE](./LICENSE)；原始版权与许可声明予以保留。
 
 ## 📄 免责声明与许可证
 <a id="license"></a>
@@ -333,14 +417,38 @@ public/
 
 <div align="center">
 
-**A local, fully-compatible OpenAI / Anthropic API gateway for CommandCode AI**
+**A local multi-upstream AI gateway: one OpenAI / Anthropic-compatible endpoint fronting multiple AI upstreams**
 
-Point any OpenAI-style client (Cursor, Continue, Aider, OpenWebUI, Hermes, your own code) at it and use CommandCode backend models transparently — with a built-in dashboard, usage & cost analytics and multi-account quota rotation.
+Currently wired upstream: **CommandCode** (usable). Freebuff and Tencent CodeBuddy (WorkBuddy) are roadmap targets —
+the Freebuff module is ported into the tree but **not yet wired into the runtime**.
+
+Point any OpenAI-style client (Cursor, Continue, Aider, OpenWebUI, Hermes, your own code) at it and use the upstream's models transparently —
+with a built-in Chinese dashboard, usage & cost analytics, multi-account quota rotation and a compliance risk-disclaimer gate.
 
 </div>
 
 > [!WARNING]
-> Unofficial, community tool. Reverse-engineered from the official CommandCode CLI wire protocol (`/alpha/generate`). Not affiliated with CommandCode; may break when the upstream changes. Use with your own account and credentials. The bilingual sections above (screenshots, security) apply here too.
+> **Unofficial community tool, still under development.** This repo is a semantic fork of [`wjf1/commandcode-proxy`](https://github.com/wjf1/commandcode-proxy) (MIT) at **v4.22.4**, reverse-engineered from the official CommandCode CLI wire protocol (`/alpha/generate`). Not affiliated with CommandCode; may break when the upstream changes. **Multi-upstream support is not finished** — only CommandCode is usable today, so do not treat "in-tree but unwired" modules as available. Use with your own account and credentials. The bilingual sections above (screenshots, security) apply here too.
+
+### <a id="status-en"></a>Project status
+
+**Version line: v5.0.0** — a separate product version series; do not mix it with the upstream `commandcode-proxy` v4.22.x.
+
+**The P0 semantic port (Phases A–F) is complete and deployed** (2026-10-07): engineering base, audit-batch-B security semantics,
+new modules (provider contract layer, unified config, credential encryption, rate limiting, risk gate, Freebuff), seam wiring,
+dashboard port and a full regression/phase gate (**658 tests green, 65.87% coverage, `npm audit` 0 vulnerabilities, 50-concurrency P99 126 ms**).
+
+> [!IMPORTANT]
+> **Capability boundary (read first)**: modules that are **in-tree but not wired are NOT usable** — Freebuff (`src/providers/freebuff/`),
+> the account pool and the WorkBuddy plans. **Only CommandCode is a working upstream today**, and its behavior is the upstream v4.22.4 baseline plus the P0 hardening items below.
+
+### <a id="roadmap-en"></a>Roadmap
+
+| Upstream | Notes | Status |
+|---|---|:---:|
+| **CommandCode** | Existing upstream; OpenAI / Anthropic translation | ✅ usable |
+| **Freebuff** | Multi-token rotation, 401 cooldown, prewarm (7 files) | 🚧 ported, **not wired** (P1 / T202+) |
+| **Tencent CodeBuddy (WorkBuddy)** | Federated passthrough, see `docs/wb-source-diff-report.md` §7 | 📋 planned (T204') |
 
 ### Features
 
@@ -421,6 +529,12 @@ Two environment variables govern the performance panel. `PERF_MIN_OUTPUT_TOKENS`
 To seed the performance panel with comparable data instead of leaving it sparse, run `node bench-models.mjs --run --rounds N`: it issues **real** requests per available model (real upstream, real spend, recorded by the proxy), sequentially with a fixed prompt so output lengths are comparable. Requests carry `x-session-id: bench-<timestamp>` and `x-zcode-session-type: benchmark` so they are identifiable as benchmark traffic rather than agent workload. A safety valve sums the actual local cost and aborts past `BENCH_MAX_USD` (default 4).
 
 A **single round is only one probe** — the P50 shown for that model is that one measurement, which the sample column discloses. `--rounds N` runs each model N times consecutively for a stable median; it matters because the upstream fails and fluctuates transiently (the same model can answer in 2.5s or 6.1s, and random `overloaded` errors occur). `--replace` clears all previous benchmark records first (identified by `sessionId: bench-*`) — without it you get "mixed in" data rather than "replaced" data, and the median is dragged by the old single probes. Both tools share the concurrency-safe storage layer in `usage-history-io.mjs`, which backs up before rewriting and archives the removed rows. Rough scale: 62 models × 5 rounds (310 requests) ≈ $1.4 and ~40 minutes.
+
+### Credits
+
+This repository is a **semantic fork** of [`wjf1/commandcode-proxy`](https://github.com/wjf1/commandcode-proxy) (MIT, by wjf1) at **v4.22.4**.
+The upstream git history is **fully preserved** (`main` = upstream v4.22.4 `87b1a05`), so upstream changes can still be merged and upstream contributions remain traceable.
+It was forked because the goal shifted from a *single-upstream transparent proxy* to a *multi-upstream gateway* (CommandCode / Freebuff / Tencent CodeBuddy) with a set of breaking hardening changes (compliance risk gate, credential encryption, unified config, dashboard rewrite) — a divergence that no longer fits an upstream patch series. Licensed under the upstream **MIT** license; original copyright and license notices are retained.
 
 ### Disclaimer & License
 

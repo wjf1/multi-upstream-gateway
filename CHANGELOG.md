@@ -2,6 +2,43 @@
 
 所有主要版本更新都记录在此文件。
 
+## [5.0.0] - 2026-10-07
+
+> **产品线分化首发**。自本版本起，本仓库从上游 [`wjf1/commandcode-proxy`](https://github.com/wjf1/commandcode-proxy) 分化为独立产品
+> **多上游 AI 网关**（`wjf1/multi-upstream-gateway`），并完成 P0 能力向 v4.22.4 基线的语义移植（Phase A~F）。
+
+### ⚠️ 破坏性变更
+
+- **合规风险确认门（T106）**：新增 `acceptedRiskDisclaimer`，默认 `false` —— 未确认前**所有 `/v1/*` 请求返回 403 `RISK_DISCLAIMER_NOT_ACCEPTED`**（响应带 `x-request-id`）。
+  放行方式：在面板点击一次风险告知确认（`POST /api/risk/accept`，管理面鉴权、**热生效**），或设置 `ACCEPTED_RISK_DISCLAIMER=1`。
+- **凭据加密启动前置**：存在明文凭据且未设置 `CREDENTIAL_ENCRYPTION_KEY` 时**拒绝启动**（可用 `npm run setup` 生成；**该密钥丢失即无法解密凭据，必须单独备份**）。
+- **配置形态迁移**：`config.json` 由 flat 形态迁移为 unified 形态（`providers.commandcode`）；账号凭据移出 `config.json`，加密落盘 `credentials.enc`，`.env` 中的 `COMMANDCODE_ACCOUNTS_V1` 明文行被自动摘除。测试环境（`NODE_ENV=test`/`VITEST`）跳过迁移。
+- **面板重写**：`public/index.html` 由 1816 行骨架化为约 560 行，脚本外置为 `public/js/*.js`（新增 `/js/*` 静态路由，no-cache）；新增 hash 路由、明暗主题、首启引导卡与风险告知弹窗（无关闭按钮、Esc 不生效）。
+
+### ✨ 新增
+
+- **Provider 契约层**：`src/providers/core/`（`interface` / `router` / `registry`）—— Provider 契约、六步路由与模型命名空间注册表；Provider 顺序 `commandcode → freebuff → workbuddy`。
+- **Freebuff 上游模块（已移植，尚未接线）**：`src/providers/freebuff/`（7 文件）—— 多 Token 轮询、401 冷却、预热首请求。**当前未接入运行时**，接线属 P1（T202+）。
+- **审计批次 B 安全语义**：`admin-guard.ts`（管理面鉴权）、`audit-log.ts`（数据面审计，仅元数据、**绝不记录消息正文**）、`security-guard.ts`（SSRF 校验）、`safe-fetch.ts`、`sanitize.ts`、`rate-limiter.ts`。
+- **统一配置与凭据存储**：`unified-config.ts`（Zod 校验 + 热重载）、`credential-store.ts`（AES-256-GCM 凭据加密）。
+- **用量维度扩展**：`usage-store` 新增 `provider` / `native` 字段、三态归一与 `summarizeByProvider`，为多上游计量做准备。
+- **请求 ID 全链路与日志脱敏**：`x-request-id` 贯通路由与上游调用；pino redact 与危险 `NODE_DEBUG` 项剥离。
+- **工程基座**：依赖精确锁版（去 `^`/`~`）；`npm run verify` 一键门禁；src/tests 双工程 typecheck；执行依据方案与审计材料纳入 `docs/`，仓库自包含。
+
+### 🔒 安全加固
+
+- `credentials.enc`、`auths/`、`coverage/` 移出版本库并加入 `.gitignore`。
+
+### ✅ 验证
+
+- 阶段门复验：`npm run verify` — **50 文件 / 658 用例全绿**；覆盖率 **65.87%**；`npm audit --omit=dev` — **0 漏洞**；50 并发 **P99 126ms / 468rps / 0 错误**。
+
+### 📌 已知限制
+
+- **多上游尚未完成**：当前实际可用的上游**仅 CommandCode 一个**；Freebuff 模块已入树但未接线，WorkBuddy 仍在规划（T204'）。
+- 构建产物名仍为 `commandcode-proxy-v4.exe`（重命名待办）。
+- 端点内的 `upstream.ts` 否决表（`DETERMINISTIC_REQUEST_SHAPE`）等 CommandCode 专有语义仍位于 `src/adapters/commandcode/`，尚未迁入 `providers/`。
+
 ## [4.22.4] - 2026-10-01
 
 ### 新增与修复
@@ -143,7 +180,7 @@
 - **日志密钥脱敏（Wave 2）**：`LOG_REDACTION=on`（默认）对进入环形缓冲 / proxy.log / 仪表盘
   日志页的每条日志按密钥形态打码——`Authorization: Bearer/Basic`、`api-key` / `x-api-key`
   键值（含 JSON 引号形态）、裸 `sk-` 令牌、query 中的 `token`/`key` 参数统一替换为
-  `[REDACTED]`；`off` 显式回退。脱敏在控制字符清洗**之后**执行，用 ` ` 拆分关键字的
+  `[REDACTED]`；`off` 显式回退。脱敏在控制字符清洗**之后**执行，用 `\x00` 拆分关键字的
   日志注入无法绕过。新增 `tests/log-redaction.test.ts`（10 项）。
 - **SSRF 重定向阻断（Wave 3）**：修复真实绕过点——此前唯一的数据面 fetch 未设
   `redirect`，Node 默认 follow，被攻击者控制的上游可用 302 把带凭据的请求引向

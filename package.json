@@ -1,7 +1,7 @@
 {
-  "name": "commandcode-proxy-v4",
-  "version": "4.22.4",
-  "description": "Local OpenAI Chat Completions & Anthropic Messages compatible proxy for Command Code AI. Chinese dashboard, hardened translation, retries, idle timeouts.",
+  "name": "multi-upstream-gateway",
+  "version": "5.0.0",
+  "description": "本地多上游 AI 网关：单一 OpenAI / Anthropic 兼容入口，统一接入多个 AI 上游。源自 commandcode-proxy (MIT) v4.22.4 的语义化分化。",
   "main": "dist/index.js",
   "type": "module",
   "engines": {
@@ -9,11 +9,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/wjf1/commandcode-proxy.git"
+    "url": "git+https://github.com/wjf1/multi-upstream-gateway.git"
   },
-  "homepage": "https://github.com/wjf1/commandcode-proxy",
+  "homepage": "https://github.com/wjf1/multi-upstream-gateway",
   "bugs": {
-    "url": "https://github.com/wjf1/commandcode-proxy/issues"
+    "url": "https://github.com/wjf1/multi-upstream-gateway/issues"
   },
   "author": {
     "name": "wjf1",
@@ -46,7 +46,10 @@
     "proxy",
     "openai",
     "anthropic",
-    "api-gateway"
+    "api-gateway",
+    "multi-upstream",
+    "ai-gateway",
+    "freebuff"
   ],
   "license": "MIT",
   "devDependencies": {

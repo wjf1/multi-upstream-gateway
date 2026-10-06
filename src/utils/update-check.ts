@@ -8,8 +8,10 @@
 import { logger } from './logger.js';
 import { PROXY_VERSION } from './version.js';
 
-const TAGS_API = 'https://api.github.com/repos/wjf1/commandcode-proxy/tags?per_page=100';
-const RELEASES_PAGE = 'https://github.com/wjf1/commandcode-proxy/releases';
+// 分化说明：本产品自 commandcode-proxy 分化后拥有独立版本线（v5.x），更新检查必须指向本仓库，
+// 否则会拿上游 v4.22.x 的 tag 与本地 5.x 比较，令「发现新版本」静默失效。
+const TAGS_API = 'https://api.github.com/repos/wjf1/multi-upstream-gateway/tags?per_page=100';
+const RELEASES_PAGE = 'https://github.com/wjf1/multi-upstream-gateway/releases';
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 const state: { latest: string | null; checkedAt: number } = { latest: null, checkedAt: 0 };

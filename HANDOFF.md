@@ -6,21 +6,24 @@
 ## 1. 项目概况与当前状态
 
 - **定位**：以 commandcode-proxy 为底座，把 Freebuff2API 与 workbuddy2api-panel 两个 Go 项目重写为 TS Provider 适配器，形成单面板三源（CommandCode / Freebuff / 腾讯 CodeBuddy）统一 AI 网关。
-- **产品仓库（新建，2026-10-07）**：`https://github.com/wjf1/multi-upstream-gateway`（**PRIVATE**，默认分支 `main`）。
+- **产品仓库（2026-10-07 建立）**：`https://github.com/wjf1/multi-upstream-gateway`（**PUBLIC**，默认分支 `main`）。
   产品线已与上游分化为独立仓库，但**完整保留上游历史**（`main` = 上游 v4.22.4 `87b1a05`），故仍可 `git merge upstream/main` 吸收上游改动。
+  **版本线自 v5.0.0 起**（勿与上游 v4.22.x 撞号）。
 - **工程仓库（唯一工作副本）**：`C:\Users\admin\Doubao\chats\2026-09-03\new-chat-5\commandcode-proxy`
-  —— 上游 **v4.22.4** 基线 + Phase A~C 移植，当前分支 **`feat/p0-port`**（HEAD `c352726`）。
+  —— 上游 **v4.22.4** 基线 + Phase A~F 移植（**已部署**），当前分支 **`feat/p0-port`**。
   remote 布局：`origin` = 产品仓库（推送目标）、`upstream` = `wjf1/commandcode-proxy`（**仅 fetch，禁止 push**）、`ghproxy` = 上游镜像。
 - **执行依据（SSOT）**：`docs/master-plan-v1.2.md`（已纳入仓库）（v1.2.3 起含基准勘误）。
   审计与评审材料（已随仓库分发）：`docs/review/`（`batch-b.patch`、`architecture-review.md`、`remediation-plan.md`）。
-- **当前状态（2026-10-06）**：**基准重定进行中**。
-  - **重要**：方案的基线事实基于过期检出（`F:/AI/Qdor/repos/commandcode-proxy` = v4.17.0）。真实基准是 v4.22.4。
-    G0+P0+T201 的全部成果都做在 4.17.0 上，现正**按 Phase A~F 移植到 4.22.4**（详见 `PLAN-STATE.md`）。
-  - 已完成：**Phase A**（工程基座，commit `cab6282` + `4b2a134`）；**Phase B+C** 进行中（批次 B 安全语义 + 新增模块文件）。
-  - 待做：Phase D（接缝接线）→ Phase E（面板移植）→ Phase F（回归+阶段门+**经用户确认后**重启 9090）。
-  - **9090 部署未动**：仍在跑 v4.22.4 原进程；移植期间不重启、不部署（用户已明确）。
-- **目标分支模型**：`main`（= 上游 v4.22.4 干净基线） + `feat/p0-port`（本次移植集成分支）。移植完成后合回 `main` 再考虑部署。
-  **版本线待定**：产品首次正式发布建议另起版本序列（勿与上游 v4.22.x 撞号）；届时须同步 `package.json` / `CHANGELOG.md` / 中英双语 `README.md` / 本文件四文档齐全后再打 annotated tag 与建 Release。
+- **当前状态（2026-10-07）**：**P0 移植已完成并部署，产品首发 v5.0.0**。
+  - **Phase A~F 全部完成**：A 工程基座 / B 审计批次 B 安全语义 / C 新增模块 / D1 接缝接线 / E 面板移植 / F 阶段门复验。
+  - **门禁数据（F）**：`npm run verify` **50 文件 / 658 用例全绿**；覆盖率 65.87%；`npm audit --omit=dev` **0 漏洞**；50 并发 P99 126ms / 468rps / 0 错误。
+  - **已部署（2026-10-07）**：看门狗第 5 秒拉起新代码；`config.json` flat→unified 迁移完成、凭据落 `credentials.enc`（`.env` 明文行已摘除）；
+    **风险门经用户在面板确认后放行**；代理端口改 7900（`.env` 已改，`config.json` 侧下次重启生效）。详见 §7 部署检查清单。
+  - **基准勘误（保留为教训）**：方案基线事实曾基于过期检出 v4.17.0，真实基准是 v4.22.4；基线事实必须「版本号 + 验证命令」同引。
+  - **多上游尚未完成**：实际可用上游**仅 CommandCode 一个**；Freebuff 模块已入树但**未接入运行时**（接线属 P1/T202+），WorkBuddy 仍在规划。
+- **分支模型**：`main`（= 上游 v4.22.4 干净基线，仅用于吸收上游） + `feat/p0-port`（本次移植集成分支，已完成并部署）。
+  **版本线已定**：自 **v5.0.0** 起另起序列（破坏性变更：风险门默认 403 / 凭据加密启动前置 / 配置形态迁移）；
+  四文档（`package.json` / `CHANGELOG.md` / 中英双语 `README.md` / 本文件）已同步，Release 按 `v<版本>: <中文摘要>` 规范。
 
 ## 2. 技术栈与运行基线
 
@@ -31,7 +34,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**48 文件 / 626 用例全绿**（v4.22.4 原始基线；移植新增为净增，红线只升不降）。
+- 测试基线：**50 文件 / 658 用例全绿**（v4.22.4 原始基线 48/626；移植后红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -70,11 +73,10 @@
 **接手第一步**：读本文 → `PLAN-STATE.md`（含 §0 基准勘误 + §1 移植任务队列）→ 执行依据方案第 0 章（agent 执行协议）。
 
 - **当前队列**（严格按 `PLAN-STATE.md` §1 的顺序与 deps）：
-  - ✅ `P0-PORT-A` 工程基座
-  - 🔄 `P0-PORT-B` 审计批次 B 语义移植 + `P0-PORT-C` 新增模块文件移植（进行中）
-  - ⬜ `P0-PORT-D` 接缝接线：`index.ts`（安全链/风险门/凭据钩子/NODE_DEBUG/pino redact）、`routes/{chat,messages,sse-common}.ts`、`routes/dashboard.ts`（`/js/*`、status 字段、`/api/risk/accept`、审计钩子）、`utils/config.ts`（迁移钩子/加密优先/保存分支）、`usage-store.ts`（provider 维度）、`providers/commandcode` 去留决策
-  - ⬜ `P0-PORT-E` 面板移植（1816 行面板上重做 JS 外置/hash 路由/主题/引导卡/风险弹窗，**保留 4.22.4 既有面板功能**）
-  - ⬜ `P0-PORT-F` 全量回归 + 阶段门复验（verify/typecheck/lint/audit/bench）+ 部署
+  - ✅ `P0-PORT-A~F` **全部完成**（A 基座 / B 批次 B 语义 / C 新增模块 / D1 接线 / E 面板移植 / F 阶段门），**已部署**。
+  - ⬜ **下一批（P1）**：`T202`（Freebuff Anthropic 桥 + tools schema 规范化）→ `T203` → `T204'`（WorkBuddy 联邦透传，见 `docs/wb-source-diff-report.md` §7）→ `T208~T212`（面板五页）→ `T213`（三源接线）→ `T214`（P1 阶段门）。
+    **注意**：Freebuff 模块（`src/providers/freebuff/`）已入树，但 `providers/core` 当前只被其自身引用、**未接入 `src/index.ts` / `src/routes/`**——T202 首先要做的是接线，而非新写。
+  - ⬜ 遗留小项：构建产物名仍为 `commandcode-proxy-v4.exe`，产品改名后待重命名（含 `build:win` 脚本与相关测试）。
 - **重启 9090 必须再次征得用户确认**（AGENTS.md 服务启停硬约束）。上线后用户会在面板点确认风险告知——在此之前 `/v1/*` 会 403。
 - **P1 后续**（移植完成后）：T202（Anthropic 桥——注意新树已有 `anthropic-response.ts`/`pipeline/`，须先评估复用而非另写）→ T203 → T204'（WorkBuddy 联邦透传，见 `docs/wb-source-diff-report.md` §7）→ T208~T212 面板五页 → T213 接线 → T214 阶段门。
 
@@ -93,8 +95,8 @@
    不要把 `/c/...` POSIX 路径交给 node（用 `C:/...`）。
 7. **git 代理 / remote 布局**：全局 `http.proxy=http://127.0.0.1:7900`。
    `origin` = 产品仓库 `wjf1/multi-upstream-gateway`（唯一推送目标）；`upstream` = `wjf1/commandcode-proxy`（**只 fetch，禁止 push**，否则污染上游）；
-   `ghproxy` = 上游 `gh-proxy.com` 镜像，仅作 fetch 备用。产品 tag 暂继承上游全部历史 tag；首次正式发布前决定是否另起版本线。
-8. **面板 / CDN**：4.22.4 面板 1816 行、资源已本地化；Phase E 移植外置时勿引入外链（有测试守卫）。
+   `ghproxy` = 上游 `gh-proxy.com` 镜像，仅作 fetch 备用。产品 tag 继承上游全部历史 tag，自 **v5.0.0** 起另起产品版本线。
+8. **面板 / CDN**：Phase E 后面板为 `public/index.html`（骨架约 560 行）+ `public/js/*.js`（外置，`/js/*` no-cache 路由），资源已本地化；**勿引入外链**（有测试守卫）。
 
 
 ---
