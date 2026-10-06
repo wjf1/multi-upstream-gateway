@@ -222,7 +222,15 @@ describe('B3 非回环绑定且无密钥时拒绝启动（真实 spawn 编译产
     rmSync(dir, { recursive: true, force: true });
   }
 
-  async function boot(env: Record<string, string>) {
+  /**
+   * 启动一个真实编译产物并收集控制台输出。
+   *
+   * `ready` 谓词决定"何时认为启动完成、可以 SIGKILL"。默认是横幅首行 `is ACTIVE`，
+   * 但**要断言更靠后的输出时不能用它**：横幅是逐行写的，看到首行就杀进程会和
+   * 剩余行的管道投递赛跑（覆盖率插桩下尤其明显——本项目实测过一次偶发失败）。
+   * 需要断言 token 行之类的用例请传入更靠后的谓词。
+   */
+  async function boot(env: Record<string, string>, ready: (out: string) => boolean = o => o.includes('is ACTIVE')) {
     const dir = mkdtempSync(path.join(tmpdir(), 'ccproxy-bind-'));
     const proc = spawn(process.execPath, [distEntry], {
       cwd: dir,
@@ -266,7 +274,7 @@ describe('B3 非回环绑定且无密钥时拒绝启动（真实 spawn 编译产
         resolve({ code, out });
       };
       const poll = setInterval(() => {
-        if (out.includes('is ACTIVE')) {
+        if (ready(out)) {
           killed = true;
           proc.kill('SIGKILL');
           finish(-1);
@@ -276,7 +284,7 @@ describe('B3 非回环绑定且无密钥时拒绝启动（真实 spawn 编译产
         killed = true;
         proc.kill('SIGKILL');
         finish(-1);
-      }, 20000);
+      }, 60000);
       proc.on('exit', code => finish(killed ? -1 : code));
     });
     await exited;
@@ -289,18 +297,25 @@ describe('B3 非回环绑定且无密钥时拒绝启动（真实 spawn 编译产
   });
 
   it('HOST=0.0.0.0 且无密钥 → 退出码非 0 并打印原因', async () => {
+    // 这条走的是"进程自己退出"路径（不是被 SIGKILL），所以 code 必须是真实退出码。
+    // 上限放宽到 90s：覆盖率插桩 + 4.22.4 的代理探针初始化会显著拖慢启动。
     const r = await boot({});
     expect(r.code).not.toBe(0);
     expect(r.code).not.toBe(-1);
     expect(r.out).toMatch(/拒绝启动/);
     expect(r.out).toMatch(/ALLOW_INSECURE_BIND/);
-  }, 30000);
+  }, 90000);
 
   it('显式 ALLOW_INSECURE_BIND=1 时照常启动，并把管理 token 打到控制台', async () => {
     const pinned = `pinned-${randomUUID()}`;
-    const r = await boot({ ALLOW_INSECURE_BIND: '1', ADMIN_API_TOKEN: pinned });
+    // 断言的是 token 行，而它排在横幅首行 `is ACTIVE` **之后**——必须等到该行真正
+    // 到达管道再收工，否则 SIGKILL 会与剩余行的投递赛跑（偶发失败）。
+    const r = await boot(
+      { ALLOW_INSECURE_BIND: '1', ADMIN_API_TOKEN: pinned },
+      out => out.includes('is ACTIVE') && out.includes('Admin token'),
+    );
     expect(r.code).toBe(-1); // 没退出 = 一直在听，被我们 SIGKILL
     expect(r.out).toMatch(/is ACTIVE/);
     expect(r.out).toContain(pinned);
-  }, 30000);
+  }, 90000);
 });

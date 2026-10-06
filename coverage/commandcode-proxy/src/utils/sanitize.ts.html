@@ -1,0 +1,331 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for commandcode-proxy/src/utils/sanitize.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">commandcode-proxy/src/utils</a> sanitize.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">50% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>20/40</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">11.76% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>2/17</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">16.66% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>1/6</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">60.6% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>20/33</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line medium'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">64x</span>
+<span class="cline-any cline-yes">64x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">64x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">64x</span>
+<span class="cline-any cline-yes">64x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">64x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">64x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">64x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">42x</span>
+<span class="cline-any cline-yes">42x</span>
+<span class="cline-any cline-yes">42x</span>
+<span class="cline-any cline-yes">42x</span>
+<span class="cline-any cline-yes">42x</span>
+<span class="cline-any cline-yes">42x</span>
+<span class="cline-any cline-yes">42x</span>
+<span class="cline-any cline-yes">42x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">42x</span>
+<span class="cline-any cline-yes">42x</span>
+<span class="cline-any cline-yes">42x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">64x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// =============================================================================
+// 统一日志脱敏（T105）
+// -----------------------------------------------------------------------------
+// 全路径日志的唯一脱敏通道：logger.ts 的 push、安全中间件链的请求完成日志、
+// 审计的 target/ip、错误消息与堆栈都经由 sanitizeLog 输出。规则（按序应用）：
+//   1. `Bearer &lt;token&gt;` → `Bearer ***REDACTED***`（大小写不敏感）；
+//   2. Cookie / Set-Cookie 的整段值 → `***REDACTED***`（cookie 值内含分号，
+//      不能按键值对截断，整值抹除）；
+//   3. 敏感头键值对（authorization / proxy-authorization / x-api-key /
+//      x-admin-token）→ 值抹除；
+//   4. api_key= / token= / secret= / password= 形态的查询串与文本 → 值抹除；
+//   5. `sk-` 前缀 key（10 位以上）→ `sk-***REDACTED***`；
+//   6. 24 位以上连续 [A-Za-z0-9_-] 兜底（无前缀 hex/base64 凭据）→ 抹除；
+//   7. 控制字符与 ANSI 转义清除（沿用 logger 旧规则，防日志注入）。
+//
+// 误伤权衡：24+ 连续段在正常业务日志里几乎只有密钥/哈希/长 base64。UUID 的最长
+// 连续段为 12（hex 段带连字符）、路径/模型名段更短，均不受影响；40 位 commit
+// hash 会被抹除——日志没有依赖完整 hash 的场景，可接受。
+// 本文件不 import logger（logger 反向 import 本文件），保持零循环依赖。
+// =============================================================================
+&nbsp;
+const BEARER_RE = /Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi;
+const COOKIE_RE = /(["']?(?:set-cookie|cookie)["']?\s*[:=]\s*)([^\r\n]+)/gi;
+const HEADER_SECRET_RE =
+  /(["']?(?:authorization|proxy-authorization|x-api-key|x-admin-token)["']?\s*[:=]\s*)(["']?)[^\s"',;]+\2/gi;
+const KEYVAL_SECRET_RE =
+  /(["']?(?:api[_-]?key|access[_-]?token|token|secret|password)["']?\s*[:=]\s*)(["']?)[A-Za-z0-9._~+/=-]{8,}\2/gi;
+const SK_KEY_RE = /sk-[A-Za-z0-9_-]{10,}/gi;
+// 连续段不含 '-','_'：UUID（连字符分段的 hex）与带连字符的标识符不再误伤；
+// 无前缀 hex/base64 凭据（连续 24+ 位字母数字）仍被兜底抹除。
+const LONG_SECRET_RE = /[A-Za-z0-9]{24,}/g;
+// eslint-disable-next-line no-control-regex -- 控制字符即清洗目标
+const CONTROL_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+// eslint-disable-next-line no-control-regex -- \u001B(ESC) 即目标清洗字符
+const ANSI_RE = /\u001B\[[0-9;]*[A-Za-z]/g;
+&nbsp;
+/** 把任意值渲染为安全日志字符串：凭据抹除 + ANSI/控制字符清理。 */
+export function sanitizeLog(input: unknown): string {
+  let s = String(input ?? <span class="branch-1 cbranch-no" title="branch not covered" >'')</span>;
+  <span class="missing-if-branch" title="if path not taken" >I</span>if (!s) <span class="cstat-no" title="statement not covered" >return '';</span>
+  s = s.replace(BEARER_RE, 'Bearer ***REDACTED***');
+  s = s.replace(COOKIE_RE, '$1***REDACTED***');
+  s = s.replace(HEADER_SECRET_RE, '$1$2***REDACTED***$2');
+  s = s.replace(KEYVAL_SECRET_RE, '$1$2***REDACTED***$2');
+  s = s.replace(SK_KEY_RE, 'sk-***REDACTED***');
+  s = s.replace(LONG_SECRET_RE, '***REDACTED***');
+  // 先剥完整 ANSI 序列（以 ESC 开头），再清残余控制字符 —— 顺序反了会把
+  // ESC 先吃掉，留下 '[31m' 这类残骸。
+  s = s.replace(ANSI_RE, '');
+  s = s.replace(CONTROL_RE, '');
+  return s;
+}
+&nbsp;
+/** 错误消息与堆栈的统一脱敏出口（错误经常内嵌上游响应头/URL 凭据）。 */
+export function <span class="fstat-no" title="function not covered" >sanitizeErrorDetail(e</span>rr: unknown): string {
+<span class="cstat-no" title="statement not covered" >  if (err instanceof Error) {</span>
+    const parts = <span class="cstat-no" title="statement not covered" >[err.message];</span>
+<span class="cstat-no" title="statement not covered" >    if (err.stack) <span class="cstat-no" title="statement not covered" >parts.push(err.stack);</span></span>
+<span class="cstat-no" title="statement not covered" >    return sanitizeLog(parts.join('\n'));</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return sanitizeLog(err == null ? '' : String(err));</span>
+}
+&nbsp;
+/**
+ * NODE_DEBUG 里的 undici/http/http2 会让 Node 原生客户端把完整请求头（含
+ * Authorization）打到 stderr —— 那条通路绕过所有日志脱敏。启动时剥离这些项
+ * 并返回剥离清单（调用方负责告警）。`*` 通配会一并开启 undici 调试，同样剥离。
+ */
+const DANGEROUS_NODE_DEBUG = new Set(['undici', 'http', 'https', 'http2', '*']);
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >stripDangerousNodeDebug(</span>
+  env: NodeJS.ProcessEnv = <span class="branch-0 cbranch-no" title="branch not covered" >process.env,</span>
+): { changed: boolean; removed: string[] } {
+  const raw = <span class="cstat-no" title="statement not covered" >env.NODE_DEBUG || '';</span>
+<span class="cstat-no" title="statement not covered" >  if (!raw) <span class="cstat-no" title="statement not covered" >return { changed: false, removed: [] };</span></span>
+  const parts = <span class="cstat-no" title="statement not covered" >raw.split(',').<span class="fstat-no" title="function not covered" >map(s</span> =&gt; <span class="cstat-no" title="statement not covered" >s.trim())</span>.filter(Boolean);</span>
+  const removed = <span class="cstat-no" title="statement not covered" >parts.<span class="fstat-no" title="function not covered" >filter(p</span> =&gt; <span class="cstat-no" title="statement not covered" >DANGEROUS_NODE_DEBUG.has(p.toLowerCase()))</span>;</span>
+<span class="cstat-no" title="statement not covered" >  if (removed.length === 0) <span class="cstat-no" title="statement not covered" >return { changed: false, removed: [] };</span></span>
+  const kept = <span class="cstat-no" title="statement not covered" >parts.<span class="fstat-no" title="function not covered" >filter(p</span> =&gt; <span class="cstat-no" title="statement not covered" >!DANGEROUS_NODE_DEBUG.has(p.toLowerCase()))</span>;</span>
+<span class="cstat-no" title="statement not covered" >  env.NODE_DEBUG = kept.join(',');</span>
+<span class="cstat-no" title="statement not covered" >  return { changed: true, removed };</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-10-06T17:07:21.575Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    

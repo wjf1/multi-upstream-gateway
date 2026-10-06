@@ -1,0 +1,451 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for commandcode-proxy/purge-test-usage.mjs</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../prettify.css" />
+    <link rel="stylesheet" href="../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../index.html">All files</a> / <a href="index.html">commandcode-proxy</a> purge-test-usage.mjs</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">19.11% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>13/68</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">40.42% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>19/47</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">14.28% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>1/7</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">15.78% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>9/57</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// =============================================================================
+// 从用量历史中剔除集成测试残留记录（一次性维护工具）
+// -----------------------------------------------------------------------------
+// 背景：tests/integration.test.ts 曾用 `{...process.env}` 拉起真实 proxy，却只隔离了
+// config/models/pricing 三个状态文件，漏掉 USAGE_HISTORY_PATH —— 于是套件对**本机 mock
+// 上游**发出的每次调用（3 / 17 / 25 token、十几毫秒）都追加进了生产用量库
+// ~/.commandcode/usage-history.jsonl。性能面板直接读这个文件，结果是完全没有真实流量
+// 的模型（claude-sonnet-5 等）在面板上显示 2000+ t/s 的假吞吐与 19ms 的假延迟。
+//
+// 该泄漏已在 tests/integration.test.ts 中修复；本脚本用于清理已产生的历史脏数据。
+//
+// 判定谓词（必须全部满足，宁可漏删不可误删）：
+//   - status === 'COMPLETED'
+//   - 无 sessionId、无 project、无 agent        —— 没有任何真实调用上下文
+//   - timingMs &lt; 300                            —— 跨公网调用的实测下界是 2245ms，
+//                                                  &lt;300ms 只可能来自本机 mock 上游
+//   - 模型是纯测试模型（从无带 sessionId 的真实流量）
+//
+// 安全措施：
+//   - 默认 dry-run，必须显式 --apply 才写盘
+//   - 写盘前把原文件完整备份，并把被删除的记录单独留档（审计用）
+//   - 哨兵行 + 前后尺寸校验 + 重试：避免与本机正在写入的 proxy 抢文件导致丢记录
+//
+// 用法：
+//   node purge-test-usage.mjs            # 预演，只报告
+//   node purge-test-usage.mjs --apply    # 实际清理
+// 可用 USAGE_HISTORY_PATH 指向其它文件。
+// =============================================================================
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { resolveUsageFile, readRecords, rewriteSafely, backupFile } from './usage-history-io.mjs';
+&nbsp;
+const APPLY = process.argv.includes('--apply');
+const MIN_CONNECTED_MS = 300;
+&nbsp;
+const FILE = resolveUsageFile();
+&nbsp;
+/** 判定一条记录是否为集成测试残留（纯函数，便于在测试中锁定）。 */
+export function isTestNoise(record, modelsWithRealTraffic) {
+  if (!record || typeof record !== 'object') return false;
+  if (record.status !== 'COMPLETED') return false;
+  if (record.sessionId || record.project || record.agent || record.sessionType) return false;
+  if (!Number.isFinite(record.timingMs) || record.timingMs &gt;= MIN_CONNECTED_MS) return false;
+  return !modelsWithRealTraffic.has(record.model);
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >plan(</span>records) {
+  // 「有真实流量」= 该模型至少有一条带客户端上下文（sessionId/project/agent）的记录。
+  // 这些模型整体豁免，哪怕其中混着几条短耗时记录也不动 —— 避免误删真实数据。
+  const modelsWithRealTraffic = <span class="cstat-no" title="statement not covered" >new Set();</span>
+<span class="cstat-no" title="statement not covered" >  for (const r of records) {</span>
+<span class="cstat-no" title="statement not covered" >    if (r.sessionId || r.project || r.agent) <span class="cstat-no" title="statement not covered" >modelsWithRealTraffic.add(r.model);</span></span>
+  }
+  const keep = <span class="cstat-no" title="statement not covered" >[];</span>
+  const drop = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  for (const r of records) <span class="cstat-no" title="statement not covered" >(isTestNoise(r, modelsWithRealTraffic) ? drop : keep).push(r);</span></span>
+<span class="cstat-no" title="statement not covered" >  return { keep, drop, modelsWithRealTraffic };</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >main(</span>) {
+  const records = <span class="cstat-no" title="statement not covered" >readRecords(FILE);</span>
+<span class="cstat-no" title="statement not covered" >  if (!records.length &amp;&amp; !fs.existsSync(FILE)) {</span>
+<span class="cstat-no" title="statement not covered" >    console.error(`找不到用量历史文件：${FILE}`);</span>
+<span class="cstat-no" title="statement not covered" >    process.exit(1);</span>
+  }
+&nbsp;
+  const { keep, drop } = <span class="cstat-no" title="statement not covered" >plan(records);</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  console.log(`文件：${FILE}`);</span>
+<span class="cstat-no" title="statement not covered" >  console.log(`记录总数：${records.length}`);</span>
+<span class="cstat-no" title="statement not covered" >  console.log(`判定为测试残留：${drop.length} 条`);</span>
+<span class="cstat-no" title="statement not covered" >  console.log(`正常记录：${keep.length} 条`);</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  if (drop.length) {</span>
+    const byModel = <span class="cstat-no" title="statement not covered" >{};</span>
+<span class="cstat-no" title="statement not covered" >    for (const r of drop) {</span>
+      const b = (<span class="cstat-no" title="statement not covered" >byModel[r.model] ||= { n: 0, out: 0, cost: 0, pairs: {} })</span>;
+<span class="cstat-no" title="statement not covered" >      b.n++;</span>
+<span class="cstat-no" title="statement not covered" >      b.out += r.outputTokens || 0;</span>
+<span class="cstat-no" title="statement not covered" >      b.cost += r.costUsd || 0;</span>
+<span class="cstat-no" title="statement not covered" >      b.pairs[`${r.inputTokens}/${r.outputTokens}`] = (b.pairs[`${r.inputTokens}/${r.outputTokens}`] || 0) + 1;</span>
+    }
+<span class="cstat-no" title="statement not covered" >    console.log('\n按模型：');</span>
+<span class="cstat-no" title="statement not covered" >    for (const [m, b] of Object.entries(byModel).sort(<span class="fstat-no" title="function not covered" >(a</span>, c) =&gt; <span class="cstat-no" title="statement not covered" >c[1].n - a[1].n)</span>) {</span>
+      const pairs = <span class="cstat-no" title="statement not covered" >Object.entries(b.pairs).sort(<span class="fstat-no" title="function not covered" >(a</span>, c) =&gt; <span class="cstat-no" title="statement not covered" >c[1] - a[1])</span>.map(<span class="fstat-no" title="function not covered" >([</span>k, v]) =&gt; <span class="cstat-no" title="statement not covered" >`${k}×${v}`)</span>.join(' ');</span>
+<span class="cstat-no" title="statement not covered" >      console.log(`  ${m.padEnd(38)} ${String(b.n).padStart(4)} 条  ${b.out} 输出 token  $${b.cost.toFixed(6)}  [${pairs}]`);</span>
+    }
+  }
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  if (!APPLY) {</span>
+<span class="cstat-no" title="statement not covered" >    console.log('\n（预演模式，未写盘。加 --apply 执行实际清理。）');</span>
+<span class="cstat-no" title="statement not covered" >    return;</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (!drop.length) {</span>
+<span class="cstat-no" title="statement not covered" >    console.log('\n没有需要清理的记录。');</span>
+<span class="cstat-no" title="statement not covered" >    return;</span>
+  }
+&nbsp;
+  const backup = <span class="cstat-no" title="statement not covered" >backupFile(FILE, 'backup');</span>
+  const stamp = <span class="cstat-no" title="statement not covered" >backup.replace(`${FILE}.backup-`, '');</span>
+  const removed = <span class="cstat-no" title="statement not covered" >`${FILE}.removed-${stamp}`;</span>
+<span class="cstat-no" title="statement not covered" >  fs.writeFileSync(removed, drop.map(<span class="fstat-no" title="function not covered" >r </span>=&gt; <span class="cstat-no" title="statement not covered" >JSON.stringify(r))</span>.join('\n') + '\n');</span>
+&nbsp;
+  const res = <span class="cstat-no" title="statement not covered" >rewriteSafely(FILE, plan, { label: 'purge' });</span>
+<span class="cstat-no" title="statement not covered" >  if (!res.ok) {</span>
+<span class="cstat-no" title="statement not covered" >    console.error(`\n替换失败（${res.attempts} 次重试仍未拿到稳定快照）。文件未被修改，请稍后重试。`);</span>
+<span class="cstat-no" title="statement not covered" >    process.exit(2);</span>
+  }
+&nbsp;
+  const after = <span class="cstat-no" title="statement not covered" >fs.readFileSync(FILE, 'utf8').split('\n').filter(Boolean).length;</span>
+<span class="cstat-no" title="statement not covered" >  console.log(`\n完成（${res.attempts} 次尝试）。原有 ${records.length} 条 → 现有 ${after} 条。`);</span>
+<span class="cstat-no" title="statement not covered" >  console.log(`完整备份：${backup}`);</span>
+<span class="cstat-no" title="statement not covered" >  console.log(`被移除记录留档：${removed}`);</span>
+  // 数量对不上只可能是清理窗口内 proxy 追加了新记录（rewriteSafely 会用最新快照重算）。
+<span class="cstat-no" title="statement not covered" >  if (after !== res.keep.length) {</span>
+<span class="cstat-no" title="statement not covered" >    console.log(`注：清理期间 proxy 又写入了 ${after - res.keep.length} 条新记录（已保留）。`);</span>
+  }
+}
+&nbsp;
+// 仅在被直接执行时跑 main；被测试 import 时只暴露纯函数。
+<span class="missing-if-branch" title="if path not taken" >I</span>if (process.argv[1] &amp;&amp; path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) <span class="cstat-no" title="statement not covered" >main();</span>
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-10-06T17:07:21.575Z
+            </div>
+        <script src="../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../sorter.js"></script>
+        <script src="../block-navigation.js"></script>
+    </body>
+</html>
+    
