@@ -208,8 +208,20 @@
   + `tests/freebuff-tool-schema.test.ts`（231 行，5 例），接入 `buildUpstreamBody`（注释标注 Go `server.go:364-366`/`:408`）。
   覆盖 `$ref` 内联 + definitions/$defs 清理、nullable 简化（anyOf[null,T] / type:["T","null"] / nullable 字段）、
   非 tools 直通、深拷贝不改调用方对象，以及**mock 上游实际收到体**的集成断言。全量 **52 文件 / 672 用例全绿**。
-- ⬜ **T202b Freebuff Anthropic 桥**（剩余一半；注意 v5.0.0 已有 `adapters/commandcode/anthropic-response.ts`
-  与 `pipeline/`，须先评估复用而非另写桥）
+- ⬜ **T202b Freebuff Anthropic 桥 —— 未完成，WIP 已存档（2026-10-07）**
+  - 状态：**未交付**，工作区已回退到已验证状态（`7594762`，52 文件 / 672 用例全绿）。
+  - **WIP 存档**（勿删）：`F:/AI/Qdor/backup-deploy-20261006-220835/T202b-wip.patch`
+    与 `T202b-anthropic-bridge.ts.wip`（681 行）。其中 `anthropic-bridge.ts` **本身可编译**，
+    已实现：`anthropicToOpenAIRequest`、`openAIResponseToAnthropicMessage`、`AnthropicStreamEncoder`、
+    `sseFrame`、`mapFinishReason`、`sanitizeToolId`、`thinkingToReasoningEffort`（注释带 Go `anthropic.go` 行号）。
+  - **缺口（两处，均非小改）**：①`provider.ts` 的接线是半成品——引入了 `runChatChunks` 重构，但
+    引用了未定义的 `pickMessageContent`，且 `runChatChunks` 声明产出 `OpenAIChunkLike` 却内部委托给
+    产出**文本**的 `streamUpstreamText`，类型冲突。补法二选一：(a) 给 Freebuff 上游客户端补一条
+    **原始 chunk 流**能力，让 `runChatChunks` 名副其实；(b) 放弃该重构，Provider 继续消费
+    `streamUpstreamText` 的文本，桥只用于 Anthropic 出口。②桥**没有测试**，需补流式块生命周期
+    （message_start→content_block_start→delta…→content_block_stop→message_delta→message_stop）快照。
+  - 建议在新会话里恢复（本会话 agent 基础设施连续 5 次失败：配额×2/被终止×2/上游超时×1，
+    其中两次"失败"实际产物完整可回收，T202a 即由此交付）。
 - ⬜ P0-PORT-D2（此前推迟）：`providers/commandcode/provider.ts` 外壳 —— 建议**不搬家、只做薄适配层**
   （D1 报告结论：4.22.4+ 已把适配器模块化，整目录平移收益低、回归风险高）。它是 T213 统一接线的前置。
 - ⬜ T203 → T204'（WorkBuddy 联邦透传）→ T208~T212 面板五页 → T213 → T214
