@@ -12,9 +12,9 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 async function getFreePort(): Promise<number> {
   const net = await import('node:net');
   return await new Promise((resolve, reject) => {
-    const srv = new net.default.createServer();
+    const srv = net.default.createServer();
     srv.listen(0, '127.0.0.1', () => {
-      const addr = srv.address() as net.AddressInfo;
+      const addr = srv.address() as { port: number };
       srv.close(() => resolve(addr.port));
     });
     srv.on('error', reject);

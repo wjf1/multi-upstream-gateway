@@ -21,13 +21,15 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "setup": "node scripts/setup.mjs",
     "build": "tsc",
     "start": "node dist/index.js",
     "build:exe": "npm run build && esbuild dist/index.js --bundle --platform=node --format=cjs --outfile=dist/bundle.cjs --external:fsevents",
     "build:win": "npm run build:exe && pkg dist/bundle.cjs --target node22-win-x64 --output dist/commandcode-proxy-v4.exe --compress GZip",
     "test": "vitest run",
     "pretest": "npm run build",
-    "typecheck": "tsc --noEmit",
+    "verify": "npm run build && npm test",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "lint": "eslint .",
     "test:coverage": "vitest run --coverage"
   },
@@ -46,19 +48,19 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "@types/node": "^26.5.1",
-    "@vitest/coverage-v8": "^5.0.0",
-    "@yao-pkg/pkg": "^6.22.0",
-    "esbuild": "^0.28.2",
-    "eslint": "^10.10.0",
-    "tsx": "^4.11.0",
-    "typescript": "^5.5.0",
-    "typescript-eslint": "^8.70.0",
-    "vitest": "^5.0.0"
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.5.1",
+    "@vitest/coverage-v8": "5.0.0",
+    "@yao-pkg/pkg": "6.22.0",
+    "esbuild": "0.28.2",
+    "eslint": "10.10.0",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.0"
   },
   "dependencies": {
-    "fastify": "^5.12.3",
-    "undici": "^7.29.1"
+    "fastify": "5.12.3",
+    "undici": "7.29.1"
   }
 }
