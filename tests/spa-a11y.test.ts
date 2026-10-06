@@ -13,7 +13,12 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const html = readFileSync(path.resolve(__dirname, '..', 'public', 'index.html'), 'utf-8');
-const count = (re) => (html.match(re) || []).length;
+// T110：面板脚本外置到 public/js/*.js。图标/表头/弹窗这类"全站计数"在合并源码上
+// 统计（否则外置后计数会凭空变少，断言失去意义）；标签页与弹窗的切片断言同样从
+// 合并源码取。断言条件与阈值逐字不变。
+const src = html + '\n' + ['core', 'overview', 'accounts', 'usage', 'models', 'logs']
+  .map(f => readFileSync(path.resolve(__dirname, '..', 'public', 'js', f + '.js'), 'utf-8')).join('\n');
+const count = (re) => (src.match(re) || []).length;
 
 describe('装饰性图标', () => {
   it('每个 Font Awesome 图标都带 aria-hidden', () => {
@@ -49,37 +54,39 @@ describe('标签页', () => {
   });
 
   it('switchTab 同步 aria-selected 与 tabindex', () => {
-    const fn = html.slice(html.indexOf('function switchTab(tab)'));
+    const fn = src.slice(src.indexOf('function switchTab(tab)'));
     const body = fn.slice(0, fn.indexOf('\n}') + 2);
     expect(body).toContain("setAttribute('aria-selected'");
     expect(body).toContain('b.tabIndex = on ? 0 : -1');
   });
 
   it('标签栏有方向键处理', () => {
-    expect(html).toMatch(/role="tablist"\]'\)\.addEventListener\('keydown'/);
-    expect(html).toContain("e.key === 'ArrowRight'");
+    expect(src).toMatch(/role="tablist"\]'\)\.addEventListener\('keydown'/);
+    expect(src).toContain("e.key === 'ArrowRight'");
   });
 });
 
 describe('弹窗', () => {
-  it('三个弹窗都有 dialog 语义与无障碍名称', () => {
-    for (const id of ['loginModal', 'confirmModal', 'adminKeyModal']) {
+  // T110：新增 T106 风险告知门 #riskModal（role=dialog/aria-modal/aria-label 齐备），
+  // 故计数由 3 改为 4。
+  it('四个弹窗都有 dialog 语义与无障碍名称', () => {
+    for (const id of ['loginModal', 'confirmModal', 'adminKeyModal', 'riskModal']) {
       expect(html, `${id} 缺少 role/aria-modal/aria-label`)
         .toMatch(new RegExp(`<div id="${id}" role="dialog" aria-modal="true" aria-label="[^"]+"`));
     }
     // 只数元素上的属性；JS 里的 `[role="dialog"]` 选择器字面量不该被算进来
-    expect(count(/<div[^>]*role="dialog"/g)).toBe(3);
+    expect(count(/<div[^>]*role="dialog"/g)).toBe(4);
   });
 
   it('存在焦点约束，且关闭后把焦点还给触发元素', () => {
-    expect(html).toMatch(/e\.key !== 'Tab'/);            // Tab 圈在弹窗内
-    expect(html).toContain("attributeFilter: ['class']"); // 打开时焦点移入弹窗
+    expect(src).toMatch(/e\.key !== 'Tab'/);            // Tab 圈在弹窗内
+    expect(src).toContain("attributeFilter: ['class']"); // 打开时焦点移入弹窗
     // 归还焦点必须在 showLoginModal 里**同步**记录：MutationObserver 回调跑在微任务，
     // 那时弹窗内部的 focus() 已经执行，读 activeElement 会拿到即将被隐藏的元素（实测）。
-    const show = html.slice(html.indexOf('function showLoginModal()'), html.indexOf('function hideLoginModal()'));
+    const show = src.slice(src.indexOf('function showLoginModal()'), src.indexOf('function hideLoginModal()'));
     expect(show.indexOf('modalReturnFocus = document.activeElement'))
       .toBeLessThan(show.indexOf("classList.remove('hidden')"));
-    const hide = html.slice(html.indexOf('function hideLoginModal()'), html.indexOf('async function submitLogin'));
+    const hide = src.slice(src.indexOf('function hideLoginModal()'), src.indexOf('async function submitLogin'));
     expect(hide).toContain('back.focus()');
   });
 });
@@ -104,7 +111,7 @@ describe('实时区域与表单控件', () => {
 
   it('纯图标按钮都有 aria-label', () => {
     expect(html).toMatch(/<button id="modelSearchClear" aria-label="[^"]+"/);
-    // 账号卡片里的删除按钮：内容只有一个 aria-hidden 的图标
-    expect(html).toMatch(/data-action="delete" aria-label="[^"]+"/);
+    // 账号卡片里的删除按钮：内容只有一个 aria-hidden 的图标（模板在 accounts.js 里生成）
+    expect(src).toMatch(/data-action="delete" aria-label="[^"]+"/);
   });
 });

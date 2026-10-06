@@ -8,6 +8,9 @@
 <script src="/assets/vendor/tailwind.js"></script>
 <link rel="stylesheet" href="/assets/vendor/font-awesome.min.css">
 <script src="/assets/vendor/chart.umd.min.js"></script>
+<!-- T110：head 内联脚本只做主题初值同步（1 行），避免亮色偏好用户首帧闪一下暗色。
+     页面脚本全部外置到 /js/*（服务端静态通路映射 public/js/）。 -->
+<script>try{ if((localStorage.getItem('ccproxy-theme')||'dark')==='light'){ document.documentElement.classList.replace('dark','light'); } }catch(e){}</script>
 <style>
 /* ─── 语义色板：暗色主题的全部颜色收口到这里（值与原 Tailwind 硬编码一致，
        默认视觉不变）。Chart.js 画在 canvas 上，不认 CSS 变量，其 hex 保留。 */
@@ -78,6 +81,48 @@ mark{background:var(--c-hl-bg);color:var(--c-hl-text);border-radius:3px;padding:
 .usage-filter>summary::-webkit-details-marker{display:none}
 .usage-filter>summary:hover{color:var(--c-text-2);background:var(--c-inset-soft)}
 .usage-filter-hint{color:var(--c-text-mute);margin-left:auto;font-weight:400}
+/* ─── 明暗主题（T110）：亮色通过 html.light 覆盖同一批 CSS 变量，并把标记里
+       仍在用的 Tailwind 中性色类重映射到变量；彩色强调（emerald/rose/amber/
+       indigo/sky/violet）两主题共用，不做覆盖。切换逻辑见 core.js 的 applyTheme。
+       模态遮罩（bg-slate-950/80）刻意保持暗遮罩，不参与覆盖。 */
+html.light{
+  --c-bg:#f4f6fb; --c-panel:#ffffff; --c-panel-2:#e8edf5; --c-panel-deep:#f7f9fc; --c-panel-a60:rgba(255,255,255,.72);
+  --c-line:#c9d3e0; --c-line-2:#a9b7c9;
+  --c-text:#0f172a; --c-text-2:#1e293b; --c-text-3:#334155; --c-text-dim:#5b6b7f; --c-text-mute:#7b8aa0; --c-text-inv:#0f172a;
+  --c-hl-bg:rgba(99,102,241,.22); --c-hl-text:#312e81;
+  --c-inset:#f1f5f9; --c-inset-soft:rgba(241,245,249,.7);
+}
+html.light .bg-slate-950{background-color:var(--c-inset)}
+html.light .bg-slate-950\/60{background-color:#eef2f8}
+html.light .bg-slate-950\/40{background-color:#f1f5f9}
+html.light .bg-slate-900{background-color:var(--c-panel)}
+html.light .bg-slate-900\/80{background-color:rgba(255,255,255,.92)}
+html.light .bg-slate-900\/60{background-color:var(--c-panel)}
+html.light .bg-slate-900\/40{background-color:rgba(244,246,251,.92)}
+html.light .bg-slate-800{background-color:var(--c-panel-2)}
+html.light .bg-slate-800\/40{background-color:#e2e8f0}
+html.light .border-slate-800{border-color:var(--c-line)}
+html.light .border-slate-800\/80{border-color:#e2e8f0}
+html.light .border-slate-800\/70{border-color:#e2e8f0}
+html.light .border-slate-800\/60{border-color:#e5eaf1}
+html.light .border-slate-700{border-color:var(--c-line-2)}
+html.light .border-slate-700\/70{border-color:#d5dde8}
+html.light .divide-slate-800\/60 > :not([hidden]) ~ :not([hidden]){border-color:#e5eaf1}
+html.light .text-white{color:var(--c-text)}
+/* 彩色实底按钮例外：文字保持白色 */
+html.light .text-white.btn-solid{color:#fff}
+html.light .text-slate-100{color:var(--c-text)}
+html.light .text-slate-200{color:var(--c-text-2)}
+html.light .text-slate-300{color:var(--c-text-3)}
+html.light .text-slate-400{color:var(--c-text-dim)}
+html.light .text-slate-500{color:var(--c-text-mute)}
+html.light .text-slate-600{color:#94a3b8}
+html.light .hover\:bg-slate-800:hover{background-color:var(--c-line)}
+html.light .hover\:bg-slate-700:hover{background-color:var(--c-line)}
+html.light .hover\:bg-slate-800\/40:hover{background-color:#eef2f8}
+html.light .hover\:text-slate-200:hover{color:var(--c-text)}
+html.light .placeholder\:text-slate-600::placeholder{color:#a3b1c2}
+html.light .mfilter-chip.on{color:#fff}
 </style>
 </head>
 <body class="min-h-screen flex flex-col">
@@ -91,11 +136,12 @@ mark{background:var(--c-hl-bg);color:var(--c-hl-text);border-radius:3px;padding:
     </div>
   </div>
   <div class="flex items-center space-x-4">
+    <button id="themeToggle" onclick="toggleTheme()" title="切换到浅色主题" class="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white transition text-sm"><i id="themeIcon" aria-hidden="true" class="fa-solid fa-sun"></i></button>
     <div class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700 text-xs">
       <span id="statusDot" aria-hidden="true" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
       <span id="statusText" role="status" aria-live="polite" class="font-medium text-slate-300">检测中...</span>
     </div>
-    <button onclick="toggleEngine()" class="px-4 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-md shadow-emerald-600/20"><i aria-hidden="true" class="fa-solid fa-power-off"></i> <span id="toggleBtnText">切换</span></button>
+    <button onclick="toggleEngine()" class="btn-solid px-4 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-md shadow-emerald-600/20"><i aria-hidden="true" class="fa-solid fa-power-off"></i> <span id="toggleBtnText">切换</span></button>
   </div>
 </header>
 
@@ -109,7 +155,10 @@ mark{background:var(--c-hl-bg);color:var(--c-hl-text);border-radius:3px;padding:
 
 <main class="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6">
 
-<section id="content-overview" role="tabpanel" tabindex="0" aria-labelledby="tab-overview" class="space-y-6">
+<section id="content-overview" role="tabpanel" tabindex="0" aria-labelledby="tab-overview" class="space-y-6" data-route="overview">
+  <!-- 首启引导卡片（T110）：渲染逻辑在 overview.js 的 renderOnboardCard，
+       仅用 /api/status 现有字段判断；账号与凭据就绪时自动隐藏。 -->
+  <div id="onboardCard" data-state="idle" class="hidden card border-indigo-500/40 rounded-xl p-5 space-y-1"></div>
   <div class="flex items-center justify-between flex-wrap gap-3">
     <div>
       <h2 class="text-lg font-bold text-white">面板概览</h2>
@@ -148,14 +197,14 @@ mark{background:var(--c-hl-bg);color:var(--c-hl-text);border-radius:3px;padding:
   </div>
 </section>
 
-<section id="content-accounts" role="tabpanel" tabindex="0" aria-labelledby="tab-accounts" class="space-y-6 hidden">
+<section id="content-accounts" role="tabpanel" tabindex="0" aria-labelledby="tab-accounts" class="space-y-6 hidden" data-route="accounts">
   <div class="flex items-center justify-between">
     <div>
       <h2 class="text-lg font-bold text-white">多账号管理</h2>
       <p class="text-xs text-slate-400">使用 Command Code CLI 浏览器授权登录，或直接粘贴 API Key</p>
     </div>
     <div class="flex space-x-3">
-      <button onclick="startBrowserLogin()" id="browserAuthBtn" class="px-4 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-lg text-xs font-semibold flex items-center gap-2 shadow-lg shadow-indigo-600/20"><i aria-hidden="true" class="fa-solid fa-globe"></i> 浏览器登录（OAuth）</button>
+      <button onclick="startBrowserLogin()" id="browserAuthBtn" class="btn-solid px-4 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-lg text-xs font-semibold flex items-center gap-2 shadow-lg shadow-indigo-600/20"><i aria-hidden="true" class="fa-solid fa-globe"></i> 浏览器登录（OAuth）</button>
       <button onclick="showLoginModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-2 border border-slate-700"><i aria-hidden="true" class="fa-solid fa-key"></i> 手动输入 Key</button>
     </div>
   </div>
@@ -172,7 +221,7 @@ mark{background:var(--c-hl-bg);color:var(--c-hl-text);border-radius:3px;padding:
   <div id="accountsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
 </section>
 
-<section id="content-usage" role="tabpanel" tabindex="0" aria-labelledby="tab-usage" class="space-y-6 hidden">
+<section id="content-usage" role="tabpanel" tabindex="0" aria-labelledby="tab-usage" class="space-y-6 hidden" data-route="usage">
   <div class="flex items-center justify-between">
     <div>
       <h2 class="text-lg font-bold text-white">实时用量与额度</h2>
@@ -372,7 +421,7 @@ mark{background:var(--c-hl-bg);color:var(--c-hl-text);border-radius:3px;padding:
   </div>
 </section>
 
-<section id="content-models" role="tabpanel" tabindex="0" aria-labelledby="tab-models" class="space-y-4 hidden">
+<section id="content-models" role="tabpanel" tabindex="0" aria-labelledby="tab-models" class="space-y-4 hidden" data-route="models">
   <div class="flex items-center justify-between gap-3 flex-wrap">
     <div><h2 class="text-lg font-bold text-white">上游实时模型</h2><p class="text-xs text-slate-400">官方定价目录 · 价格单位：人民币（元）/ 每 1M tokens · 按 1 USD ≈ ¥6.72 折算</p></div>
     <button onclick="loadModels(true)" id="modelsRefreshBtn" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg flex items-center gap-1.5 shrink-0"><i aria-hidden="true" class="fa-solid fa-rotate"></i> 获取最新模型</button>
@@ -420,7 +469,7 @@ mark{background:var(--c-hl-bg);color:var(--c-hl-text);border-radius:3px;padding:
   <div id="modelsList" class="grid grid-cols-1 md:grid-cols-3 gap-3"></div>
 </section>
 
-<section id="content-logs" role="tabpanel" tabindex="0" aria-labelledby="tab-logs" class="space-y-4 hidden">
+<section id="content-logs" role="tabpanel" tabindex="0" aria-labelledby="tab-logs" class="space-y-4 hidden" data-route="logs">
   <div class="flex items-center justify-between">
     <h2 class="text-lg font-bold text-white">网关事件控制台</h2>
     <div class="flex items-center space-x-2">
@@ -443,7 +492,7 @@ mark{background:var(--c-hl-bg);color:var(--c-hl-text);border-radius:3px;padding:
     </div>
     <div class="flex justify-end space-x-2 pt-2">
       <button onclick="hideLoginModal()" class="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-xs font-medium">取消</button>
-      <button onclick="submitLogin()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold">登录并保存</button>
+      <button onclick="submitLogin()" class="btn-solid px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold">登录并保存</button>
     </div>
   </div>
 </div>
@@ -454,7 +503,7 @@ mark{background:var(--c-hl-bg);color:var(--c-hl-text);border-radius:3px;padding:
     <p id="confirmMsg" class="text-xs text-slate-300"></p>
     <div class="flex justify-end space-x-2 pt-1">
       <button onclick="settleConfirm(false)" class="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-xs font-medium">取消</button>
-      <button onclick="settleConfirm(true)" class="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold">确认</button>
+      <button onclick="settleConfirm(true)" class="btn-solid px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold">确认</button>
     </div>
   </div>
 </div>
@@ -466,1376 +515,46 @@ mark{background:var(--c-hl-bg);color:var(--c-hl-text);border-radius:3px;padding:
     <input type="password" id="adminKeyInput" placeholder="PROXY_API_KEY" autocomplete="off" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500">
     <div class="flex justify-end space-x-2 pt-1">
       <button onclick="dismissAdminKeyModal()" class="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-xs font-medium">取消</button>
-      <button onclick="submitAdminKey()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold">验证</button>
+      <button onclick="submitAdminKey()" class="btn-solid px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold">验证</button>
     </div>
   </div>
 </div>
 
-<script>
-const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+<!-- T106（§3.7-7）：合规风险告知门。acceptedRiskDisclaimer=false 时 /v1/* 一律 403，
+     首屏强制弹本模态；确认后写回 config.json 并热生效，无需重启。
+     硬门：无关闭按钮、Esc 不生效 —— core.js 的 Esc 处理器只碰 adminKey / confirm /
+     login 三个模态，不触碰 #riskModal。 -->
+<div id="riskModal" role="dialog" aria-modal="true" aria-label="使用前风险告知" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[80] flex items-center justify-center hidden">
+  <div class="card rounded-xl p-6 max-w-xl w-full shadow-2xl space-y-4 max-h-[85vh] overflow-y-auto">
+    <h3 class="text-base font-bold text-white flex items-center gap-2">
+      <i aria-hidden="true" class="fa-solid fa-triangle-exclamation text-amber-400"></i> 使用前请阅读：风险告知
+    </h3>
+    <div class="text-xs text-slate-300 space-y-3 leading-relaxed">
+      <p>本网关聚合的 <b class="text-white">上游接口都不是公开、稳定的官方 API</b>，而是通过逆向或非公开渠道对接的接口。继续使用前，请确认你已知悉并自行承担以下风险：</p>
+      <ul class="list-disc pl-5 space-y-1.5 text-slate-400">
+        <li><b class="text-slate-200">账号风险</b>：上游服务方可能随时调整、限制或封禁相关账号，导致额度清零或账号不可用，且不提供申诉渠道。</li>
+        <li><b class="text-slate-200">服务稳定性</b>：接口协议可能随时变更甚至下架（历史上已发生过），届时对应上游将不可用。</li>
+        <li><b class="text-slate-200">合规风险</b>：此类非公开接口的使用可能违反上游的服务条款，相关法律与账号责任由使用者自行承担。</li>
+        <li><b class="text-slate-200">凭据安全</b>：上游凭据保存在本机（已做加密存储），但请自行确保本机环境可信。</li>
+      </ul>
+      <p class="text-slate-400">本项目仅供<b class="text-slate-200">个人学习与研究</b>使用，<b class="text-slate-200">不内置、不分发任何凭据</b>，亦不对使用后果承担任何责任。</p>
+      <p class="text-amber-300/90"><i aria-hidden="true" class="fa-solid fa-circle-info"></i> 在你确认之前，所有 <code class="font-mono">/v1/*</code> API 请求都会返回 <code class="font-mono">403</code>。</p>
+    </div>
+    <div class="flex justify-end space-x-2 pt-1">
+      <button onclick="acceptRiskGate()" class="btn-solid px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold">
+        <i aria-hidden="true" class="fa-solid fa-check"></i> 我已阅读并自行承担风险
+      </button>
+    </div>
+  </div>
+</div>
 
-/**
- * 统一的接口调用：把「连不上 / HTTP 非 2xx / 响应体不是 JSON」三类失败变成**返回值**，
- * 而不是各自 await fetch 再 .json()。此前 18 处 fetch 只有 2 处检查 res.ok —— 后端把账号
- * 相关写端点改成失败返回 500 之后，`data.accounts.map(...)` 会直接 TypeError，
- * 用户看到的就是"点了删除没反应、列表还是老样子"。
- *
- * 永不抛异常，因此调用点也不会产生未处理的 rejection。
- */
-async function apiJson(url, opts) {
-  let res;
-  try { res = await fetch(url, opts); }
-  catch (e) { return { ok: false, data: null, error: '无法连接代理：' + ((e && e.message) || e) }; }
-  let text = '';
-  try { text = await res.text(); } catch (e) { text = ''; }
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = null; }
-  if (!res.ok) {
-    const e = data && data.error;
-    const msg = (typeof e === 'string' ? e : (e && e.message)) || ('HTTP ' + res.status);
-    return { ok: false, data, error: String(msg) };
-  }
-  if (data === null) return { ok: false, data: null, error: '响应体不是 JSON' };
-  return { ok: true, data, error: null };
-}
-const JSON_HDR = { 'Content-Type': 'application/json' };
-/** 卡片取数兜底：字段缺失显示占位，而不是把 undefined 写进界面。 */
-function orDash(v){ return (v === undefined || v === null || v === '') ? '—' : v; }
-// --- 统一空状态与骨架屏 -----------------------------------------------------
-// 空状态：图标 + 一句中文；表格场景传 colSpan 合并单元格。动态文本一律走 esc。
-function emptyState(icon, text, colSpan) {
-  const inner = '<div class="empty-state"><i aria-hidden="true" class="fa-solid ' + esc(icon) + '"></i>' + esc(text) + '</div>';
-  return colSpan ? '<tr><td colspan="' + colSpan + '">' + inner + '</td></tr>' : inner;
-}
-// 骨架屏：仅在容器为空时铺 shimmer 占位（30s 轮询重渲染不闪骨架）。
-function skelBar(w) { return '<div class="skel" style="width:' + (w || 100) + '%"></div>'; }
-function skeletonCards(n, h) {
-  let out = '';
-  for (let i = 0; i < n; i++) out += '<div class="card rounded-xl p-5 space-y-2">' + skelBar(40) + skelBar(h || 70) + skelBar(55) + '</div>';
-  return out;
-}
-function skeletonRows(cols, n) {
-  const cell = '<div class="skel" style="height:.7rem"></div>';
-  let rows = '';
-  for (let i = 0; i < n; i++) rows += '<tr><td colspan="' + cols + '"><div class="grid gap-2 py-1.5" style="grid-template-columns:repeat(' + cols + ',1fr)">' + cell.repeat(cols) + '</div></td></tr>';
-  return rows;
-}
-function showSkeletonIfEmpty(el, fill) { if (el && !el.children.length) el.innerHTML = fill; }
-let currentTab = 'overview';
-let selectedUsageAccountId = '';
-let globalUsageCache = [];
-
-function switchTab(tab) {
-  document.querySelectorAll('.tab-btn').forEach(b => {
-    const on = b.id === 'tab-' + tab;
-    b.classList.toggle('active', on);
-    // 此前只切 CSS 类：读屏用户无法知道当前在哪个分区，且五个标签都能被 Tab 命中，
-    // 与 ARIA tablist 的"仅选中项可聚焦 + 方向键切换"约定不符。
-    b.setAttribute('aria-selected', on ? 'true' : 'false');
-    b.tabIndex = on ? 0 : -1;
-  });
-  document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
-  document.getElementById('tab-' + tab).classList.add('active');
-  document.getElementById('content-' + tab).classList.remove('hidden');
-  currentTab = tab;
-  if (tab === 'accounts') loadAccounts();
-  if (tab === 'usage') { loadUsageInit(); loadUsageHistory(); }
-  if (tab === 'models') loadModels(false);
-  if (tab === 'logs') loadLogs();
-}
-
-// 最近一次**成功**轮询到的引擎状态。toggleEngine 用它取反，而不是再 GET 一次
-// （GET-then-invert 会让快速连点两次提交同一个值）。
-let lastEngineRunning = true;
-
-async function fetchStatus() {
-  const { ok, data, error } = await apiJson('/api/status');
-  const dot = document.getElementById('statusDot'), txt = document.getElementById('statusText'), btn = document.getElementById('toggleBtnText');
-  if (!ok) {
-    // 此前整个函数包在 try{}catch{} 里，代理挂掉时这几行永远停在最后一次成功状态，
-    // 头部状态胶囊可以连续几小时谎报"引擎运行中"。
-    // 只改文字、不弹 toast：这个函数 5s 轮一次，弹出来会刷屏。
-    dot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500';
-    txt.innerText = String(error);
-    txt.className = 'font-medium text-amber-400';
-    return;
-  }
-  if (data.running === undefined) {
-    // 拿到 200 但没有 running 字段：宁可显式存疑，也不要把 undefined 当成"已停止"，
-    // 那会让按钮文案与实际相反。
-    dot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500';
-    txt.innerText = '状态字段缺失';
-    txt.className = 'font-medium text-amber-400';
-  } else {
-    lastEngineRunning = !!data.running;
-    if (data.running) { dot.className='w-2.5 h-2.5 rounded-full bg-emerald-500'; txt.innerText='引擎运行中'; txt.className='font-medium text-emerald-400'; btn.innerText='停止引擎'; }
-    else { dot.className='w-2.5 h-2.5 rounded-full bg-rose-500'; txt.innerText='引擎已停止'; txt.className='font-medium text-rose-400'; btn.innerText='启动引擎'; }
-    // 头部徽标跟随真实版本号（/api/status 返回 PROXY_VERSION）；拿不到就保持占位 "v4"。
-    if (data.version) {
-      const vb = document.getElementById('versionBadge');
-      if (vb) vb.innerText = 'v' + data.version;
-    }
-  }
-  document.getElementById('statPort').innerText = 'Port :' + orDash(data.port);
-  document.getElementById('statUptime').innerText = '运行时间：' + orDash(data.uptime);
-  document.getElementById('statAccount').innerText = data.activeAccountName || '无';
-  document.getElementById('statAccountsCount').innerText = '已注册 ' + orDash(data.accountsCount) + ' 个账号';
-  const bindEl = document.getElementById('statBind');
-  if (data.boundNonLoopback && !data.authRequired) {
-    bindEl.className = 'text-xl font-bold text-rose-400 mt-1 break-all';
-    bindEl.innerText = orDash(data.host) + '（未鉴权暴露！）';
-    bindEl.title = '已绑定到非回环地址且未设置 PROXY_API_KEY：局域网内任何人都可以调用 API 并管理本网关（增删账号、清空历史）。建议设置 PROXY_API_KEY，或改回 127.0.0.1。';
-  } else {
-    bindEl.className = 'text-xl font-bold text-emerald-400 mt-1 break-all';
-    bindEl.innerText = data.host === '0.0.0.0' ? '0.0.0.0（局域网）' : orDash(data.host);
-    bindEl.title = '';
-  }
-  document.getElementById('statAuth').innerText = 'API 鉴权：' + (data.authRequired ? '开' : '关');
-  const ub = document.getElementById('updateBadge');
-  if (ub && data.update && data.update.available) {
-    ub.classList.remove('hidden');
-    document.getElementById('updateVer').innerText = data.update.latest;
-  }
-  document.getElementById('statModels').innerText = orDash(data.modelsCount);
-  document.getElementById('statActiveAccounts').innerText = orDash(data.accountsCount);
-  document.getElementById('statActiveDetail').innerText = '当前：' + (data.activeAccountName || '无');
-  // 轮转模式下拉只在后端真的给了值时回写，否则会把用户刚选的选择框重置成 undefined。
-  if (data.rotationMode) document.getElementById('rotationSelect').value = data.rotationMode;
-}
-
-// 概览页「今日请求 / 今日成本」速览：复用既有 /api/usage/history 的 today 汇总，
-// 不新增后端端点。静默失败：概览页 30s 轮询，弹 toast 会刷屏。
-async function loadOverviewUsage() {
-  const { ok, data } = await apiJson('/api/usage/history');
-  if (!ok || !data || !data.today) return;
-  document.getElementById('statTodayRuns').innerText = ovFmtNum(data.today.runs);
-  document.getElementById('statTodayCost').innerText = '成本 ' + fmtUsdShort(data.today.cost || 0);
-}
-
-// ─── 运行能力可见性：通道健康 + 运行开关（/api/features，纯只读）──────────────
-// 4.21.0 起的一批默认关闭/旁路能力（健康检查、webhook、prompt 版本、限流、
-// 模型访问、审计）此前只在日志可见；这里挂进概览页 30s 轮询做只读展示，
-// 无任何修改控件。失败/告警着色统一走语义色板变量（--c-warn / --c-danger）。
-function fmtInterval(ms) {
-  const n = Number(ms) || 0;
-  if (n >= 60000) return (n / 60000) + ' 分钟';
-  if (n >= 1000) return (n / 1000) + ' 秒';
-  return n + ' ms';
-}
-// 开关徽标：开启=accent 色、关闭=灰，全部走语义色板变量（不用 Tailwind 硬编码色）。
-function featFlag(on) {
-  return on
-    ? '<span class="text-[10px] px-2 py-0.5 rounded border font-semibold shrink-0" style="color:var(--c-accent-2);border-color:var(--c-accent);background:rgba(99,102,241,.12)">开启</span>'
-    : '<span class="text-[10px] px-2 py-0.5 rounded border font-semibold shrink-0" style="color:var(--c-text-mute);border-color:var(--c-line);background:var(--c-inset-soft)">关闭</span>';
-}
-// 名称与 detail 里的动态值必须先 esc 再拼接。
-function featRow(name, on, detail) {
-  return '<div class="flex items-start justify-between gap-3 py-2 border-t border-slate-800/60">' +
-    '<div class="min-w-0"><p class="text-xs font-semibold text-slate-200">' + name + '</p>' +
-    (detail ? '<p class="text-[11px] text-slate-400 mt-0.5 break-all">' + detail + '</p>' : '') + '</div>' +
-    featFlag(on) + '</div>';
-}
-function renderChannelHealth(hc) {
-  const el = document.getElementById('healthCardBody');
-  if (!el) return;
-  if (!hc || hc.enabled !== true) {
-    el.innerHTML = emptyState('fa-heart-pulse', '探活未启用（设置 HEALTH_CHECK_INTERVAL_MS 后开启）');
-    return;
-  }
-  const ch = hc.channel;
-  // 启动后还没跑过第一个探活周期：lastResult 为 null，显式说"等待首次探活"。
-  if (!ch || !ch.lastResult) {
-    el.innerHTML = emptyState('fa-hourglass-half', '等待首次探活（每 ' + esc(fmtInterval(hc.intervalMs)) + ' 一轮）');
-    return;
-  }
-  const last = ch.lastResult;
-  const ok = last.ok === true;
-  const failures = Number(ch.consecutiveFailures) || 0;
-  const up = Number(ch.uptimePercent);
-  const cell = (label, valueHtml) =>
-    '<div class="inset-card-soft rounded-lg p-3"><p class="text-[11px] text-slate-400 font-medium">' + label + '</p>' +
-    '<div class="text-sm font-bold mt-1">' + valueHtml + '</div></div>';
-  const stateHtml = ok
-    ? '<span style="color:var(--c-success)"><i aria-hidden="true" class="fa-solid fa-circle-check"></i> 成功' + (last.status != null ? ' · HTTP ' + esc(last.status) : '') + '</span>'
-    : '<span style="color:var(--c-danger-2)"><i aria-hidden="true" class="fa-solid fa-circle-xmark"></i> 失败' + (last.status != null ? ' · HTTP ' + esc(last.status) : '（网络层）') + '</span>';
-  // 连续失败 ≥2 是后端开始告警的阈值，用 danger；单次抖动用 warn；健康用 success。
-  const failColor = failures >= 2 ? 'var(--c-danger-2)' : failures > 0 ? 'var(--c-warn)' : 'var(--c-success)';
-  el.innerHTML =
-    '<div class="grid grid-cols-2 gap-2">' +
-      cell('最近探活', stateHtml) +
-      cell('延迟', (last.durationMs != null ? esc(last.durationMs) : '—') + (last.durationMs != null ? ' ms' : '')) +
-      cell('连续失败', '<span style="color:' + failColor + '">' + failures + ' 次</span>') +
-      cell('可用率', '<span style="color:' + (up < 100 ? 'var(--c-warn)' : 'var(--c-success)') + '">' + esc(up) + '%</span>') +
-    '</div>' +
-    (!ok && last.error ? '<p class="text-[11px] mt-2 break-all" style="color:var(--c-warn)">失败原因：' + esc(last.error) + '</p>' : '') +
-    (last.at ? '<p class="text-[11px] text-slate-500 mt-2">探活时刻：' + esc(fmtTime(last.at)) + '</p>' : '');
-}
-function renderFeatureFlags(d) {
-  const el = document.getElementById('featuresCardBody');
-  if (!el) return;
-  const hc = d.healthCheck || {};
-  const wh = d.webhook || {};
-  const pv = d.promptVersions || {};
-  const rl = d.rateLimit || {};
-  const ma = d.modelAccess || {};
-  const al = d.auditLog || {};
-  const whParts = [];
-  if (wh.costThreshold != null) whParts.push('成本 ≥ $' + esc(wh.costThreshold));
-  if (wh.errorRateThreshold != null) whParts.push('错误率 ≥ ' + esc(Math.round(Number(wh.errorRateThreshold) * 1000) / 10) + '%');
-  const mode = String(ma.mode || 'off');
-  const modeNames = { allowlist: '白名单模式（MODEL_ALLOWLIST）', blocklist: '黑名单模式（MODEL_BLOCKLIST）' };
-  const listHtml = Array.isArray(ma.list) && ma.list.length ? '：' + esc(ma.list.join(', ')) : '';
-  el.innerHTML =
-    featRow('通道健康检查', hc.enabled === true, '每 ' + esc(fmtInterval(hc.intervalMs)) + ' 探活一次（HEALTH_CHECK_INTERVAL_MS）') +
-    featRow('Webhook 告警', wh.enabled === true,
-      whParts.length ? whParts.join(' · ') + '（WEBHOOK_URL 已配置，地址不回显）' : '未配置 WEBHOOK_URL') +
-    featRow('Prompt 版本', pv.enabled === true,
-      pv.enabled ? '快照目录：' + esc(pv.dir) : '设置 PROMPT_VERSIONS=on 后启用') +
-    featRow('请求限流', rl.rpm != null || rl.tpm != null,
-      (rl.rpm != null ? 'RPM ' + esc(rl.rpm) : 'RPM 未设') + ' · ' + (rl.tpm != null ? 'TPM ' + esc(rl.tpm) : 'TPM 未设')) +
-    featRow('模型访问控制', mode !== 'off',
-      (modeNames[mode] || esc(mode)) + listHtml + (mode === 'off' ? '（未设置名单，全部放行）' : '')) +
-    featRow('审计日志', al.enabled === true, '落盘路径：' + esc(al.path || '—'));
-}
-async function loadFeatures() {
-  const healthEl = document.getElementById('healthCardBody');
-  const featEl = document.getElementById('featuresCardBody');
-  if (!healthEl || !featEl) return;
-  showSkeletonIfEmpty(healthEl, skeletonCards(1, 40));
-  showSkeletonIfEmpty(featEl, skeletonCards(1, 40));
-  const { ok, data, error } = await apiJson('/api/features');
-  if (!ok || !data) {
-    // 30s 轮询静默降级：不弹 toast 刷屏，卡片里显式存疑即可。
-    const msg = '运行能力状态读取失败：' + (error || '响应缺少数据');
-    healthEl.innerHTML = emptyState('fa-plug-circle-exclamation', msg);
-    featEl.innerHTML = emptyState('fa-plug-circle-exclamation', msg);
-    return;
-  }
-  renderChannelHealth(data.healthCheck);
-  renderFeatureFlags(data);
-}
-
-async function refreshOverview() {
-  await Promise.all([fetchStatus(), loadOverviewUsage(), loadFeatures()]);
-  showToast('状态已刷新', 'success');
-}
-
-async function toggleEngine() {
-  const want = !lastEngineRunning;
-  const { ok, data, error } = await apiJson('/api/gateway/toggle', {
-    method: 'POST', headers: JSON_HDR, body: JSON.stringify({ running: want }),
-  });
-  if (!ok) { showToast('切换引擎状态失败：' + error, 'error'); fetchStatus(); return; }
-  // 以后端回显为准，而不是假设它一定按我们提交的值改了。
-  if (data && data.running !== undefined) lastEngineRunning = !!data.running;
-  showToast(want ? '引擎已启动' : '引擎已暂停，新的 /v1/* 请求会被拒绝', want ? 'success' : 'info');
-  fetchStatus();
-}
-
-async function startBrowserLogin() {
-  const btn = document.getElementById('browserAuthBtn');
-  const original = btn.innerHTML;
-  btn.innerHTML = '<i aria-hidden="true" class="fa-solid fa-spinner fa-spin"></i> 正在等待浏览器授权...';
-  btn.disabled = true;
-  try {
-    const { ok, data, error } = await apiJson('/api/auth/browser-login', { method:'POST' });
-    if (ok && data.status === 'success') { showToast('登录成功：' + ((data.account && data.account.name) || '新账号'), 'success'); loadAccounts(); fetchStatus(); }
-    else showToast('浏览器登录失败：' + ((data && data.error) || error), 'error');
-  } catch (e) { showToast('浏览器登录失败：' + e.message, 'error'); }
-  finally { btn.innerHTML = original; btn.disabled = false; }
-}
-
-function showLoginModal(){ modalReturnFocus = document.activeElement; document.getElementById('loginModal').classList.remove('hidden'); document.getElementById('loginApiKey').focus(); }
-// 重开弹窗时清掉上一次的报错，否则空字段旁边还挂着"API Key 不能为空"。
-function hideLoginModal(){
-  document.getElementById('loginModal').classList.add('hidden');
-  const e = document.getElementById('loginError'); if (e) { e.classList.add('hidden'); e.innerText = ''; }
-  // 在 showLoginModal 里同步记下的触发元素上归还焦点。放在 MutationObserver 里取
-  // activeElement 是不可靠的：那时弹窗内部的 focus() 已经执行过了（实测会把焦点
-  // 留在弹窗里的输入框上，而它已经随弹窗一起隐藏）。
-  const back = modalReturnFocus;
-  modalReturnFocus = null;
-  if (back && document.contains(back) && back.getClientRects().length) back.focus();
-}
-
-async function submitLogin() {
-  const apiKey = document.getElementById('loginApiKey').value.trim();
-  const name = document.getElementById('loginNickname').value.trim();
-  const errEl = document.getElementById('loginError');
-  if (!apiKey) { errEl.innerText='API Key 不能为空'; errEl.classList.remove('hidden'); return; }
-  const { ok, data, error } = await apiJson('/api/auth/manual-login', { method:'POST', headers: JSON_HDR, body: JSON.stringify({ apiKey, name }) });
-  if (ok && data.status === 'success') { hideLoginModal(); document.getElementById('loginApiKey').value=''; loadAccounts(); fetchStatus(); }
-  else { errEl.innerText = (data && data.error) || error || '登录失败'; errEl.classList.remove('hidden'); }
-}
-
-async function loadAccounts() {
-  const grid = document.getElementById('accountsGrid');
-  showSkeletonIfEmpty(grid, skeletonCards(2, 60));
-  // 账号列表与额度并行取：额度失败只降级（不显示额度徽标），不阻塞账号卡片。
-  const [accRes, usageRes] = await Promise.all([apiJson('/api/accounts'), apiJson('/api/usage/aggregate')]);
-  const { ok, data, error } = accRes;
-  if (!ok || !Array.isArray(data.accounts)) {
-    // 后端 500 时 data 形如 {error:...}，照原样 .map 会 TypeError，网格停在旧列表上 ——
-    // 于是"删除账号失败"在界面上的表现是"点了没反应"。
-    grid.innerHTML = '<div class="col-span-full text-amber-400 text-sm">账号列表读取失败：'
-      + esc(error || (data && data.error) || '响应缺少 accounts 字段') + '</div>';
-    return;
-  }
-  if (!data.accounts.length) { grid.innerHTML = emptyState('fa-users-gear', '暂无账号，用右上角按钮添加第一个账号'); return; }
-  // account.id -> 额度数据映射，供卡片渲染额度徽标。
-  const usageById = {};
-  if (usageRes.ok && usageRes.data && Array.isArray(usageRes.data.accountsUsage)) {
-    usageRes.data.accountsUsage.forEach(u => { if (u.account && u.account.id) usageById[u.account.id] = u; });
-  }
-  grid.innerHTML = data.accounts.map(acc =>
-    '<div class="bg-slate-900 border ' + (acc.isActive ? 'border-indigo-500 shadow-lg shadow-indigo-500/10' : 'border-slate-800') + ' p-5 rounded-xl space-y-3">' +
-      '<div class="flex items-center justify-between">' +
-        '<div class="flex items-center space-x-3">' +
-          '<div class="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-xs">' + esc((acc.name||'?').charAt(0).toUpperCase()) + '</div>' +
-          '<div><h4 class="font-bold text-sm text-white flex items-center gap-2">' + esc(acc.name) +
-          (acc.isActive ? ' <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-semibold border border-emerald-500/20">当前</span>' : '') +
-          ' ' + (acc.userName || acc.email ? badge('OAuth', 'sky', '浏览器授权登录的账号') : badge('API Key', 'slate', '手动粘贴 API Key 的账号')) +
-          '</h4><p class="text-xs text-slate-400">' + esc(acc.userName ? '@'+acc.userName : (acc.email || 'API Key')) + '</p></div>' +
-        '</div>' +
-        '<div class="flex items-center space-x-2">' +
-          (!acc.isActive ? '<button data-action="activate" data-id="' + esc(acc.id) + '" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-indigo-400 rounded-lg border border-slate-700">设为当前</button>' : '') +
-          '<button data-action="delete" aria-label="移除该账号" data-id="' + esc(acc.id) + '" class="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg hover:bg-rose-500/10 transition"><i aria-hidden="true" class="fa-solid fa-trash-can text-xs"></i></button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">' +
-        '<span>Key：<code class="font-mono text-slate-300">' + esc(acc.apiKeyMasked) + '</code></span>' +
-        '<span class="flex items-center gap-1.5">' + quotaBadge(usageById[acc.id]) + '<span>添加于：' + esc(new Date(acc.addedAt).toLocaleDateString()) + '</span></span>' +
-      '</div>' +
-    '</div>'
-  ).join('');
-}
-
-// 账号卡片按钮走事件委托：不用内联 onclick 拼 JS 字符串，转义面更小。
-function bindAccountActionsOnce() {
-  const grid = document.getElementById('accountsGrid');
-  if (!grid || grid.dataset.bound) return;
-  grid.dataset.bound = '1';
-  grid.addEventListener('click', (e) => {
-    const btn = e.target instanceof Element ? e.target.closest('[data-action]') : null;
-    if (!btn) return;
-    const id = btn.dataset.id || '';
-    if (btn.dataset.action === 'activate') setActiveAcc(id);
-    else if (btn.dataset.action === 'delete') deleteAcc(id);
-  });
-}
-
-// 三个写操作都必须看结果：后端现在失败会返回 500，而这里此前把响应整个丢掉、
-// 无条件重载列表，用户看到"已切换/已删除"但其实没写进 config.json。
-async function setActiveAcc(id){ const {ok,error}=await apiJson('/api/accounts/active',{method:'POST',headers:JSON_HDR,body:JSON.stringify({accountId:id})}); if(!ok){ showToast('切换账号失败：'+error,'error'); } loadAccounts(); fetchStatus(); }
-async function deleteAcc(id){ if(!(await uiConfirm('确定移除该账号？'))) return; const {ok,error}=await apiJson('/api/accounts/delete',{method:'POST',headers:JSON_HDR,body:JSON.stringify({accountId:id})}); if(!ok){ showToast('删除账号失败：'+error,'error'); } else { showToast('账号已移除','success'); } loadAccounts(); fetchStatus(); }
-async function changeRotationMode(mode){ const {ok,error}=await apiJson('/api/accounts/rotation',{method:'POST',headers:JSON_HDR,body:JSON.stringify({rotationMode:mode})}); if(!ok){ showToast('保存轮转模式失败：'+error+'（下拉框将在下次轮询被弹回）','error'); } loadAccounts(); fetchStatus(); }
-
-async function loadUsageInit() {
-  loadUsageOverview();
-  const { ok, data, error } = await apiJson('/api/usage/aggregate');
-  const select = document.getElementById('usageAccountSelect');
-  if (!ok || !Array.isArray(data.accountsUsage)) {
-    globalUsageCache = [];
-    select.innerHTML = '';
-    showToast('额度数据读取失败：' + (error || '响应缺少 accountsUsage'), 'error');
-    return;
-  }
-  globalUsageCache = data.accountsUsage;
-  select.innerHTML = globalUsageCache.map(u => { const a = u.account || {}; return '<option value="' + esc(orDash(a.id)) + '">' + esc(orDash(a.name)) + ' (' + esc(orDash(a.apiKeyMasked)) + ')' + (a.isActive?' [当前]':'') + '</option>'; }).join('');
-  // 选中的账号可能已被删除：不在列表里就回落到第一个，否则下拉框空白而卡片
-  // 还留着上一个账号的数字。
-  if (!globalUsageCache.some(u => u.account && u.account.id === selectedUsageAccountId)) {
-    selectedUsageAccountId = globalUsageCache.length > 0 ? globalUsageCache[0].account.id : null;
-  }
-  select.value = selectedUsageAccountId || '';
-  renderUsageForAccount(selectedUsageAccountId);
-}
-
-// ─── 官方用量总览（Total Tokens / Total Runs / 成功率 / 月度限额）──────────────
-
-function ovFmtNum(n){ return Number(n || 0).toLocaleString('en-US'); }
-function ovFmtCost(v){ const c = Number(v || 0); return '$' + (c >= 1 ? c.toFixed(2) : c.toFixed(4).replace(/0+$/, '').replace(/.$/, '')); }
-function ovFmtPct(p){ return (Math.round((Number(p) || 0) * 10) / 10) + '%'; }
-function ovFmtDate(ms){
-  const d = new Date(Number(ms));
-  if (!Number.isFinite(d.getTime())) return '--';
-  const p = n => String(n).padStart(2, '0');
-  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
-}
-// 进度条统一上色：宽度与颜色都走内联样式，布局交给 .meter，覆盖时不会丢样式。
-function paintMeter(id, pct, base){
-  const el = document.getElementById(id);
-  if (!el) return;
-  const p = Math.max(0, Math.min(100, Number(pct) || 0));
-  el.style.width = p + '%';
-  el.style.minWidth = p > 0 ? '0.5rem' : '0';
-  el.style.background = p >= 90 ? 'var(--c-danger)' : p >= 70 ? 'var(--c-warn)' : base;
-}
-
-async function loadUsageOverview() {
-  const accEl = document.getElementById('ovPeriod');
-  try {
-    const { ok, data: d, error } = await apiJson('/api/usage/overview');
-    if (!ok || (d && d.error)) {
-      const msg = (d && d.error) || error || '未知错误';
-      accEl.innerText = String(msg);
-      // 之前这里 return 但四张卡片留着上一次的成功数值，且没有任何"这是旧数据"的
-      // 标记；出错时至少让卡片显式存疑。
-      ['ovTotalTokens','ovTotalRuns','ovSuccessRate'].forEach(id => { const e=document.getElementById(id); if(e) e.innerText='—'; });
-      const det = document.getElementById('ovTokensDetail'); if (det) det.innerText = '';
-      return;
-    }
-    const s = d.summary || {};
-    document.getElementById('ovTotalTokens').innerText = ovFmtNum(s.totalTokens);
-    document.getElementById('ovTokensDetail').innerText = '输入 ' + ovFmtNum(s.totalTokensIn) + ' · 输出 ' + ovFmtNum(s.totalTokensOut);
-    document.getElementById('ovTotalRuns').innerText = ovFmtNum(s.totalRuns);
-    document.getElementById('ovRunsDetail').innerText = '成功 ' + ovFmtNum(s.completedCount) + ' · 失败 ' + ovFmtNum(s.failedCount);
-    document.getElementById('ovSuccessRate').innerText = s.successRate != null ? ovFmtPct(s.successRate) : '--';
-    accEl.innerText = s.periodBasis === 'last-30-days' ? '统计口径：近 30 天' : '统计口径：当前计费月';
-
-    const mo = (d.limits || {}).monthly;
-    if (mo && mo.cap > 0) {
-      document.getElementById('ovMonthly').innerText = ovFmtPct(mo.pct);
-      const bar = document.getElementById('ovMonthlyBar');
-      bar.style.width = Math.min(100, Math.max(0, mo.pct)) + '%';
-      bar.className = 'h-1.5 rounded-full transition-all duration-500 ' + (mo.pct >= 90 ? 'bg-rose-500' : mo.pct >= 70 ? 'bg-amber-500' : 'bg-emerald-500');
-      document.getElementById('ovMonthlyDetail').innerText = '已用 ' + ovFmtCost(mo.used) + ' / ' + ovFmtCost(mo.cap) + ' · 剩余 ' + ovFmtCost(mo.remaining);
-    } else {
-      document.getElementById('ovMonthly').innerText = '无限制';
-      document.getElementById('ovMonthlyDetail').innerText = '按量计费';
-    }
-
-    const pl = d.plan;
-    if (pl) {
-      document.getElementById('cyclePlan').innerText = pl.name ? '· ' + pl.name : '';
-      document.getElementById('cycleRenew').innerText = pl.cancelAtPeriodEnd ? '到期不续费' : '到期自动续费';
-      document.getElementById('cycleDays').innerText = (pl.daysLeft != null) ? pl.daysLeft : '--';
-      const cpct = Math.min(100, Math.max(0, Number(pl.cyclePct) || 0));
-      paintMeter('cycleBar', cpct, 'var(--c-success)');
-      document.getElementById('cycleRange').innerText = (pl.currentPeriodStart && pl.currentPeriodEnd)
-        ? ovFmtDate(pl.currentPeriodStart) + ' → ' + ovFmtDate(pl.currentPeriodEnd) + ' · 已过 ' + ovFmtPct(pl.cyclePct)
-        : '周期时间未知';
-    } else {
-      document.getElementById('cyclePlan').innerText = '';
-      document.getElementById('cycleRenew').innerText = '--';
-      document.getElementById('cycleDays').innerText = '--';
-      document.getElementById('cycleRange').innerText = '无法获取订阅信息';
-    }
-  } catch (e) { accEl.innerText = '总览加载失败'; }
-}
-
-function renderUsageForAccount(accId) {
-  selectedUsageAccountId = accId;
-  const t = globalUsageCache.find(u => u.account.id === accId) || globalUsageCache[0];
-  if (!t) return;
-  const credits = t.credits?.credits || {};
-  document.getElementById('creditMonthly').innerText = '$' + (credits.monthlyCredits||0).toFixed(2);
-  document.getElementById('creditPurchased').innerText = '$' + (credits.purchasedCredits||0).toFixed(2);
-  document.getElementById('creditFree').innerText = '$' + (credits.freeCredits||0).toFixed(2);
-  document.getElementById('creditTotalCost').innerText = '$' + (t.summary?.totalCost||0).toFixed(2);
-
-  // 先全部重置成"无数据"再按分支填充：下面两个窗口块都只有 if 没有 else，
-  // 切到一个没有 windowLimits 的账号时，屏上会留着**上一个账号**的 $x/$y 与进度条。
-  document.getElementById('window5hText').innerText = '无数据';
-  document.getElementById('window5hReset').innerText = '';
-  document.getElementById('windowWeeklyText').innerText = '无数据';
-  document.getElementById('windowWeeklyReset').innerText = '';
-  paintMeter('window5hBar', 0, 'var(--c-accent)');
-  paintMeter('windowWeeklyBar', 0, 'var(--c-violet)');
-
-  const w5h = t.credits?.windowLimits?.fiveHour;
-  if (w5h) {
-    // 上游字段直接来自 /api/usage/aggregate 的原样转发，缺字段或字符串化都要能撑住：
-    // 此前 w5h.used.toFixed(2) 一旦拿到 undefined/字符串就抛错，整个用量标签页留白。
-    const u5 = Number(w5h.used) || 0, c5 = Number(w5h.cap) || 0;
-    document.getElementById('window5hText').innerText = '$' + u5.toFixed(2) + ' / $' + c5.toFixed(2);
-    const ratio = c5 > 0 ? (u5/c5)*100 : 0;
-    paintMeter('window5hBar', ratio, 'var(--c-accent)');
-    const mins = w5h.resetAt ? Math.max(0,Math.ceil((Number(w5h.resetAt)-Date.now())/60000)) : 0;
-    document.getElementById('window5hReset').innerText = '重置时间：'+mins+' 分钟';
-    // 燃烧速率预测：由官方 used 的时间差分外推（本地历史只覆盖代理流量，
-    // 不能用来预测全账号额度）。
-    const proj = usageHistoryCache && usageHistoryCache.quotaProjection;
-    const pNote = document.getElementById('window5hProjection');
-    if (pNote) {
-      // 四个分支里只有告警分支设 className，导致变过一次红之后
-      // "采样中"/"当前无消耗"这些正常状态仍挂着告警色，看着像长期警报。
-      pNote.className = 'win-note';
-      if (!proj || proj.samples < 2 || proj.burnPerHour == null) {
-        pNote.innerText = '速率预测：采样中（需 10 分钟以上数据）';
-      } else if (proj.burnPerHour <= 0) {
-        pNote.innerText = '速率预测：当前无消耗';
-      } else if (proj.willHitCapBeforeReset === true) {
-        pNote.className = 'win-note warn';
-        pNote.innerHTML = '<i aria-hidden="true" class="fa-solid fa-triangle-exclamation"></i> 按当前 $' + proj.burnPerHour.toFixed(2) + '/h，约 <b>' + fmtDur(proj.minutesToCap) + '</b>后撞上限额（早于重置）';
-      } else {
-        pNote.className = 'win-note';
-        pNote.innerText = '按当前 $' + proj.burnPerHour.toFixed(2) + '/h 约需 ' + fmtDur(proj.minutesToCap) + ' 用完 · 重置更早到来';
-      }
-    }
-  }
-  const wk = t.credits?.windowLimits?.weekly;
-  if (wk) {
-    const uw = Number(wk.used) || 0, cw = Number(wk.cap) || 0;
-    document.getElementById('windowWeeklyText').innerText = '$' + uw.toFixed(2) + ' / $' + cw.toFixed(2);
-    const ratio = cw > 0 ? (uw/cw)*100 : 0;
-    paintMeter('windowWeeklyBar', ratio, 'var(--c-violet)');
-    const hrs = wk.resetAt ? Math.max(0,Math.ceil((Number(wk.resetAt)-Date.now())/3600000)) : 0;
-    document.getElementById('windowWeeklyReset').innerText = '重置时间：'+hrs+' 小时';
-  }
-}
-
-// 展示用汇率：官方目录价格为 USD/1M tokens，界面按此折算为人民币显示。
-// 汇率会漂移，仅作参考 —— 修改后请同步模型页副标题的折算说明。
-const USD_TO_CNY = 6.72;
-function fmtPrice(v){ if(v===undefined||v===null) return '--'; if(v===0) return 'FREE'; var c=v*USD_TO_CNY; c=c>=100?Math.round(c):Math.round(c*100)/100; return '¥' + c; }
-function fmtCtx(v){ if(!v) return '--'; if(v>=1000000){ var x=(v/1000000); return (x%1===0?x:x.toFixed(1)) + 'M'; } if(v>=1000){ var k=v/1000; return (k%1===0?k:k.toFixed(1)) + 'K'; } return String(v); }
-// ─── 模型查询：搜索 + 标签 + 排序（纯前端过滤，不新增 API）────────────────────
-let allModelsCache = [];
-let modelTagFilter = 'all';
-let modelSortMode = 'default';
-let modelQueryTimer = null;
-// 档位键名与显示名，需与 src/utils/plans.ts 的 PLAN_TIERS 保持一致。
-const PLAN_LABELS = {
-  'individual-free': 'Free', 'individual-go': 'Go', 'individual-goat': 'GOAT',
-  'individual-pro': 'Pro', 'individual-pro-v1': 'Pro (v1)', 'individual-provider': 'Provider',
-  'individual-max': 'Max', 'individual-ultra': 'Ultra', 'teams-pro': 'Team Pro',
-};
-// 判定「档位可用」只看该档位自己的布尔值；availability 缺失时退回旧的 onGoPlan。
-function isPlanOn(m, key) {
-  const a = m && m.availability;
-  if (a && Object.keys(a).length) return a[key] === true;
-  return key === 'individual-go' ? !!m.onGoPlan : false;
-}
-function higherPlanNames(avail) {
-  return ['individual-pro', 'individual-pro-v1', 'individual-provider', 'individual-max', 'individual-ultra', 'teams-pro']
-    .filter(k => avail[k] === true).map(k => PLAN_LABELS[k] || k);
-}
-const BADGE_TONES = {
-  rose: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
-  amber: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-  slate: 'bg-slate-500/15 text-slate-300 border-slate-500/30',
-  emerald: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
-  sky: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
-};
-function badge(text, tone, title) {
-  return '<span class="text-[10px] px-2 py-0.5 rounded border font-semibold ' + BADGE_TONES[tone] + '"' +
-    (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(text) + '</span>';
-}
-// 档位药丸：可用=实心强调色，不可用=灰底。两枚固定占位，卡片高度一致，
-// 整列纵向对齐后即可一眼比较 GO / GOAT 的差别。
-// 账号额度徽标：5h 窗口使用率，数据来自 /api/usage/aggregate 的原样转发。
-// credits 缺失或无上限（cap<=0）时不显示，避免把「未知」画成「正常」。
-function quotaBadge(u) {
-  const w = u && u.credits && u.credits.windowLimits && u.credits.windowLimits.fiveHour;
-  const cap = w ? Number(w.cap) || 0 : 0;
-  if (!w || cap <= 0) return '';
-  const pct = Math.round((Number(w.used) || 0) / cap * 100);
-  if (pct >= 90) return badge('额度告急', 'rose', '5 小时窗口已用 ' + pct + '%');
-  if (pct >= 70) return badge('额度偏高', 'amber', '5 小时窗口已用 ' + pct + '%');
-  return badge('额度正常', 'emerald', '5 小时窗口已用 ' + pct + '%');
-}
-function planPill(key, label, on, onTone) {
-  const cls = on ? onTone : 'bg-slate-800/40 text-slate-400 border-slate-700/70';
-  return '<span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-semibold ' + cls +
-    '" title="' + (PLAN_LABELS[key] || key) + ' 档位：' + (on ? '可用' : '不可用') + '">' +
-    label + '<i aria-hidden="true" class="fa-solid ' + (on ? 'fa-check' : 'fa-xmark') + ' text-[9px] opacity-80"></i></span>';
-}
-// 模型家族：category 字段优先，其次按 id/name/提供商关键词推断（纯前端展示用）。
-function modelFamily(m) {
-  if (m && m.category) return String(m.category);
-  const s = (((m && m.id) || '') + ' ' + ((m && m.name) || '') + ' ' + ((m && m.owned_by) || '')).toLowerCase();
-  if (s.indexOf('claude') >= 0) return 'Claude';
-  if (s.indexOf('gpt') >= 0) return 'GPT';
-  if (/(^|[^a-z])o[13]([^a-z]|$)/.test(s)) return 'o 系列';
-  if (s.indexOf('gemini') >= 0) return 'Gemini';
-  if (s.indexOf('deepseek') >= 0) return 'DeepSeek';
-  if (s.indexOf('grok') >= 0) return 'Grok';
-  if (/(^|[^a-z])glm/.test(s)) return 'GLM';
-  if (s.indexOf('qwen') >= 0) return 'Qwen';
-  if (s.indexOf('llama') >= 0) return 'Llama';
-  if (/(mistral|mixtral)/.test(s)) return 'Mistral';
-  return '';
-}
-function modelMatchesTag(m, tag) {
-  const caps = m.caps || {};
-  if (tag === 'go') return isPlanOn(m, 'individual-go');
-  if (tag === 'goat') return isPlanOn(m, 'individual-goat');
-  if (tag === 'free') return !!(m.deal && m.deal.free);
-  if (tag === 'deal') return !!(m.deal && m.deal.discountPercent);
-  if (tag === 'vision') return !!(caps.vision || m.supports_vision);
-  if (tag === 'reason') return !!caps.reasoning;
-  return true;
-}
-function modelMatchesQuery(m, q) {
-  if (!q) return true;
-  const hay = ((m.id || '') + ' ' + (m.name || '') + ' ' + (m.owned_by || '')).toLowerCase();
-  return q.split(/\s+/).filter(Boolean).every(kw => hay.includes(kw));
-}
-function sortModels(list) {
-  const price = (m, k) => { const v = m.pricing && m.pricing[k]; return (v === undefined || v === null) ? Infinity : v; };
-  const ctx = (m) => (m.context_window || m.context_length || 0);
-  const arr = list.slice();
-  if (modelSortMode === 'inAsc') arr.sort((a, b) => price(a, 'input') - price(b, 'input'));
-  else if (modelSortMode === 'inDesc') arr.sort((a, b) => { const pa = price(a, 'input'), pb = price(b, 'input'); return (pb === Infinity ? -1 : pb) - (pa === Infinity ? -1 : pa); });
-  else if (modelSortMode === 'outAsc') arr.sort((a, b) => price(a, 'output') - price(b, 'output'));
-  else if (modelSortMode === 'outDesc') arr.sort((a, b) => { const pa = price(a, 'output'), pb = price(b, 'output'); return (pb === Infinity ? -1 : pb) - (pa === Infinity ? -1 : pa); });
-  else if (modelSortMode === 'cacheReadAsc') arr.sort((a, b) => price(a, 'cacheRead') - price(b, 'cacheRead'));
-  else if (modelSortMode === 'cacheReadDesc') arr.sort((a, b) => { const pa = price(a, 'cacheRead'), pb = price(b, 'cacheRead'); return (pb === Infinity ? -1 : pb) - (pa === Infinity ? -1 : pa); });
-  else if (modelSortMode === 'ctxDesc') arr.sort((a, b) => ctx(b) - ctx(a));
-  return arr;
-}
-function highlightHit(text, q) {
-  const safe = esc(text);
-  const kw = (q || '').trim();
-  if (!kw) return safe;
-  const words = kw.split(/\s+/).filter(Boolean).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  if (!words.length) return safe;
-  try { return safe.replace(new RegExp('(' + words.join('|') + ')', 'gi'), '<mark>$1</mark>'); }
-  catch { return safe; }
-}
-function applyModelFilter() {
-  const input = document.getElementById('modelSearch');
-  const q = ((input && input.value) || '').trim().toLowerCase();
-  const clearBtn = document.getElementById('modelSearchClear');
-  if (clearBtn) clearBtn.classList.toggle('hidden', !q);
-  const filtered = sortModels(allModelsCache.filter(m => modelMatchesTag(m, modelTagFilter) && modelMatchesQuery(m, q)));
-  const meta = document.getElementById('modelsCount');
-  if (meta) {
-    const goCount = allModelsCache.filter(m => isPlanOn(m, 'individual-go')).length;
-    const goatCount = allModelsCache.filter(m => isPlanOn(m, 'individual-goat')).length;
-    meta.innerText = '共 ' + allModelsCache.length + ' 个 · 命中 ' + filtered.length +
-      ' 个 · Go 档可用 ' + goCount + ' 个 · GOAT 档可用 ' + goatCount + ' 个';
-  }
-  const c = document.getElementById('modelsList');
-  if (!filtered.length) {
-    c.innerHTML = '<div class="col-span-full">' + emptyState('fa-magnifying-glass', '没有匹配的模型，换个关键词或标签试试') + '</div>';
-    return;
-  }
-  c.innerHTML = filtered.map(m => {
-    const p = m.pricing || {};
-    const caps = m.caps || {};
-    const avail = m.availability || {};
-    const goOn = isPlanOn(m, 'individual-go');
-    const goatOn = isPlanOn(m, 'individual-goat');
-    const higher = higherPlanNames(avail);
-    let tags = '';
-    const fam = modelFamily(m);
-    if (fam) tags += badge(fam, 'sky', '模型家族');
-    if (m.deal && m.deal.free) tags += badge('FREE', 'rose');
-    else if (m.deal && m.deal.discountPercent) tags += badge('DEAL ' + m.deal.discountPercent + '%', 'amber');
-    // GO/GOAT 都不可用时，用一枚中性徽章说明它属于更高的付费档位，避免误读成"不可调用"。
-    if (!goOn && !goatOn && higher.length) {
-      tags += badge('更高档位', 'slate', '仅在这些档位可用：' + higher.join(' · '));
-    }
-    const capsStr = '文字' + (caps.text ? '✓' : '✗') + ' · 视觉' + ((caps.vision || m.supports_vision) ? '✓' : '✗') + ' · 推理' + (caps.reasoning ? '✓' : '✗');
-    return '<div class="p-3 card rounded-lg hover:border-indigo-500/40 transition">' +
-      '<div class="flex items-start justify-between gap-2">' +
-        '<div class="min-w-0"><p class="font-bold text-xs text-white break-all">' + highlightHit(m.id, q) + '</p>' +
-        '<p class="text-[11px] text-slate-400 mt-0.5">提供商：' + highlightHit(m.owned_by, q) + (m.name && m.name !== m.id ? ' · ' + highlightHit(m.name, q) : '') + '</p></div>' +
-        '<div class="flex gap-1 flex-wrap justify-end shrink-0">' + tags + '</div>' +
-      '</div>' +
-      '<div class="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-slate-400">' +
-        '<span>上下文：<span class="text-slate-200">' + fmtCtx(m.context_window || m.context_length) + '</span></span>' +
-        '<span>输入：<span class="text-slate-200">' + fmtPrice(p.input) + '</span></span>' +
-        '<span>输出：<span class="text-slate-200">' + fmtPrice(p.output) + '</span></span>' +
-        '<span>缓存读：<span class="text-slate-200">' + fmtPrice(p.cacheRead) + '</span></span>' +
-        '<span>缓存写：<span class="text-slate-200">' + fmtPrice(p.cacheWrite) + '</span></span>' +
-        '<span class="text-slate-500">' + capsStr + '</span>' +
-      '</div>' +
-      '<div class="mt-2 pt-2 border-t border-slate-800/70 flex items-center gap-1.5">' +
-        '<span class="text-[10px] text-slate-500">档位</span>' +
-        planPill('individual-go', 'GO', goOn, 'bg-indigo-500/15 text-indigo-300 border-indigo-500/40') +
-        planPill('individual-goat', goatOn ? '<i aria-hidden="true" class="fa-solid fa-crown text-[9px]"></i>GOAT' : 'GOAT', goatOn, 'bg-amber-500/15 text-amber-300 border-amber-500/40') +
-      '</div>' +
-    '</div>';
-  }).join('');
-}
-function bindModelQueryOnce() {
-  const input = document.getElementById('modelSearch');
-  if (!input || input.dataset.bound) return;
-  input.dataset.bound = '1';
-  input.addEventListener('input', () => { clearTimeout(modelQueryTimer); modelQueryTimer = setTimeout(applyModelFilter, 150); });
-  input.addEventListener('keydown', (e) => { if (e.key === 'Escape') { input.value = ''; applyModelFilter(); } });
-  document.getElementById('modelSearchClear').onclick = () => { input.value = ''; input.focus(); applyModelFilter(); };
-  document.getElementById('modelSort').onchange = (e) => { modelSortMode = e.target.value; applyModelFilter(); };
-  document.querySelectorAll('#modelTagRow .mfilter-chip').forEach(btn => {
-    btn.onclick = () => {
-      modelTagFilter = btn.dataset.tag;
-      document.querySelectorAll('#modelTagRow .mfilter-chip').forEach(b => b.classList.toggle('on', b === btn));
-      applyModelFilter();
-    };
-  });
-}
-async function loadModels(force) {
-  const btn = document.getElementById('modelsRefreshBtn');
-  if (force) { const r = await apiJson('/v1/models/refresh', { method: 'POST' }); if (!r.ok) showToast('刷新模型目录失败：' + r.error, 'error'); }
-  showSkeletonIfEmpty(document.getElementById('modelsList'), skeletonCards(6, 80));
-  if (btn) { btn.disabled = true; btn.classList.add('opacity-60'); }
-  try {
-    const { ok, data, error } = await apiJson('/v1/models');
-    if (!ok) { showToast('模型列表读取失败：' + error, 'error'); return; }
-    allModelsCache = Array.isArray(data.data) ? data.data : [];
-    bindModelQueryOnce();
-    applyModelFilter();
-  } finally {
-    if (btn) { btn.disabled = false; btn.classList.remove('opacity-60'); }
-  }
-}
-
-// 日志结构化高亮：先 esc 再按词法着色（模型名 / 错误码），插入的 span 均为本页自有标签。
-// 单遍 alternation 替换：replace 不会重扫已产出的替换文本，天然避免标签嵌套污染。
-const LOG_TOKEN_RE = /\b(HTTP ?-?\d{3}|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EACCES|EPIPE)\b|\b([45]\d{2})\b|\b((?:claude|gpt|gemini|deepseek|glm|qwen|grok|mistral|mixtral)[\w.\-]*)/gi;
-function logHighlight(msg) {
-  return esc(msg).replace(LOG_TOKEN_RE, function (m, errTok, code, model) {
-    if (errTok) return '<span class="lg-err">' + errTok + '</span>';
-    if (code) return '<span class="lg-err">' + code + '</span>';
-    return '<span class="lg-model">' + model + '</span>';
-  });
-}
-
-async function loadLogs() {
-  const { ok, data, error } = await apiJson('/api/logs');
-  const box = document.getElementById('logsBox');
-  if (!ok || !Array.isArray(data.logs)) {
-    box.innerHTML = '<p class="text-amber-400 font-mono text-[11px]">日志读取失败：' + esc(error || '响应缺少 logs') + '</p>';
-    return;
-  }
-  if (!data.logs.length) { box.innerHTML = emptyState('fa-terminal', '暂无日志，网关事件会在这里滚动显示'); return; }
-  box.innerHTML = data.logs.map(l => {
-    const lc = l.level==='error'?'text-rose-400':l.level==='warn'?'text-amber-400':'text-slate-300';
-    const lv = String(l.level || 'info').toUpperCase();
-    const lvCls = l.level==='error'?'lg-lv-err':l.level==='warn'?'lg-lv-warn':'lg-lv-info';
-    return '<p class="'+lc+' font-mono text-[11px] py-0.5 break-all"><span class="text-slate-500">['+esc(l.timestamp)+']</span> <span class="lg-lv '+lvCls+'">'+esc(lv)+'</span> '+logHighlight(l.message)+'</p>';
-  }).join('');
-  // 只有本来就在底部时才跟随滚动。此前每 5s 无条件跳到最新一行，
-  // 想往上翻一条旧日志会在 5 秒内被弹回去，实际上没法读。
-  if (box.scrollHeight - box.scrollTop - box.clientHeight < 40) box.scrollTop = box.scrollHeight;
-}
-
-async function clearLogs(){ const {ok,error}=await apiJson('/api/logs/clear',{method:'POST'}); if(!ok) showToast('清空日志失败：'+error,'error'); loadLogs(); }
-
-// ─── 会话明细 ────────────────────────────────────────────────────────────────
-let usageTrendChart = null;
-let usageModelChart = null;
-let usageHistoryCache = null;
-
-function fmtTokens(n){ if(!n) return '0'; if(n>=1000000){var x=n/1000000; return (x%1===0?x:x.toFixed(1))+'M';} if(n>=1000){var k=n/1000; return (k%1===0?k:k.toFixed(1))+'K';} return String(n); }
-function fmtTokensM(n){ if(!n) return '0'; var x=n/1000000; return (x>=100?Math.round(x):x>=10?x.toFixed(1):x.toFixed(2))+'M'; }
-function fmtUsd(v){ return '$' + (v||0).toFixed(4); }
-function fmtUsdShort(v){ var x=v||0; if(x>=1000) return '$'+(x/1000).toFixed(2)+'k'; if(x>=1) return '$'+x.toFixed(2); return '$'+x.toFixed(4); }
-function fmtMs(ms){ if(!ms) return '--'; if(ms>=60000){var m=Math.floor(ms/60000),s=(ms%60000)/1000; return m+'m '+s.toFixed(1)+'s';} if(ms>=1000) return (ms/1000).toFixed(1)+'s'; return Math.round(ms)+'ms'; }
-function fmtDur(mins){ if(mins==null) return '--'; if(mins>=1440) return Math.floor(mins/1440)+'天'; if(mins>=60) return Math.floor(mins/60)+'h '+String(mins%60).padStart(2,'0')+'m'; return mins+'m'; }
-// 服务端同名的展示函数在前端不可用，这里用等价实现：只取路径末段
-// （完整路径可能含用户名，默认不直接展示，悬停才看全路径）。
-function projectDisplayName(p){ if(!p) return '未识别'; var parts=String(p).split(/[\/]/).filter(Boolean); return parts.length?parts[parts.length-1]:String(p); }
-// 端到端吞吐：口径与后端 throughputTokS 一致（含排队/重试/网络，非模型生成速度）。
-function fmtTokS(out, ms){ if(!out||out<=0||!ms||ms<=0) return '<span class="text-slate-600">—</span>'; var v=out/(ms/1000); return v.toFixed(1)+' t/s'; }
-function fmtTime(ts){ try { const d=new Date(ts); return d.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); } catch { return ts; } }
-
-async function loadUsageHistory(){
-  showSkeletonIfEmpty(document.getElementById('usageTableBody'), skeletonRows(10, 6));
-  showSkeletonIfEmpty(document.getElementById('perfTableBody'), skeletonRows(6, 4));
-  showSkeletonIfEmpty(document.getElementById('projectTableBody'), skeletonRows(4, 4));
-  showSkeletonIfEmpty(document.getElementById('sessionTableBody'), skeletonRows(4, 4));
-  const { ok, data: hist, error } = await apiJson('/api/usage/history');
-  if (!ok) { showToast('用量历史读取失败：' + error, 'error'); return; }
-  usageHistoryCache = hist;
-  const data = usageHistoryCache;
-  const s = data.total;
-
-  document.getElementById('usageTodayToken').innerText = fmtTokensM(data.today.input + data.today.output) + ' token';
-  document.getElementById('usageTodayRuns').innerText = data.today.runs + ' 次请求';
-  document.getElementById('usageWeekCost').innerText = fmtUsd(data.week.cost);
-  document.getElementById('usageWeekToken').innerText = fmtTokensM(data.week.input + data.week.output) + ' token · ' + data.week.runs + ' 次';
-  document.getElementById('usageMonthCost').innerText = fmtUsd(data.month.cost);
-  document.getElementById('usageMonthToken').innerText = fmtTokensM(data.month.input + data.month.output) + ' token · ' + data.month.runs + ' 次';
-  document.getElementById('usageTotalToken').innerText = fmtTokensM(s.inputTokens + s.outputTokens) + ' token';
-  document.getElementById('usageTotalRuns').innerText = s.runs + ' 次请求 · 失败 ' + s.failures;
-
-  // 缓存节省：命中缓存的输入按缓存读单价计费（约输入价的 1/50），
-  // 这里显示相比"全价输入"省下的金额 —— 解释账单为何远低于直觉值。
-  const savEl = document.getElementById('usageSavings');
-  const savNote = document.getElementById('usageSavingsNote');
-  if (savEl) {
-    const saved = s.savingsUsd || 0;
-    savEl.innerText = saved > 0 ? fmtUsdShort(saved) : '--';
-    if (saved > 0) {
-      const mult = s.savingsMultiple || 0;
-      savNote.innerText = mult > 0
-        ? '约为账面成本 ' + fmtUsdShort(s.costUsd || 0) + ' 的 ' + mult.toFixed(1) + ' 倍'
-        : '相比全价输入省下';
-    } else {
-      savNote.innerText = '暂无缓存命中记录';
-    }
-  }
-
-  // 缓存命中率：agent 场景常达 90%+，是成本远低于"输入×输入价"的主因。
-  const hitEl = document.getElementById('usageCacheHit');
-  if (hitEl) {
-    const rate = (s.cacheHitRate || 0) * 100;
-    hitEl.innerText = rate > 0
-      ? '缓存命中 ' + rate.toFixed(1) + '% · ' + fmtTokensM(s.cacheReadTokens || 0) + ' token'
-      : '缓存命中 --';
-  }
-
-  renderBillingWindow(data.billing);
-
-  const hasAnyPricing = (data.recent||[]).some(r => r.hasPricing);
-  document.getElementById('usagePricingNote').classList.toggle('hidden', hasAnyPricing);
-  usageRows = data.recent || [];
-  bindUsageTableOnce();
-  bindUsageFilterOnce();
-  renderUsageTableCurrent();
-  renderUsageCharts(data);
-  renderAttribution(data);
-  renderModelPerf(data.byModelPerf||[]);
-}
-
-// 每模型端到端吞吐/延迟分布。失败的请求不计入。
-// 吞吐与延迟的样本口径不同：输出过短（<32 token）的响应会让 tok/s 的分母趋零，
-// 得出几千 t/s 的无意义比值，因此只进延迟统计、不进吞吐统计。「样本」列显示延迟
-// 样本数，悬停可看到吞吐样本数。
-function renderModelPerf(rows){
-  const body = document.getElementById('perfTableBody');
-  if (!body) return;
-  if (!rows.length) {
-    body.innerHTML = emptyState('fa-gauge-high', '暂无性能数据：成功请求后这里显示吞吐与延迟分布', 6);
-    return;
-  }
-  body.innerHTML = rows.slice(0, 20).map(r => {
-    const t = v => (v==null ? '<span class="text-slate-600">—</span>' : v.toFixed(1)+' t/s');
-    const l = v => (v==null ? '<span class="text-slate-600">—</span>' : (v>=1000 ? (v/1000).toFixed(1)+'s' : Math.round(v)+'ms'));
-    // 旧后端（尚未重启、payload 里还没有 throughputSamples）时回退到 samples，
-    // 保持「闸门关闭」的旧观感，而不是把每一行都标成被筛选。
-    const hasGate = r.throughputSamples != null;
-    const ts = hasGate ? r.throughputSamples : r.samples;
-    const gated = hasGate && r.throughputSamples === 0;
-    const tip = hasGate
-      ? '吞吐样本 ' + ts + '（仅计输出 ≥32 token）· 延迟样本 ' + r.samples
-      : '延迟样本 ' + r.samples;
-    return '<tr class="hover:bg-slate-800/40 transition">' +
-      '<td class="px-2 py-2 font-mono text-slate-200 truncate max-w-[260px]" title="' + esc(r.model) + '">' + esc(r.model) + '</td>' +
-      '<td class="px-2 py-2 text-right ' + (gated ? 'text-slate-600' : 'text-slate-400') + '" title="' + esc(tip) + '">' + r.samples +
-        (gated ? ' <i aria-hidden="true" class="fa-solid fa-filter text-[9px]"></i>' : '') + '</td>' +
-      '<td class="px-2 py-2 text-right text-slate-300">' + t(r.tokSP50) + '</td>' +
-      '<td class="px-2 py-2 text-right text-slate-400">' + t(r.tokSP95) + '</td>' +
-      '<td class="px-2 py-2 text-right text-slate-300">' + l(r.latencyP50Ms) + '</td>' +
-      '<td class="px-2 py-2 text-right text-slate-400">' + l(r.latencyP95Ms) + '</td>' +
-    '</tr>';
-  }).join('');
-}
-
-// 项目（推断）与会话（声明）两个维度的呈现。
-// 关键：推断值必须与事实值在视觉上区分，不能让用户误以为是权威数据。
-function renderAttribution(data){
-  const a = data.attribution || {};
-  const projBody = document.getElementById('projectTableBody');
-  const sessBody = document.getElementById('sessionTableBody');
-
-  // ── 项目 ──
-  const projects = data.byProject || [];
-  const cov = document.getElementById('projectCoverage');
-  if (cov) {
-    const n = projects.filter(p => p.project).length;
-    cov.innerText = n + ' 个项目 · 已归因 ' + (a.projectsIdentified||0) + '/' + (a.totalRecords||0) + ' 条';
-  }
-  if (projBody) {
-    if (!projects.length) {
-      projBody.innerHTML = emptyState('fa-folder-tree', '暂无项目归因数据', 4);
-    } else {
-      projBody.innerHTML = projects.slice(0, 50).map(p => {
-        const name = p.project ? projectDisplayName(p.project) : '未识别';
-        // 置信度徽章：label = 较可靠；heuristic = 明确标记为推测
-        let badge = '';
-        if (p.projectSource === 'label') {
-          badge = '<span class="ml-1 px-1 py-0.5 rounded text-[9px] bg-sky-500/10 text-sky-400 border border-sky-500/20" title="来自 system prompt 的工作目录字段">标签</span>';
-        } else if (p.projectSource === 'heuristic') {
-          badge = '<span class="ml-1 px-1 py-0.5 rounded text-[9px] bg-amber-500/10 text-amber-400 border border-amber-500/20" title="按路径出现频次推测，不保证准确">推测</span>';
-        }
-        const title = p.project ? ' title="' + esc(p.project) + '"' : '';
-        const dim = p.project ? 'text-slate-200' : 'text-slate-500 italic';
-        return '<tr class="hover:bg-slate-800/40 transition">' +
-          '<td class="px-2 py-2 truncate max-w-[220px]"><span class="' + dim + '"' + title + '>' + esc(name) + '</span>' + badge + '</td>' +
-          '<td class="px-2 py-2 text-right text-slate-400">' + p.runs + (p.sessionCount ? ' <span class="text-slate-600">/' + p.sessionCount + '会话</span>' : '') + '</td>' +
-          '<td class="px-2 py-2 text-right text-slate-400">' + fmtTokensM((p.inputTokens||0)+(p.outputTokens||0)) + '</td>' +
-          '<td class="px-2 py-2 text-right text-emerald-400">' + fmtUsdShort(p.costUsd) + '</td>' +
-        '</tr>';
-      }).join('');
-    }
-  }
-
-  // ── 会话 ──
-  const sessions = data.bySession || [];
-  const scov = document.getElementById('sessionCoverage');
-  if (scov) {
-    scov.innerText = sessions.length + ' 个会话 · 已识别 ' + (a.sessionsIdentified||0) + '/' + (a.totalRecords||0) + ' 条';
-  }
-  if (sessBody) {
-    if (!sessions.length) {
-      sessBody.innerHTML = emptyState('fa-comments', '暂无携带会话 ID 的请求', 4);
-    } else {
-      sessBody.innerHTML = sessions.slice(0, 50).map(s => {
-        const shortId = esc(String(s.sessionId).slice(0, 8));
-        const pname = s.project ? esc(projectDisplayName(s.project)) : '<span class="text-slate-600">—</span>';
-        const pTitle = s.project ? ' title="' + esc(s.project) + (s.projectSource === 'heuristic' ? '（推测）' : '') + '"' : '';
-        const typeBadge = s.sessionType && s.sessionType !== 'main'
-          ? '<span class="ml-1 px-1 py-0.5 rounded text-[9px] bg-violet-500/10 text-violet-400 border border-violet-500/20">' + esc(s.sessionType) + '</span>'
-          : '';
-        const span = fmtDur(Math.max(0, Math.round((new Date(s.lastAt) - new Date(s.firstAt)) / 60000)));
-        return '<tr class="hover:bg-slate-800/40 transition">' +
-          '<td class="px-2 py-2"><span class="font-mono text-slate-200" title="' + esc(s.sessionId) + '">' + shortId + '</span>' + typeBadge +
-            '<span class="block text-[10px] text-slate-500">' + (s.agent ? esc(s.agent) + ' · ' : '') + span + '</span></td>' +
-          '<td class="px-2 py-2 text-slate-400 truncate max-w-[120px]"><span' + pTitle + '>' + pname + '</span></td>' +
-          '<td class="px-2 py-2 text-right text-slate-400">' + s.runs + '</td>' +
-          '<td class="px-2 py-2 text-right text-emerald-400">' + fmtUsdShort(s.costUsd) + '</td>' +
-        '</tr>';
-      }).join('');
-    }
-  }
-}
-
-// 峰谷计费提示：官方对部分模型（deepseek 系列）设分时价，
-// 峰时为 UTC 周一至周五 01–04 与 06–10。此处提示当前档位与切换倒计时。
-function renderBillingWindow(billing){
-  const el = document.getElementById('billingWindow');
-  if (!el) return;
-  const w = billing && billing.window;
-  const models = (billing && billing.models) || [];
-  if (!w || !models.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
-  el.classList.remove('hidden');
-
-  const peak = !!w.isPeak;
-  const tone = peak
-    ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-    : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
-  const icon = peak ? 'fa-solid fa-fire' : 'fa-solid fa-leaf';
-  const label = peak ? '峰时计费中' : '谷时计费中';
-
-  let when = '';
-  if (w.minutesUntilChange != null) {
-    when = ' · ' + fmtDur(w.minutesUntilChange) + '后转为' + (w.nextIsPeak ? '峰时' : '谷时');
-  }
-
-  // 各模型当前生效费率（只列有分时价的模型，通常 4 个）。
-  const rows = models.map(m => {
-    const a = m.activeRates || {};
-    return '<span class="inline-flex items-center gap-1.5 inset-card rounded px-2 py-1">' +
-      '<span class="text-slate-300 font-mono">' + esc(m.id) + '</span>' +
-      '<span class="text-slate-500">输入</span><span class="text-slate-200">' + fmtPrice(a.input) + '</span>' +
-      '<span class="text-slate-500">输出</span><span class="text-slate-200">' + fmtPrice(a.output) + '</span>' +
-      '<span class="text-slate-500">缓存读</span><span class="text-slate-200">' + fmtPrice(a.cacheRead) + '</span>' +
-    '</span>';
-  }).join('');
-
-  const windowsNote = w.windows ? '官方窗口：' + esc(w.windows) + ' UTC' + (w.peakHoursPerDay ? '（' + w.peakHoursPerDay + 'h/天）' : '') : '';
-
-  el.innerHTML =
-    '<div class="border ' + tone + ' rounded-lg p-3">' +
-      '<div class="flex items-center gap-2 flex-wrap">' +
-        '<span class="font-semibold text-xs"><i class="' + icon + '"></i> ' + label + '</span>' +
-        '<span class="text-xs opacity-90">' + when + '</span>' +
-        (windowsNote ? '<span class="text-[11px] opacity-70 ml-auto">' + windowsNote + '</span>' : '') +
-      '</div>' +
-      '<div class="flex gap-2 flex-wrap mt-2 text-[11px]">' + rows + '</div>' +
-    '</div>';
-}
-
-async function exportUsageCsv() {
-  // 表格里的 usageHistoryCache 只有展示用的最近 200 条；导出必须另取全量，否则
-  // "已导出 N 条"报的是被服务端截断之后的数字，拿去对账的人拿到的是残缺文件。
-  const { ok, data, error } = await apiJson('/api/usage/history?limit=50000');
-  if (!ok) { showToast('导出失败：' + error, 'error'); return; }
-  const rows = Array.isArray(data.recent) ? data.recent : [];
-  if (!rows.length) { showToast('暂无可导出的记录', 'info'); return; }
-  const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-  const head = ['timestamp','model','inputTokens','cacheReadTokens','outputTokens','timingMs','costUsd','costSource','status','mode','sessionId','project'];
-  const lines = [head.join(',')].concat(rows.map(r => [r.timestamp, r.model, r.inputTokens || 0, r.cacheReadTokens || 0, r.outputTokens || 0, r.timingMs || 0,
-    r.costUsd || 0, r.costSource || '', r.status, r.mode, r.sessionId || '', r.project || ''].map(q).join(',')));
-  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'commandcode-usage-' + new Date().toISOString().slice(0, 10) + '.csv';
-  a.click();
-  URL.revokeObjectURL(a.href);
-  const stored = data.storedRecords || rows.length;
-  showToast(rows.length < stored
-    ? '已导出最近 ' + rows.length + ' 条（本地共留存 ' + stored + ' 条，更早的已被轮转清理）'
-    : '已导出 ' + rows.length + ' 条记录', 'success');
-}
-
-// --- 请求明细：过滤 / 排序 / 行下钻 -------------------------------------------
-// 默认零状态：不过滤、不排序（保持后端时间倒序）、行全部收起 —— 首屏与旧版一致。
-let usageRows = [];
-let usageSortKey = '';
-let usageSortDir = -1;
-let usageFilterQ = '';
-const usageExpanded = new Set();
-// 可排序列与表头 id 后缀；吞吐列口径复杂（输出/端到端耗时计算值），不参与排序。
-const USAGE_SORT_COLS = [
-  ['ts', '时间'], ['inputTokens', '输入'], ['cacheReadTokens', '缓存命中'],
-  ['outputTokens', '输出'], ['timingMs', '耗时'], ['costUsd', '成本'],
-];
-function usageRowKey(r) {
-  return r.timestamp + '|' + r.model + '|' + (r.inputTokens || 0) + '|' + (r.outputTokens || 0) + '|' + (r.timingMs || 0);
-}
-function usageMatchesQuery(r, q) {
-  if (!q) return true;
-  const hay = [(r.model || ''), (r.status || ''), (r.mode || ''), (r.sessionId || ''), (r.project || ''), (r.costSource || '')].join(' ').toLowerCase();
-  return q.split(/\s+/).filter(Boolean).every(kw => hay.includes(kw));
-}
-function sortUsageRows(rows) {
-  if (!usageSortKey) return rows; // 默认：后端顺序（时间倒序）
-  const val = (r) => usageSortKey === 'ts' ? (new Date(r.timestamp).getTime() || 0) : (Number(r[usageSortKey]) || 0);
-  const dir = usageSortDir === 1 ? 1 : -1;
-  return rows.slice().sort((a, b) => (val(a) - val(b)) * dir);
-}
-// 行下钻详情：全部走 esc() / 既有格式化函数，不裸拼上游字段。
-function usageDetailHtml(r) {
-  const dash = '<span class="text-slate-600">—</span>';
-  const item = (k, v) => '<span class="text-slate-500">' + k + '</span><span class="text-slate-300 break-all">' + v + '</span>';
-  return '<div class="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1 px-4 py-2 text-[11px] bg-slate-950/60">'
-    + item('会话', r.sessionId ? esc(r.sessionId) : dash)
-    + item('项目', r.project ? esc(projectDisplayName(r.project)) + (r.projectSource === 'heuristic' ? ' <span class="text-amber-400">（推测）</span>' : '') : dash)
-    + item('缓存读', fmtTokens(r.cacheReadTokens || 0) + ' token')
-    + item('成本口径', r.costSource === 'official' ? '官方账单' : (r.costSource === 'estimated' ? '本地估算' : '—'))
-    + item('本地估算', r.estimatedCostUsd != null ? '$' + (r.estimatedCostUsd || 0).toFixed(6) : dash)
-    + item('原始时间戳', esc(r.timestamp))
-    + '</div>';
-}
-function toggleUsageDetail(key) {
-  if (usageExpanded.has(key)) usageExpanded.delete(key); else usageExpanded.add(key);
-  renderUsageTableCurrent();
-}
-function toggleUsageSort(key) {
-  if (usageSortKey !== key) { usageSortKey = key; usageSortDir = -1; }
-  else if (usageSortDir === -1) usageSortDir = 1;
-  else { usageSortKey = ''; usageSortDir = -1; }
-  updateUsageSortIndicators();
-  renderUsageTableCurrent();
-}
-function updateUsageSortIndicators() {
-  USAGE_SORT_COLS.forEach(pair => {
-    const th = document.getElementById('usage-th-' + pair[0]);
-    if (!th) return;
-    const arrow = th.querySelector('.th-arrow');
-    if (arrow) arrow.textContent = usageSortKey === pair[0] ? (usageSortDir === 1 ? '\u2191' : '\u2193') : '';
-    th.setAttribute('aria-sort', usageSortKey === pair[0] ? (usageSortDir === 1 ? 'ascending' : 'descending') : 'none');
-  });
-}
-function renderUsageTableCurrent() {
-  const q = usageFilterQ.trim().toLowerCase();
-  renderUsageTable(sortUsageRows(usageRows.filter(r => usageMatchesQuery(r, q))), usageRows.length);
-}
-function renderUsageTable(rows, totalCount) {
-  const body = document.getElementById('usageTableBody');
-  const empty = document.getElementById('usageEmpty');
-  const countEl = document.getElementById('usageRecentCount');
-  if (countEl) countEl.innerText = '最近 ' + totalCount + ' 条' + (rows.length !== totalCount ? ' · 命中 ' + rows.length + ' 条' : '');
-  if (!rows.length) {
-    // 有数据但被过滤光 → 过滤空态；真没数据 → 原静态空提示。
-    body.innerHTML = totalCount ? '<tr><td colspan="10">' + emptyState('fa-magnifying-glass', '没有匹配的请求，试试清除过滤条件') + '</td></tr>' : '';
-    empty.classList.toggle('hidden', !!totalCount);
-    return;
-  }
-  empty.classList.add('hidden');
-  body.innerHTML = rows.map(r => {
-    const key = usageRowKey(r);
-    const open = usageExpanded.has(key);
-    const badge = r.status === 'FAILED'
-      ? '<span class="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">失败</span>'
-      : '<span class="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">完成</span>';
-    const pc = r.hasPricing ? '' : '<span class="text-amber-400" title="未同步官方定价">*</span>';
-    const mode = r.mode === 'messages' ? 'Messages' : 'Chat';
-    // 官方账单金额优先，本地估算加 "~" 前缀区分；悬停显示本地估算值便于对照。
-    const src = r.costSource === 'official' ? '' : '~';
-    const costTip = r.estimatedCostUsd != null && r.costSource === 'official'
-      ? ' title="官方账单；本地估算 $' + (r.estimatedCostUsd || 0).toFixed(6) + '"'
-      : (r.costSource === 'estimated' ? ' title="本地按官方定价估算（上游未返回账单金额）"' : '');
-    const cache = r.cacheReadTokens || 0;
-    const cacheCell = cache > 0
-      ? '<span class="text-sky-400" title="缓存命中 ' + cache.toLocaleString('en-US') + ' / 输入 ' + (r.inputTokens || 0).toLocaleString('en-US') + '">' +
-          fmtTokens(cache) + ' <span class="text-slate-500">(' + Math.round(cache / Math.max(1, r.inputTokens || 1) * 100) + '%)</span></span>'
-      : '<span class="text-slate-600">—</span>';
-    return '<tr class="hover:bg-slate-800/40 transition cursor-pointer" data-key="' + esc(key) + '" tabindex="0" aria-expanded="' + (open ? 'true' : 'false') + '" title="点击展开/收起详情">' +
-      '<td class="px-4 py-2.5 whitespace-nowrap text-slate-300">' + esc(fmtTime(r.timestamp)) + '</td>' +
-      '<td class="px-4 py-2.5 text-slate-200 font-mono">' + esc(r.model) + '</td>' +
-      '<td class="px-4 py-2.5 text-right text-slate-300">' + fmtTokens(r.inputTokens) + '</td>' +
-      '<td class="px-4 py-2.5 text-right">' + cacheCell + '</td>' +
-      '<td class="px-4 py-2.5 text-right text-slate-300">' + fmtTokens(r.outputTokens) + '</td>' +
-      '<td class="px-4 py-2.5 text-right text-slate-400">' + fmtTokS(r.outputTokens, r.timingMs) + '</td>' +
-      '<td class="px-4 py-2.5 text-right text-slate-400">' + fmtMs(r.timingMs) + '</td>' +
-      '<td class="px-4 py-2.5 text-right text-emerald-400"' + costTip + '>' + src + fmtUsd(r.costUsd) + pc + '</td>' +
-      '<td class="px-4 py-2.5">' + badge + '</td>' +
-      '<td class="px-4 py-2.5 text-slate-400">' + mode + '</td>' +
-    '</tr>' + (open ? '<tr class="usage-detail"><td colspan="10">' + usageDetailHtml(r) + '</td></tr>' : '');
-  }).join('');
-}
-// 行点击/回车下钻：事件委托绑一次；tr 自身聚焦时才响应键盘，避免吃掉行内控件事件。
-function bindUsageTableOnce() {
-  const body = document.getElementById('usageTableBody');
-  if (!body || body.dataset.bound) return;
-  body.dataset.bound = '1';
-  body.addEventListener('click', (e) => {
-    const tr = e.target instanceof Element ? e.target.closest('tr[data-key]') : null;
-    if (tr) toggleUsageDetail(tr.dataset.key);
-  });
-  body.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const tr = e.target instanceof Element ? e.target.closest('tr[data-key]') : null;
-    // 仅行自身聚焦时响应；closest 往上找是为了不受未来行内控件影响。
-    if (!tr || tr !== e.target) return;
-    e.preventDefault();
-    toggleUsageDetail(tr.dataset.key);
-  });
-}
-function bindUsageFilterOnce() {
-  const input = document.getElementById('usageFilterInput');
-  const clearBtn = document.getElementById('usageFilterClear');
-  if (!input || input.dataset.bound) return;
-  input.dataset.bound = '1';
-  let timer = null;
-  input.addEventListener('input', () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      usageFilterQ = input.value;
-      if (clearBtn) clearBtn.classList.toggle('hidden', !usageFilterQ);
-      renderUsageTableCurrent();
-    }, 150);
-  });
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { input.value = ''; usageFilterQ = ''; if (clearBtn) clearBtn.classList.add('hidden'); renderUsageTableCurrent(); }
-  });
-  if (clearBtn) clearBtn.onclick = () => { input.value = ''; usageFilterQ = ''; clearBtn.classList.add('hidden'); input.focus(); renderUsageTableCurrent(); };
-}
-
-function renderUsageCharts(data){
-  // 每日趋势
-  const tctx = document.getElementById('usageTrendChart').getContext('2d');
-  if (usageTrendChart) usageTrendChart.destroy();
-  usageTrendChart = new Chart(tctx, {
-    type: 'line',
-    data: {
-      labels: data.byDay.map(d => d.date),
-      datasets: [
-        { label:'输入', data: data.byDay.map(d => d.inputTokens), borderColor:'#818cf8', backgroundColor:'rgba(129,140,248,.1)', fill:true, tension:.3, pointRadius:2 },
-        { label:'输出', data: data.byDay.map(d => d.outputTokens), borderColor:'#34d399', backgroundColor:'rgba(52,211,153,.1)', fill:true, tension:.3, pointRadius:2 }
-      ]
-    },
-    options: {
-      responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
-      plugins:{ legend:{ labels:{ color:'#94a3b8', font:{size:11} } }, tooltip:{ backgroundColor:'#0f172a', borderColor:'#334155', borderWidth:1 } },
-      scales:{ x:{ ticks:{ color:'#64748b', font:{size:10} }, grid:{ color:'rgba(51,65,85,.3)' } }, y:{ ticks:{ color:'#64748b', font:{size:10} }, grid:{ color:'rgba(51,65,85,.3)' }, beginAtZero:true } }
-    }
-  });
-
-  // 模型分布
-  const mctx = document.getElementById('usageModelChart').getContext('2d');
-  if (usageModelChart) usageModelChart.destroy();
-  const palette = ['#818cf8','#34d399','#f59e0b','#f472b6','#38bdf8','#a78bfa','#fb923c'];
-  usageModelChart = new Chart(mctx, {
-    type: 'doughnut',
-    data: {
-      labels: data.byModel.map(m => m.model),
-      datasets: [{
-        data: data.byModel.map(m => m.runs),
-        backgroundColor: data.byModel.map((_,i) => palette[i % palette.length]),
-        borderColor:'#0f172a', borderWidth:2
-      }]
-    },
-    options: {
-      responsive:true, maintainAspectRatio:false, cutout:'55%',
-      plugins:{ legend:{ labels:{ color:'#94a3b8', font:{size:11} } }, tooltip:{ backgroundColor:'#0f172a', borderColor:'#334155', borderWidth:1, callbacks:{ label: c => ' ' + c.label + ' · ' + c.parsed + ' 次' } } }
-    }
-  });
-}
-
-async function clearUsageHistory(){
-  if(!(await uiConfirm('确定清空全部会话历史？此操作不可撤销。'))) return;
-  const {ok,error}=await apiJson('/api/usage/clear',{method:'POST'});
-  if(!ok){ showToast('清空失败：'+error,'error'); } else { showToast('会话历史已清空','success'); }
-  loadUsageHistory();
-}
-
-// ─── 轻量 toast 与确认框（替代原生 alert/confirm，风格与面板一致）─────────────
-function showToast(msg, type) {
-  type = type || 'info';
-  const tones = {
-    success: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200',
-    error: 'bg-rose-500/10 border-rose-500/30 text-rose-200',
-    info: 'bg-slate-800 border-slate-600 text-slate-200'
-  };
-  const icons = { success: 'fa-circle-check', error: 'fa-circle-exclamation', info: 'fa-circle-info' };
-  const el = document.createElement('div');
-  el.className = 'px-4 py-2.5 rounded-lg border text-xs font-medium shadow-lg backdrop-blur flex items-center gap-2 max-w-sm ' + (tones[type] || tones.info);
-  el.innerHTML = '<i aria-hidden="true" class="fa-solid ' + (icons[type] || icons.info) + '"></i><span>' + esc(msg) + '</span>';
-  document.getElementById('toastBox').appendChild(el);
-  setTimeout(() => { el.style.transition = 'opacity .4s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 400); }, 4000);
-}
-function uiConfirm(message) {
-  return new Promise(resolve => {
-    window.__confirmResolve = resolve;
-    document.getElementById('confirmMsg').textContent = message;
-    document.getElementById('confirmModal').classList.remove('hidden');
-  });
-}
-function settleConfirm(ok) {
-  document.getElementById('confirmModal').classList.add('hidden');
-  const r = window.__confirmResolve;
-  window.__confirmResolve = null;
-  if (r) r(!!ok);
-}
-
-// ─── 管理面鉴权（批次 B）─────────────────────────────────────────────────────
-// /api/* 的写操作要 x-admin-token：它由服务端注入在本页的 <meta name="ccproxy-admin-token">
-// 里（回环 Host 才会被投递，见 src/utils/admin-guard.ts）。PROXY_API_KEY 从此只覆盖
-// /v1/*，不再充当管理面凭据。收到 /api 401 基本只有一种解释：网关重启换了一代 token，
-// 而这是旧页面 —— 刷新一次拿新 token，且不允许连环刷新。
-const realFetch = window.fetch.bind(window);
-const ADMIN_TOKEN = (() => {
-  const meta = document.querySelector('meta[name="ccproxy-admin-token"]');
-  return meta ? (meta.getAttribute('content') || '') : '';
-})();
-function authHeadersFor(url, init) {
-  const headers = new Headers((init && init.headers) || {});
-  let touched = false;
-  if (url.startsWith('/api/') && ADMIN_TOKEN) { headers.set('x-admin-token', ADMIN_TOKEN); touched = true; }
-  if (url.startsWith('/v1/')) {
-    const key = sessionStorage.getItem('adminKey') || '';
-    if (key) { headers.set('x-api-key', key); touched = true; }
-  }
-  return touched ? Object.assign({}, init, { headers }) : init;
-}
-function methodOf(input, init) {
-  if (init && init.method) return String(init.method).toUpperCase();
-  if (typeof Request !== 'undefined' && input instanceof Request) return input.method.toUpperCase();
-  return 'GET';
-}
-let adminKeyWaiters = [];
-let adminKeyMutedUntil = 0;
-function promptAdminKeyOnce() {
-  // 并发 401 共享同一次输入；用户取消后 60s 内不再打扰（轮询还在跑）
-  if (Date.now() < adminKeyMutedUntil) return Promise.resolve(null);
-  if (!adminKeyWaiters.length) {
-    const input = document.getElementById('adminKeyInput');
-    document.getElementById('adminKeyModal').classList.remove('hidden');
-    input.value = sessionStorage.getItem('adminKey') || '';
-    input.focus();
-    adminKeyWaiters.push(new Promise(resolve => { window.__adminKeyResolve = resolve; }));
-  }
-  return adminKeyWaiters[0];
-}
-function settleAdminKey(key) {
-  document.getElementById('adminKeyModal').classList.add('hidden');
-  const resolve = window.__adminKeyResolve;
-  adminKeyWaiters = [];
-  window.__adminKeyResolve = null;
-  if (key) sessionStorage.setItem('adminKey', key);
-  if (resolve) resolve(key || null);
-}
-function submitAdminKey() {
-  const key = document.getElementById('adminKeyInput').value.trim();
-  if (!key) return;
-  settleAdminKey(key);
-  fetchStatus();
-}
-function dismissAdminKeyModal() {
-  adminKeyMutedUntil = Date.now() + 60_000;
-  settleAdminKey(null);
-}
-window.fetch = async function (input, init) {
-  const url = typeof input === 'string' ? input : (input && input.url) || String(input);
-  const write = !['GET', 'HEAD', 'OPTIONS'].includes(methodOf(input, init));
-  let res = await realFetch(input, authHeadersFor(url, init));
-  if (res.status === 401 && url.startsWith('/api/') && write) {
-    if (!sessionStorage.getItem('adminTokenReloaded')) {
-      sessionStorage.setItem('adminTokenReloaded', '1');
-      location.reload();
-    } else {
-      showToast('管理凭据无效：本页携带的 token 与网关当前值不一致，请确认没有另开实例或固定 ADMIN_API_TOKEN。', 'error');
-    }
-    return res;
-  }
-  if (res.ok && url.startsWith('/api/') && write) sessionStorage.removeItem('adminTokenReloaded');
-  if (res.status === 401 && url.startsWith('/v1/')) {
-    const key = await promptAdminKeyOnce();
-    if (key) res = await realFetch(input, authHeadersFor(url, init));
-  }
-  return res;
-};
-
-fetchStatus();
-loadOverviewUsage();
-loadFeatures();
-bindAccountActionsOnce();
-// 管理密钥模态：Enter 提交、Esc 取消。
-document.getElementById('adminKeyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAdminKey(); });
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    if (!document.getElementById('adminKeyModal').classList.contains('hidden')) dismissAdminKeyModal();
-    if (!document.getElementById('confirmModal').classList.contains('hidden')) settleConfirm(false);
-  }
-  if (e.key === 'Enter' && !document.getElementById('confirmModal').classList.contains('hidden')) settleConfirm(true);
-});
-// 登录模态：Enter 提交、Esc 关闭。
-document.getElementById('loginApiKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitLogin(); });
-document.getElementById('loginNickname').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitLogin(); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !document.getElementById('loginModal').classList.contains('hidden')) hideLoginModal(); });
-
-// ─── 键盘可达性：标签页方向键切换 + 弹窗焦点约束 ─────────────────────────────
-// ARIA tablist 的约定是"只有选中标签可被 Tab 命中，方向键在标签间移动"。
-// 此前五个标签全都可 Tab、且切分区只能用鼠标点。
-document.querySelector('[role="tablist"]').addEventListener('keydown', (e) => {
-  const tabs = Array.from(document.querySelectorAll('.tab-btn'));
-  const i = tabs.indexOf(document.activeElement);
-  if (i < 0) return;
-  let next = null;
-  if (e.key === 'ArrowRight') next = tabs[(i + 1) % tabs.length];
-  else if (e.key === 'ArrowLeft') next = tabs[(i - 1 + tabs.length) % tabs.length];
-  else if (e.key === 'Home') next = tabs[0];
-  else if (e.key === 'End') next = tabs[tabs.length - 1];
-  if (!next) return;
-  e.preventDefault();
-  next.focus();
-  switchTab(next.id.replace(/^tab-/, ''));
-});
-
-const FOCUSABLE_SEL = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
-function visibleFocusables(root) {
-  return Array.from(root.querySelectorAll(FOCUSABLE_SEL)).filter(el => el.getClientRects().length > 0);
-}
-// 三个弹窗此前没有任何焦点约束：Tab 能穿到弹窗背后的页面继续操作按钮。
-let modalReturnFocus = null;
-document.querySelectorAll('[role="dialog"]').forEach(m => {
-  new MutationObserver(() => {
-    // 只负责"打开时把焦点移进弹窗"。焦点归还由各弹窗的关闭函数同步做，
-    // 见 hideLoginModal —— 在微任务里读 activeElement 已经太晚了。
-    if (m.classList.contains('hidden')) return;
-    // 调用方已经把焦点放进弹窗就别抢：showLoginModal 刻意聚焦 API Key 输入框，
-    // 而弹窗里第一个可聚焦元素是昵称框。
-    if (m.contains(document.activeElement)) return;
-    const f = visibleFocusables(m);
-    if (f.length) f[0].focus();
-  }).observe(m, { attributes: true, attributeFilter: ['class'] });
-});
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Tab') return;
-  const open = Array.from(document.querySelectorAll('[role="dialog"]')).find(d => !d.classList.contains('hidden'));
-  if (!open) return;
-  const items = visibleFocusables(open);
-  if (!items.length) return;
-  const first = items[0], last = items[items.length - 1];
-  if (!open.contains(document.activeElement)) { e.preventDefault(); first.focus(); return; }
-  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-}, true);
-
-// 页面在后台时浏览器本会节流定时器，这里显式跳过，省掉无意义的轮询请求。
-setInterval(() => { if (!document.hidden) fetchStatus(); }, 5000);
-setInterval(() => { if (!document.hidden && currentTab === 'usage') loadUsageHistory(); }, 30000);
-setInterval(() => { if (!document.hidden && currentTab === 'overview') { loadOverviewUsage(); loadFeatures(); } }, 30000);
-// 实时日志：日志页激活时每 5s 轮询一次（无新日志时渲染成本可忽略）。
-setInterval(() => { if (!document.hidden && currentTab === 'logs') loadLogs(); }, 5000);
-</script>
+<!-- T110：面板脚本外置（服务端 /js/* 静态通路映射 public/js/）。defer 保证按序执行、
+     DOM 就绪后再跑；核心层先于各页脚本。 -->
+<script src="/js/core.js" defer></script>
+<script src="/js/overview.js" defer></script>
+<script src="/js/accounts.js" defer></script>
+<script src="/js/usage.js" defer></script>
+<script src="/js/models.js" defer></script>
+<script src="/js/logs.js" defer></script>
 </body>
 </html>

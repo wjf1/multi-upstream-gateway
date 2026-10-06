@@ -172,30 +172,51 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
   // ── 本地化静态资源（原 CDN：tailwind / font-awesome / chart.js）────────────
   // 离线或 CDN 被墙时仪表盘不再掉样式、丢图表。文件随仓库 public/vendor/ 分发，
   // pkg 打包时列入 assets。
-  const VENDOR_DIR = path.join(getProjectRootDir(), 'public', 'vendor');
-  const DASHBOARD_HTML_PATH = path.join(getProjectRootDir(), 'public', 'index.html');
+  const PUBLIC_DIR = path.join(getProjectRootDir(), 'public');
+  const VENDOR_DIR = path.join(PUBLIC_DIR, 'vendor');
+  // 面板自身脚本（T110：从 index.html 外置到 public/js/）。与 vendor 分开是因为二者
+  // 语义不同：vendor 是第三方库（长期缓存，升级才变），js 是本项目代码（随版本走）。
+  const PANEL_JS_DIR = path.join(PUBLIC_DIR, 'js');
+  const DASHBOARD_HTML_PATH = path.join(PUBLIC_DIR, 'index.html');
   const VENDOR_TYPES: Record<string, string> = {
     '.js': 'application/javascript; charset=utf-8',
     '.css': 'text/css; charset=utf-8',
     '.woff2': 'font/woff2',
     '.ttf': 'font/ttf',
   };
-  fastify.get('/assets/vendor/*', async (req, reply) => {
-    const rel = decodeURIComponent(String((req.params as any)['*'] || ''));
+
+  /**
+   * 从 baseDir 下安全地读取相对路径 rel。
+   * 拒绝空串 / `..` / 反斜杠 / 绝对路径（路径穿越）；vendor 与面板 js 两个静态
+   * 路由共用这一套拒绝逻辑，避免各写一份时漏掉其中一处。
+   */
+  async function serveStatic(baseDir: string, rel: string, reply: any, cacheControl: string): Promise<unknown> {
     if (!rel || rel.includes('..') || rel.includes('\\') || rel.startsWith('/')) {
       return reply.status(404).send();
     }
-    const file = path.join(VENDOR_DIR, ...rel.split('/'));
+    const file = path.join(baseDir, ...rel.split('/'));
     try {
       const data = await fs.promises.readFile(file);
       const ext = path.extname(file).toLowerCase();
       return reply
         .header('Content-Type', VENDOR_TYPES[ext] || 'application/octet-stream')
-        .header('Cache-Control', 'public, max-age=86400')
+        .header('Cache-Control', cacheControl)
         .send(data);
     } catch {
       return reply.status(404).send();
     }
+  }
+
+  fastify.get('/assets/vendor/*', async (req, reply) => {
+    const rel = decodeURIComponent(String((req.params as any)['*'] || ''));
+    return serveStatic(VENDOR_DIR, rel, reply, 'public, max-age=86400');
+  });
+
+  // 面板页面脚本通路：/js/core.js → public/js/core.js。禁缓存：与 GET / 的策略一致，
+  // 升级后浏览器不会再用旧脚本调新接口。
+  fastify.get('/js/*', async (req, reply) => {
+    const rel = decodeURIComponent(String((req.params as any)['*'] || ''));
+    return serveStatic(PANEL_JS_DIR, rel, reply, 'no-cache');
   });
 
   fastify.get('/api/status', async () => {

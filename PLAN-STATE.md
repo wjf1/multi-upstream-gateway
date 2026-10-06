@@ -68,7 +68,16 @@
   - deps: P0-PORT-B,P0-PORT-C
   - 范围：`index.ts`（安全链/风险门/凭据钩子/NODE_DEBUG/pino redact）、`routes/{chat,messages,sse-common}.ts`（safeFetch/requestId/provider 字段/风险门顺序）、`routes/dashboard.ts`（`/js/*`、status 字段、`/api/risk/accept`、审计钩子）、`utils/config.ts`（迁移钩子/加密优先/保存分支）、`utils/usage-store.ts`（provider 维度）、`utils/errors.ts`（+6 码）、`adapters/commandcode` → `providers/commandcode`
   - blocked: —
-- [ ] P0-PORT-E 面板移植
+- [x] P0-PORT-E 面板移植（2026-10-07）
+  - 完成：`public/index.html` **1840 → 560 行**，内联 JS（原 474–1839 行）外置为 `public/js/{core,overview,accounts,usage,models,logs}.js`；
+    新增 `/js/*` 静态路由（与 vendor 共用穿越拒绝逻辑，`Cache-Control: no-cache` 以免"新页面配旧脚本"）；
+    5 个现有 tab 的 hash 路由、明暗主题（CSS 变量 + localStorage + 防闪屏）、**风险告知硬门弹窗**、首启引导卡片
+  - 原有 90 个顶层函数零丢失；既有面板测试 6 个文件语义等价适配（取证源平移，正则逐字未改），
+    **唯二有意改写的断言已声明**：①`spa-phase012` 的"不引入主题切换"否定断言被 T110 需求取代，改为正向断言；
+    ②`spa-a11y` 弹窗计数 3→4（新增风险弹窗同样具 dialog 语义）
+  - 新增 `tests/spa-risk-gate.test.ts`（14 例）；全量 **50 文件 / 658 用例全绿**
+  - blocked: —
+- [ ] P0-PORT-E 面板移植（历史条目，已完成见上）
   - deps: P0-PORT-D
   - 范围：在 4.22.4 的 1816 行面板上重做 JS 外置 + hash 路由 + 明暗主题 + 首启引导 + 风险告知弹窗（**保留 4.18~4.22 新增的面板功能**，如通道健康卡片、运行开关卡片）
   - blocked: —

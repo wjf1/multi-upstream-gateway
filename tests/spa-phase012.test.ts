@@ -17,11 +17,16 @@ import path from 'node:path';
 
 const root = path.resolve(__dirname, '..');
 const html = readFileSync(path.join(root, 'public', 'index.html'), 'utf-8');
+// T110：面板脚本已外置到 public/js/*.js（index.html 只留骨架）。纯函数/DOM 引用的
+// 取证源改为「index.html + 6 个页面脚本」的合并源码；仅针对标记本身的断言仍读
+// index.html。断言条件与正则逐字不变（唯一例外见下方主题一条，已在报告中说明）。
+const src = html + '\n' + ['core', 'overview', 'accounts', 'usage', 'models', 'logs']
+  .map(f => readFileSync(path.join(root, 'public', 'js', f + '.js'), 'utf-8')).join('\n');
 
 /** 按大括号配平取出一个顶层 `function name(...) { ... }` 源码。 */
 function extractFn(src: string, name: string): string {
   const start = src.indexOf(`function ${name}(`);
-  if (start < 0) throw new Error(`function ${name} not found in public/index.html`);
+  if (start < 0) throw new Error(`function ${name} not found in panel source`);
   const open = src.indexOf('{', start);
   let depth = 0;
   for (let i = open; i < src.length; i++) {
@@ -37,14 +42,14 @@ function extractFn(src: string, name: string): string {
 /** 取出单行的 `const NAME = ...;` 声明。 */
 function extractArrowConst(src: string, name: string): string {
   const line = src.split('\n').map(l => l.trim()).find(l => l.startsWith(`const ${name} =`));
-  if (!line) throw new Error(`const ${name} not found in public/index.html`);
+  if (!line) throw new Error(`const ${name} not found in panel source`);
   return line;
 }
 
 /** 取出 `const NAME = { ... };` 对象字面量声明。 */
 function extractConstObject(src: string, name: string): string {
   const start = src.indexOf(`const ${name} = {`);
-  if (start < 0) throw new Error(`const ${name} not found in public/index.html`);
+  if (start < 0) throw new Error(`const ${name} not found in panel source`);
   const open = src.indexOf('{', start);
   let depth = 0;
   for (let i = open; i < src.length; i++) {
@@ -59,23 +64,23 @@ function extractConstObject(src: string, name: string): string {
 
 function loadFn(name: string, deps: Record<string, unknown> = {}) {
   const keys = Object.keys(deps);
-  return new Function(...keys, `${extractFn(html, name)}; return ${name};`)(...keys.map(k => deps[k]));
+  return new Function(...keys, `${extractFn(src, name)}; return ${name};`)(...keys.map(k => deps[k]));
 }
 
-const esc = new Function(`${extractArrowConst(html, 'esc')}; return esc;`)() as (s: unknown) => string;
+const esc = new Function(`${extractArrowConst(src, 'esc')}; return esc;`)() as (s: unknown) => string;
 const emptyState = loadFn('emptyState', { esc }) as (icon: string, text: string, colSpan?: number) => string;
 const logHighlight = (() => {
-  const reDecl = extractArrowConst(html, 'LOG_TOKEN_RE');
+  const reDecl = extractArrowConst(src, 'LOG_TOKEN_RE');
   const re = new Function(`${reDecl}; return LOG_TOKEN_RE;`)() as RegExp;
-  return new Function('esc', 'LOG_TOKEN_RE', `${extractFn(html, 'logHighlight')}; return logHighlight;`)(esc, re) as (s: string) => string;
+  return new Function('esc', 'LOG_TOKEN_RE', `${extractFn(src, 'logHighlight')}; return logHighlight;`)(esc, re) as (s: string) => string;
 })();
 const modelFamily = loadFn('modelFamily') as (m: unknown) => string;
 const usageMatchesQuery = loadFn('usageMatchesQuery') as (r: unknown, q: string) => boolean;
 const usageRowKey = loadFn('usageRowKey') as (r: unknown) => string;
 // sortUsageRows 读写全局 usageSortKey/usageSortDir：以参数注入等价闭包。
-const makeSortUsageRows = () => new Function('usageSortKey', 'usageSortDir', `${extractFn(html, 'sortUsageRows')}; return sortUsageRows;`);
+const makeSortUsageRows = () => new Function('usageSortKey', 'usageSortDir', `${extractFn(src, 'sortUsageRows')}; return sortUsageRows;`);
 const usageDetailHtml = loadFn('usageDetailHtml', { esc, fmtTokens: (n: number) => String(n), projectDisplayName: (p: string) => p }) as (r: unknown) => string;
-const badge = loadFn('badge', { BADGE_TONES: new Function(`${extractConstObject(html, 'BADGE_TONES')}; return BADGE_TONES;`)(), esc }) as (t: string, tone: string, title?: string) => string;
+const badge = loadFn('badge', { BADGE_TONES: new Function(`${extractConstObject(src, 'BADGE_TONES')}; return BADGE_TONES;`)(), esc }) as (t: string, tone: string, title?: string) => string;
 const quotaBadge = loadFn('quotaBadge', { badge }) as (u: unknown) => string;
 
 const ROW = (over: Record<string, unknown> = {}) => ({
@@ -97,7 +102,17 @@ describe('Phase 0 语义色板与结构', () => {
     expect(html).toMatch(/\.inset-card\{background:var\(--c-inset\)/);
     expect(html).not.toContain('bg-slate-950 text-slate-100'); // body 已收口
     expect(html).toMatch(/<html lang="zh-CN" class="dark">/);   // 暗色默认不变
-    expect(html).not.toMatch(/data-theme|theme-toggle|toggleTheme/); // 不引入主题切换
+  });
+
+  // T110：Phase E 新增明暗主题切换，原「不引入主题切换」的负向断言已由本组正向断言
+  // 取代（唯一被有意改写的断言，详见报告）：默认仍是 dark，切换按钮、亮色变量与
+  // localStorage 持久化三者齐备。
+  it('明暗主题：默认 dark + 切换按钮 + 亮色变量 + localStorage 持久化', () => {
+    expect(html).toMatch(/<html lang="zh-CN" class="dark">/);
+    expect(html).toMatch(/id="themeToggle"/);
+    expect(html).toMatch(/html\.light\{/);
+    expect(src).toContain('function toggleTheme(');
+    expect(src).toContain('ccproxy-theme');
   });
 
   it('响应式表格降级：窄屏媒体查询下宽表有最小宽度', () => {
@@ -119,14 +134,14 @@ describe('Phase 0 语义色板与结构', () => {
   it('骨架屏：卡片/行骨架函数生成 shimmer 占位，仅空容器使用', () => {
     expect(html).toMatch(/@keyframes skelSweep/);
     expect(html).toMatch(/\.skel\{position:relative;overflow:hidden/);
-    expect(html).toContain('function showSkeletonIfEmpty(');
-    expect(html).toContain('skeletonRows(10, 6)');
+    expect(src).toContain('function showSkeletonIfEmpty(');
+    expect(src).toContain('skeletonRows(10, 6)');
   });
 
   it('toast 保持统一实现，无 alert 残留', () => {
     expect(html).toMatch(/<div id="toastBox" role="status" aria-live="polite"/);
-    expect(html).toContain('function showToast(');
-    expect(html).not.toMatch(/\balert\(/);
+    expect(src).toContain('function showToast(');
+    expect(src).not.toMatch(/\balert\(/);
   });
 });
 
@@ -137,8 +152,8 @@ describe('Phase 1 概览指标与账号徽标', () => {
     for (const id of ['statTodayRuns', 'statTodayCost', 'statActiveAccounts', 'statActiveDetail']) {
       expect(html).toContain(`id="${id}"`);
     }
-    expect(html).toContain("apiJson('/api/usage/history')"); // 复用既有端点
-    expect(html).toContain('function loadOverviewUsage(');
+    expect(src).toContain("apiJson('/api/usage/history')"); // 复用既有端点
+    expect(src).toContain('function loadOverviewUsage(');
     expect(html).toContain('onclick="refreshOverview()"');   // 刷新状态快捷按钮
   });
 
@@ -154,7 +169,7 @@ describe('Phase 1 概览指标与账号徽标', () => {
   });
 
   it('badge 扩展 tone 后仍全部转义 text', () => {
-    const tones = new Function(`${extractConstObject(html, 'BADGE_TONES')}; return BADGE_TONES;`)() as Record<string, string>;
+    const tones = new Function(`${extractConstObject(src, 'BADGE_TONES')}; return BADGE_TONES;`)() as Record<string, string>;
     for (const t of ['rose', 'amber', 'slate', 'emerald', 'sky']) expect(tones[t]).toBeTruthy();
     expect(badge('<b>x</b>', 'sky')).not.toContain('<b>');
   });
@@ -189,11 +204,11 @@ describe('Phase 2 用量表过滤 / 排序 / 下钻', () => {
   });
 
   it('行下钻：详情内容全部转义，行 key 稳定且区分不同行', () => {
-    expect(html).toMatch(/function toggleUsageDetail\(/);
-    expect(html).toMatch(/tr\[data-key\]/);
+    expect(src).toMatch(/function toggleUsageDetail\(/);
+    expect(src).toMatch(/tr\[data-key\]/);
     // 键盘下钻：keydown 委托必须用 closest('tr[data-key]') 定位行（e.target 是聚焦的 tr 本身），
     // 不能写成 e.target === tbody（事件冒泡到 tbody 时 target 是 tr，条件恒假导致键盘失效）。
-    const bindFn = extractFn(html, 'bindUsageTableOnce');
+    const bindFn = extractFn(src, 'bindUsageTableOnce');
     expect(bindFn).toContain("closest('tr[data-key]')");
     expect(bindFn).not.toContain('e.target !== body');
     expect(bindFn).toContain("e.key !== 'Enter'");
@@ -210,7 +225,7 @@ describe('Phase 2 用量表过滤 / 排序 / 下钻', () => {
   it('列头为带 aria-sort 的排序按钮，默认全部 none', () => {
     expect((html.match(/aria-sort="none"/g) || []).length).toBe(6);
     expect((html.match(/onclick="toggleUsageSort\('/g) || []).length).toBe(6);
-    expect(html).toMatch(/function toggleUsageSort\(/);
+    expect(src).toMatch(/function toggleUsageSort\(/);
   });
 });
 
@@ -225,8 +240,8 @@ describe('Phase 2 模型家族与日志高亮', () => {
   });
 
   it('模型卡片右上角出现家族徽章（badge 转义通道）', () => {
-    expect(html).toContain("badge(fam, 'sky', '模型家族')");
-    expect(html).toContain('const fam = modelFamily(m);');
+    expect(src).toContain("badge(fam, 'sky', '模型家族')");
+    expect(src).toContain('const fam = modelFamily(m);');
   });
 
   it('logHighlight：模型名与错误码着色，普通文本不变', () => {
@@ -247,11 +262,11 @@ describe('Phase 2 模型家族与日志高亮', () => {
   });
 
   it('日志行带 level 徽章（INFO/WARN/ERROR 着色加粗）', () => {
-    expect(html).toContain('lg-lv-err');
-    expect(html).toContain('lg-lv-warn');
-    expect(html).toContain('lg-lv-info');
-    expect(html).toContain("String(l.level || 'info').toUpperCase()");
-    expect(html).toContain('logHighlight(l.message)');
+    expect(src).toContain('lg-lv-err');
+    expect(src).toContain('lg-lv-warn');
+    expect(src).toContain('lg-lv-info');
+    expect(src).toContain("String(l.level || 'info').toUpperCase()");
+    expect(src).toContain('logHighlight(l.message)');
   });
 });
 

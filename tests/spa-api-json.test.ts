@@ -14,6 +14,10 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const html = readFileSync(path.resolve(__dirname, '..', 'public', 'index.html'), 'utf-8');
+// T110：面板脚本外置到 public/js/*.js。"只允许封装内部出现一次裸 fetch" 的全站
+// 口径 = index.html + 6 个页面脚本的合并源码（断言条件与正则逐字不变）。
+const src = html + '\n' + ['core', 'overview', 'accounts', 'usage', 'models', 'logs']
+  .map(f => readFileSync(path.resolve(__dirname, '..', 'public', 'js', f + '.js'), 'utf-8')).join('\n');
 
 /**
  * 按大括号配平取出一个顶层函数源码（与 spa-badge-escape 同一手法）。
@@ -22,7 +26,7 @@ const html = readFileSync(path.resolve(__dirname, '..', 'public', 'index.html'),
  */
 function extractFn(src: string, name: string): string {
   const at = src.indexOf(`function ${name}(`);
-  if (at < 0) throw new Error(`function ${name} not found in public/index.html`);
+  if (at < 0) throw new Error(`function ${name} not found in panel source`);
   const start = src.slice(0, at).endsWith('async ') ? at - 'async '.length : at;
   const open = src.indexOf('{', at);
   let depth = 0;
@@ -38,7 +42,7 @@ function extractFn(src: string, name: string): string {
 
 type FetchStub = (url: string, opts?: unknown) => Promise<unknown>;
 function load(fetchStub: FetchStub) {
-  return new Function('fetch', `${extractFn(html, 'apiJson')}; return apiJson;`)(fetchStub) as
+  return new Function('fetch', `${extractFn(src, 'apiJson')}; return apiJson;`)(fetchStub) as
     (url: string, opts?: unknown) => Promise<{ ok: boolean; data: any; error: string | null }>;
 }
 
@@ -48,12 +52,12 @@ const reply = (status: number, body: string) => ({
 
 describe('结构约束', () => {
   it('全文件只允许封装内部出现一次裸 fetch', () => {
-    const sites = [...html.matchAll(/\bfetch\(/g)].length;
+    const sites = [...src.matchAll(/\bfetch\(/g)].length;
     expect(sites, '新增网络调用请走 apiJson，否则失败会再次变成静默无反应').toBe(1);
   });
 
   it('没有任何调用点还在用 await (...).json() 的旧写法', () => {
-    expect(html).not.toMatch(/await\s*\(?\s*await\s+fetch/);
+    expect(src).not.toMatch(/await\s*\(?\s*await\s+fetch/);
   });
 });
 

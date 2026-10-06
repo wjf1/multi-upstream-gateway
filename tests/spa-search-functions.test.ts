@@ -16,12 +16,17 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-const html = readFileSync(path.resolve(__dirname, '..', 'public', 'index.html'), 'utf-8');
+const root = path.resolve(__dirname, '..');
+const html = readFileSync(path.join(root, 'public', 'index.html'), 'utf-8');
+// T110：面板脚本已外置到 public/js/*.js，函数源码从"index.html + 6 个页面脚本"的
+// 合并源码里取（断言条件逐字不变）。
+const src = html + '\n' + ['core', 'overview', 'accounts', 'usage', 'models', 'logs']
+  .map(f => readFileSync(path.join(root, 'public', 'js', f + '.js'), 'utf-8')).join('\n');
 
 /** 按大括号配平取出一个顶层 `function name(...) { ... }` 源码。 */
 function extractFn(src: string, name: string): string {
   const start = src.indexOf(`function ${name}(`);
-  if (start < 0) throw new Error(`function ${name} not found in public/index.html`);
+  if (start < 0) throw new Error(`function ${name} not found in panel source`);
   const open = src.indexOf('{', start);
   let depth = 0;
   for (let i = open; i < src.length; i++) {
@@ -37,16 +42,16 @@ function extractFn(src: string, name: string): string {
 /** 取出单行的 `const NAME = ...;` 声明（页面里的 esc 是箭头函数，不是 function 声明）。 */
 function extractArrowConst(src: string, name: string): string {
   const line = src.split('\n').map(l => l.trim()).find(l => l.startsWith(`const ${name} =`));
-  if (!line) throw new Error(`const ${name} not found in public/index.html`);
+  if (!line) throw new Error(`const ${name} not found in panel source`);
   return line;
 }
 
 function loadFn(name: string, deps: Record<string, unknown> = {}) {
   const keys = Object.keys(deps);
-  return new Function(...keys, `${extractFn(html, name)}; return ${name};`)(...keys.map(k => deps[k]));
+  return new Function(...keys, `${extractFn(src, name)}; return ${name};`)(...keys.map(k => deps[k]));
 }
 
-const esc = new Function(`${extractArrowConst(html, 'esc')}; return esc;`)() as (s: unknown) => string;
+const esc = new Function(`${extractArrowConst(src, 'esc')}; return esc;`)() as (s: unknown) => string;
 const modelMatchesQuery = loadFn('modelMatchesQuery') as (m: unknown, q: string) => boolean;
 const highlightHit = loadFn('highlightHit', { esc }) as (t: string, q: string) => string;
 

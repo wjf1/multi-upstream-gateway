@@ -14,11 +14,14 @@ import path from 'node:path';
 
 const root = path.resolve(__dirname, '..');
 const html = readFileSync(path.join(root, 'public', 'index.html'), 'utf-8');
+// T110：面板脚本外置到 public/js/*.js；badge/esc/BADGE_TONES 的源码从合并源码取。
+const src = html + '\n' + ['core', 'overview', 'accounts', 'usage', 'models', 'logs']
+  .map(f => readFileSync(path.join(root, 'public', 'js', f + '.js'), 'utf-8')).join('\n');
 
 /** 按大括号配平取出一个顶层 `function name(...) { ... }` 源码。 */
 function extractFn(src: string, name: string): string {
   const start = src.indexOf(`function ${name}(`);
-  if (start < 0) throw new Error(`function ${name} not found in public/index.html`);
+  if (start < 0) throw new Error(`function ${name} not found in panel source`);
   const open = src.indexOf('{', start);
   let depth = 0;
   for (let i = open; i < src.length; i++) {
@@ -34,7 +37,7 @@ function extractFn(src: string, name: string): string {
 /** 取出 `const NAME = { ... };` 对象字面量声明。 */
 function extractConstObject(src: string, name: string): string {
   const start = src.indexOf(`const ${name} = {`);
-  if (start < 0) throw new Error(`const ${name} not found in public/index.html`);
+  if (start < 0) throw new Error(`const ${name} not found in panel source`);
   const open = src.indexOf('{', start);
   let depth = 0;
   for (let i = open; i < src.length; i++) {
@@ -44,16 +47,16 @@ function extractConstObject(src: string, name: string): string {
       if (depth === 0) return src.slice(start, src.indexOf(';', i) + 1);
     }
   }
-  throw new Error(`unbalanced braces in ${name}`);
+  throw new Error(`unbalanced braces in const ${name}`);
 }
 
-const tones = extractConstObject(html, 'BADGE_TONES');
-const badgeSrc = extractFn(html, 'badge');
+const tones = extractConstObject(src, 'BADGE_TONES');
+const badgeSrc = extractFn(src, 'badge');
 
-// esc 是箭头函数（index.html:393），必须按声明式取。取不到就直接抛——
+// esc 是箭头函数（core.js），必须按声明式取。取不到就直接抛——
 // 绝不退化成恒等函数：本测试初版就是这么写的，结果"未转义"是测试自己造的假阳性。
-const escDecl = html.match(/^const esc = .+$/m)?.[0];
-if (!escDecl) throw new Error('const esc = ... not found in public/index.html');
+const escDecl = src.match(/^const esc = .+$/m)?.[0];
+if (!escDecl) throw new Error('const esc = ... not found in panel source');
 
 const badge: (text: unknown, tone: string, title?: string) => string =
   new Function(`${tones}\n${escDecl}\n${badgeSrc}\nreturn badge;`)();
