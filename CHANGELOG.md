@@ -2,6 +2,55 @@
 
 所有主要版本更新都记录在此文件。
 
+## [5.0.1] - 2026-10-07
+
+> 修复一次**线上事故**：上游在产出任何内容之前把 SSE 流掐断时，重试机制完全没被触发，用户直接看到一轮失败。
+
+### 🐛 修复
+
+- **上游流在「产出内容之前」被掐断时现在会重试**（事故形态：`TypeError: terminated`）。
+  首事件探测此前只覆盖「上游用 HTTP 200 的流回 error 事件」这一种失败形态；传输层中断
+  （流被对端掐断 / undici 抛 `terminated`）被 `close`/`error` 处理器判成 `ignore` **放行**，
+  于是一个**已经死掉的流**被交给路由，外层重试循环（当时 `maxRetries=2`、预算充足）
+  根本没机会跑 —— 代理日志只留下一行
+  `[MESSAGES] Upstream stream error | Trace msg_… | terminated`，客户端收到
+  `PROVIDER_PROTOCOL_ERROR / retryable=false`，那一轮直接失败。
+  现在只要**在产出任何内容之前**流被掐断，就丢弃本次尝试并按既有退避策略重试
+  （此刻客户端一个字节都没收到，丢弃是安全的）。行为边界不变：**一旦已经产出内容
+  就不再重试**（会重复投递），超时类（挂钟 / 空闲看门狗）与客户端主动断开同样不重试
+  （后者重试只是为一个已被放弃的对话白耗额度）。见 `pipeline/stream.ts` 的
+  `probeUpstream`。修复后错误文案会带上真实成因，形如
+  `Upstream stream ended prematurely before producing any content (model …): terminated`。
+- **交接「已断的流」不再可能升级成进程级未捕获异常**：`reflow()` 此前用同步
+  `destroy(errored)` 投递错误，错误事件走 `process.nextTick`，在部分时序下会抢在调用方
+  挂 `error` 监听器之前抛出（本仓库已有同形态的 `[CRITICAL] Uncaught Exception` 事故）。
+  改为 `setImmediate` 投递，使交接与调度时序无关。
+- **`start.cmd` 的出站代理默认端口 7897 → 7900**：与 `.env`、`config.json` 以及
+  `watchdog.ps1`（另一会话已修）对齐。此前四个位置各存一份端口，只改配置不改启动脚本
+  会静默漂移成「探活失败 → 回退直连」—— 2026-10-07 事故的环境前提之一。
+
+### ✅ 验证
+
+- `npm run verify` — **51 文件 / 667 用例全绿**（较 5.0.0 的 50/658 新增 1 文件 9 用例）；
+  `npm run lint` 零输出；`npm run typecheck`（src + tests 双工程）通过。
+- 新增回归用例：
+  - `tests/upstream-stream-retry.test.ts` —— 端到端复现事故形态：上游第一次请求吐了
+    `start` 之后掐断 socket，断言代理打了**两次**上游、客户端拿到完整回答，且第一次的
+    `start` 不会被重复投递；另一条断言「已产出内容后中断**不重试**」这条边界。
+  - `tests/upstream-probe.test.ts` —— 新增 `probeUpstream` 判定表：传输层中断→可重试、
+    流内 error 事件→可重试、中止类/`UpstreamError(retryable=false)`→不重试、
+    内容先到→放行不重试、正常收尾→放行。
+- 既有契约用例（`integration.test.ts` 的 `never retries once content has already been
+  streamed`、`retries a transient error event on the first event and recovers`）保持通过。
+
+### 📌 已知限制
+
+- **内容已经流出后的中途失败仍然不重试**（会重复投递内容，无法安全重放）。这类失败仍按
+  既有契约把错误并入流交给客户端（`[Upstream Error: …]`）。
+- 上游「干净收尾但未产出内容」（无 error 的 `end`）同样不重试：正常 SSE 必带 `finish`
+  事件，理论上可判为截断，但拿不出证据就重试会白耗一次上游额度（29 万 token 单次约
+  $0.087），故不做猜测。
+
 ## [5.0.0] - 2026-10-07
 
 > **产品线分化首发**。自本版本起，本仓库从上游 [`wjf1/commandcode-proxy`](https://github.com/wjf1/commandcode-proxy) 分化为独立产品

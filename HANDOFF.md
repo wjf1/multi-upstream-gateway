@@ -14,9 +14,10 @@
   remote 布局：`origin` = 产品仓库（推送目标）、`upstream` = `wjf1/commandcode-proxy`（**仅 fetch，禁止 push**）、`ghproxy` = 上游镜像。
 - **执行依据（SSOT）**：`docs/master-plan-v1.2.md`（已纳入仓库）（v1.2.3 起含基准勘误）。
   审计与评审材料（已随仓库分发）：`docs/review/`（`batch-b.patch`、`architecture-review.md`、`remediation-plan.md`）。
-- **当前状态（2026-10-07）**：**P0 移植已完成并部署，产品首发 v5.0.0**。
+- **当前状态（2026-10-07）**：**P0 移植已完成并部署，产品首发 v5.0.0；随后发布 v5.0.1（上游流中断重试修复，见 §4 首条）**。
   - **Phase A~F 全部完成**：A 工程基座 / B 审计批次 B 安全语义 / C 新增模块 / D1 接缝接线 / E 面板移植 / F 阶段门复验。
   - **门禁数据（F）**：`npm run verify` **50 文件 / 658 用例全绿**；覆盖率 65.87%；`npm audit --omit=dev` **0 漏洞**；50 并发 P99 126ms / 468rps / 0 错误。
+  - **门禁数据（v5.0.1）**：`npm run verify` **51 文件 / 667 用例全绿**、`npm run lint` 零输出、`npm run typecheck` 双工程通过；新增 1 文件 9 用例锁定「内容产出前中断必重试 / 内容产出后必不重试」。
   - **已部署（2026-10-07）**：看门狗第 5 秒拉起新代码；`config.json` flat→unified 迁移完成、凭据落 `credentials.enc`（`.env` 明文行已摘除）；
     **风险门经用户在面板确认后放行**；代理端口改 7900（`.env` 已改，`config.json` 侧下次重启生效）。详见 §7 部署检查清单。
   - **基准勘误（保留为教训）**：方案基线事实曾基于过期检出 v4.17.0，真实基准是 v4.22.4；基线事实必须「版本号 + 验证命令」同引。
@@ -35,7 +36,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**50 文件 / 658 用例全绿**（v4.22.4 原始基线 48/626；移植后红线只升不降）。
+- 测试基线：**51 文件 / 667 用例全绿**（v5.0.0 为 50/658；v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -53,6 +54,27 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **v5.0.1 上游流中断重试修复（2026-10-07）**：修复一次线上事故 —— 上游在**产出任何内容之前**把 SSE 流掐断
+  （客户端侧 `TypeError: terminated`）时，首事件探测把它判成「放行」，一个**已经死掉的流**被交给路由，
+  外层重试循环（当时 `maxRetries=2`、预算充足）根本没被触发，用户直接看到一轮
+  `PROVIDER_PROTOCOL_ERROR / retryable=false` 失败；代理日志只留一行
+  `[MESSAGES] Upstream stream error | Trace msg_… | terminated`。改动：
+  - `pipeline/stream.ts` —— `probeUpstream` 记录预读期间的流错误并落判定 `stream-error`（可重试）；
+    其在 `reflow()` 里交接「已断的流」改用 `setImmediate` 投递错误（同步 `destroy` 的错误走 nextTick，
+    在部分时序下抢在调用方挂 `error` 监听之前抛出，会升级成 `[CRITICAL] Uncaught Exception`）。
+  - `upstream.ts` —— 按拒绝成因生成准确文案（`… before producing any content (model …): terminated`）；
+    客户端已断开时**不重试**（不替一个被放弃的对话白耗额度）。
+  - `start.cmd` —— 出站代理默认端口 7897 → **7900**，与 `.env` / `config.json` / `watchdog.ps1` 对齐
+    （端口共四处各存一份，只改配置不改启动脚本会静默漂移成「探活失败 → 回退直连」）。
+  - 新增 `tests/upstream-stream-retry.test.ts`（端到端复现事故形态 + 「内容已流出不重试」边界）与
+    `probeUpstream` 判定表用例；门禁见 §1。
+  - **边界（属设计约束，未做）**：内容**已经流出后**的中途失败仍不重试（会重复投递内容）；
+    上游「干净收尾但未产出内容」（无 error 的 `end`）也不重试 —— 正常 SSE 必带 `finish` 事件，
+    理论上可判为截断，但拿不出证据就重试会白耗一次上游额度（29 万 token 单次约 $0.087）。
+  - 事故证据链（会话 `sess_7430d017`）：ZCode provider 指向本地 `127.0.0.1:9090`；proxy.log 同一秒的
+    `Upstream stream error | Trace msg_edb441fe | terminated` + `requestId=253dcac0-…`；
+    `watchdog.err.log` 的 `Configured proxy 127.0.0.1:7897 is unreachable … falling back to direct`。
 
 - **仓库分离（2026-10-07）**：产品线自上游 `wjf1/commandcode-proxy` 分化为独立私有仓库 `wjf1/multi-upstream-gateway`。
   采用 **clone 保留完整历史**的方式（非重建），上游 v4.22.4 为 `main` 现状，故 `git merge upstream/main` 能力未丢失；

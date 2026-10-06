@@ -320,7 +320,7 @@ export async function sendToCC(body: CCRequestBody, opts: SendOptions): Promise<
       });
       const rawStream = wrapped.stream;
 
-      // 上游以 error 事件报错（模型不可用 / 区域受限 / 网关请求失败）时，这次调用实际
+      // 上游在产出任何内容之前就失败（流内 error 事件，或传输层中断）时，这次调用
       // 什么都没产出，而此刻客户端还没收到任何字节 —— 丢弃重试是安全的。
       //
       // 只在**还有重试预算**时才探测：最后一次尝试直接放行，让调用方按既有逻辑处理
@@ -330,10 +330,17 @@ export async function sendToCC(body: CCRequestBody, opts: SendOptions): Promise<
         if (probe.rejected) {
           wrapped.markDiscarded();
           rawStream.destroy();
+          const why = probe.reason === 'error-event'
+            ? 'Upstream reported an error event before producing any content'
+            : 'Upstream stream ended prematurely before producing any content';
+          const detail = probe.reason === 'stream-error' && probe.detail ? `: ${probe.detail}` : '';
+          // 客户端已经走了就别重试：这一轮对话已被放弃，替它再打一次上游只是白耗额度。
+          // 两种超时（挂钟 / 空闲）在探测窗口内不可能触发，所以这里的不中止即为客户端中止。
+          const clientGone = opts.abortSignal?.aborted === true && !timeouts.deadlineFired && !timeouts.idleFired;
           throw new UpstreamError(
-            `Upstream reported an error event before producing any content (model ${body.params.model})`,
+            `${why} (model ${body.params.model})${detail}`,
             undefined,
-            true,
+            !clientGone,
             ErrorCode.PROVIDER_PROTOCOL_ERROR,
           );
         }

@@ -4,8 +4,12 @@
 // 职责：
 //   1. web → Node Readable 包装，空闲看门狗随每个 chunk 重置（wrapUpstreamStream）。
 //   2. 挂钟/空闲超时触发时向已交还的流注入语义正确的 UpstreamError。
-//   3. 首事件探测（probeUpstream 及其判定函数族）：上游以 HTTP 200 的流内 error
-//      事件报错且尚未产出任何内容时，丢弃本次调用交给编排层重试。
+//   3. 首事件探测（probeUpstream 及其判定函数族）：上游在产出任何内容之前就失败时，
+//      丢弃本次调用交给编排层重试。两种形态都覆盖：
+//        - 上游以 HTTP 200 的流内 error 事件报错（error-event）；
+//        - 传输层中断 —— 流被对端掐断 / undici 抛 terminated（stream-error）。
+//      两种形态下客户端都一个字节还没收到（预读到的字节全在本地缓冲里、从未转发），
+//      因此丢弃重试是安全的；判错两个方向的代价见 isRetryableEventMessage 的注释。
 //
 // 状态归属：wrapUpstreamStream 内部的 discarded 标志由返回句柄的 markDiscarded()
 // 显式开启（探测拒绝时编排层调用）；并发槽位释放通过 onStreamGone 回调注入，
@@ -13,7 +17,7 @@
 // =============================================================================
 import { Readable, PassThrough } from 'node:stream';
 import { terminalCodeFor, ErrorCode } from '../../../utils/errors.js';
-import { UpstreamError } from './errors.js';
+import { UpstreamError, isAbortError } from './errors.js';
 import type { AttemptTimeouts } from './timeouts.js';
 
 /**
@@ -151,17 +155,54 @@ export function firstEventPayload(text: string): { found: boolean; payload?: str
   return { found: false };
 }
 
+/** 探测判定为「丢弃重试」时的成因，供编排层拼日志与错误文案。 */
+export type ProbeRejectionReason = 'error-event' | 'stream-error';
+
+export interface ProbeResult {
+  rejected: boolean;
+  stream: Readable;
+  reason?: ProbeRejectionReason;
+  /** 成因是传输层中断时，上游给出的原始错误文案（如 undici 的 terminated）。 */
+  detail?: string;
+}
+
 /**
- * 预读流开头，判定「上游是否在产出任何内容之前就报错了」。
+ * 传输层中断是否值得重试。三类区分：
+ *   - 中止类（客户端已断开，或挂钟/空闲超时注入的 abort）：不重试。替一个已经走了的
+ *     客户端再打一次上游只会白耗额度；超时类在响应处理阶段本就定义为不可重试。
+ *   - 已是 UpstreamError 的（超时注入）：沿用它自己的 retryable 标志，不在这里改判。
+ *   - 其余（undici 的 terminated / ECONNRESET / 对端提前关流）：瞬时故障，可重试。
+ */
+function isRetryableProbeFailure(err: any): boolean {
+  if (isAbortError(err)) return false;
+  if (err instanceof UpstreamError) return err.retryable;
+  return true;
+}
+
+/**
+ * 预读流开头，判定「上游是否在产出任何内容之前就失败了」。
  *
  * 已读字节不会丢：判定为放行时把它们写回返回流的最前面，其余原样透传。预读期间会
  * `pause()`，确保从摘掉监听器到接上管道之间不会有 chunk 落在空档里被丢掉。
+ *
+ * 两种失败形态：
+ *   - 流内 error 事件（error-event）—— 上游用 200 的流报告失败；
+ *   - 传输层中断（stream-error）—— 流在预读期间被掐断。
+ * 后者是后补的：此前 `close`/`error` 只调用 `finish()` 而不落判定，于是判成 ignore
+ * 放行，把一个**已经死掉的流**交给路由（reflow 把错误转给下游），外层重试循环完全
+ * 没被触发 —— 日志里表现为 `[MESSAGES] Upstream stream error | Trace … | terminated`
+ * 之后就没有下文。预读窗口（30s / 64KB）内的中断都属于这一类。
+ *
+ * 「干净结束但没产出内容」（无 error 的 end/close）不在此列：正常收尾的 SSE 必带
+ * finish 事件，理论上也算截断，但拿不出证据就重试的代价是白耗一次上游额度，不猜。
  */
-export async function probeUpstream(raw: Readable): Promise<{ rejected: boolean; stream: Readable }> {
+export async function probeUpstream(raw: Readable): Promise<ProbeResult> {
   const head: Buffer[] = [];
   const state: { verdict: 'retry' | 'accept' | 'ignore' } = { verdict: 'ignore' };
   let scannedLines = 0;
   let consumedBytes = 0;
+  /** 预读期间上游流自己抛出的错误（传输层中断）。 */
+  let capturedError: any = null;
 
   await new Promise<void>(resolve => {
     const finish = () => {
@@ -171,7 +212,7 @@ export async function probeUpstream(raw: Readable): Promise<{ rejected: boolean;
       raw.off('data', onData);
       raw.off('end', finish);
       raw.off('close', finish);
-      raw.off('error', finish);
+      raw.off('error', onError);
       resolve();
     };
     const onData = (chunk: Buffer) => {
@@ -188,18 +229,36 @@ export async function probeUpstream(raw: Readable): Promise<{ rejected: boolean;
         finish(); // 攒不出可判定的事件，放行
       }
     };
+    // 流被掐断：记下成因交给下面判定，不再当成「放行」。
+    const onError = (err: any) => {
+      capturedError = err;
+      finish();
+    };
     // finish 只会在计时器触发或数据事件里被调用，那时 timer 已初始化。
     const timer = setTimeout(finish, PROBE_TIMEOUT_MS);
     raw.on('data', onData);
     raw.once('end', finish);
     raw.once('close', finish);
-    raw.once('error', finish);
+    raw.once('error', onError);
   });
 
   if (state.verdict === 'retry') {
     raw.destroy();
-    return { rejected: true, stream: raw };
+    return { rejected: true, stream: raw, reason: 'error-event' };
   }
+
+  // 内容事件先到 → 已判为放行，不再改判（判据是「本轮是否已产出内容」，不是「客户端
+  // 是否已收到」；放行之后的中途失败按既有契约原样传给下游）。
+  if (state.verdict === 'accept') {
+    return { rejected: false, stream: reflow(raw, head) };
+  }
+
+  // 传输层中断且尚未产出任何内容：客户端一字节未收，丢弃重试是安全的。
+  if (capturedError && isRetryableProbeFailure(capturedError)) {
+    raw.destroy();
+    return { rejected: true, stream: raw, reason: 'stream-error', detail: capturedError?.message };
+  }
+
   return { rejected: false, stream: reflow(raw, head) };
 }
 
@@ -210,7 +269,13 @@ function reflow(raw: Readable, head: Buffer[]): Readable {
   if (buffered.length) out.write(buffered);
   const errored = (raw as any).errored;
   if (errored) {
-    out.destroy(errored);
+    // 交出去的是一条已经断掉的流。错误事件不能同步投递：调用方（两条路由）都是在
+    // `await sendToCC()` 之后**同步**挂 error 监听器的，而 destroy(err) 的错误走
+    // process.nextTick —— 当上游错误本身就是在微任务里冒出来的时候（合成的流、
+    // 或某些 undici 分支），这个 nextTick 会抢在调用方挂监听之前抛出，把「一次上游
+    // 中断」升级成进程级未捕获异常（本仓库已有同形态的 [CRITICAL] 事故记录）。
+    // setImmediate 一定晚于调用方那一轮同步代码，交接因此与调度时序无关。
+    setImmediate(() => out.destroy(errored));
   } else if (raw.readableEnded || raw.destroyed) {
     out.end(); // 极短响应：预读期间就已结束，别让下游等一个永不到来的 end
   } else {
