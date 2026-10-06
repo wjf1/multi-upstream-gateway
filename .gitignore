@@ -32,3 +32,7 @@ logs/
 watchdog.ps1
 watchdog.log
 watchdog_launcher.vbs
+
+# T103 凭据加密库与明文凭据目录（绝不可入库）
+credentials.enc
+auths/
