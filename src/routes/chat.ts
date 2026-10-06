@@ -16,7 +16,7 @@ import crypto from 'node:crypto';
 import { CommandCodeAdapter } from '../adapters/commandcode/adapter.js';
 import { sendToCC, isAbortError, estimateTextTokens, estimateWireInputTokens } from '../adapters/commandcode/upstream.js';
 import { accumulateUsage, createUsageAccumulator } from '../adapters/commandcode/usage.js';
-import { buildRequestContext } from '../utils/request-context.js';
+import { buildRequestContext, resolveRequestId } from '../utils/request-context.js';
 import { hardenConnectionForLongStream, persistCompletion, writeSSEHeaders, parseEventLine } from './sse-common.js';
 import { OpenAIChatRequest } from '../types/index.js';
 import { getActiveApiKey, getGatewayRunning, checkAndRotateAccountsOnQuota } from '../utils/config.js';
@@ -118,6 +118,9 @@ export async function chatRoutes(fastify: FastifyInstance) {
     const usageAcc = createUsageAccumulator();
     // 非流式也预生成 traceId：响应 id、错误日志、用量记录三者对得上。
     const traceId = `chatcmpl-${crypto.randomUUID().slice(0, 8)}`;
+    // T105：全链路请求 ID（安全链 onRequest 已生成并写入 X-Request-Id 响应头；
+    // 此处读 req.requestId，独立挂载路由（测试）时回退自行解析/生成）。
+    const requestId = (req as any).requestId || resolveRequestId(req.headers as any);
     // 会话/项目等归因信息：会话 ID 来自客户端声明，项目为推断（见模块注释）。
     const requestContext = buildRequestContext(req.headers as any, body);
 
@@ -144,7 +147,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
       // 审计落盘与 TPM 出账和用量落库同点收敛：recorded 幂等保证一次请求只记一条。
       auditRequestEnd(audit, { model: modelName, inputTokens: usageAcc.inputTokens, outputTokens: usageAcc.outputTokens, status, accountId: accountTail(apiKey) });
       recordRequestOutput(req, usageAcc.outputTokens);
-      persistCompletion(modelName, usageAcc, requestContext, startTime, status, traceOverride ?? traceId, 'chat', errorCode);
+      persistCompletion(modelName, usageAcc, requestContext, startTime, status, traceOverride ?? traceId, 'chat', errorCode, requestId);
     };
 
     try {
@@ -406,7 +409,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
       });
     } catch (err: any) {
       if (isAbortError(err) || err?.isAbort) return reply.raw.end();
-      logger.error(`[CHAT] Fatal request error | Trace ${traceId} | ${err.message}`);
+      logger.error(`[CHAT] Fatal request error | Trace ${traceId} | Req ${requestId} | ${err.message}`);
       const proxyErr = toProxyError(err, ErrorCode.INTERNAL_ERROR);
       // 若成功路径已记过 COMPLETED（非流式在 send 之前记），persistOnce 会跳过，
       // 不会把同一次请求记成两条。

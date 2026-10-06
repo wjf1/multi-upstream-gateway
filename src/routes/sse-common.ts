@@ -102,6 +102,7 @@ export function persistCompletion(
   traceId?: string,
   mode: 'chat' | 'messages' = 'chat',
   errorCode?: string,
+  requestId?: string,
 ): void {
   const estimated = estimateCostUsd(model, usage.inputTokens || 0, usage.outputTokens || 0, {
     cacheReadTokens: usage.cacheReadTokens,
@@ -111,6 +112,9 @@ export function persistCompletion(
   const hasUpstreamCost = usage.upstreamCostUsd !== undefined;
   recordCompletion({
     timestamp: new Date().toISOString(),
+    // T108/T109：本路由的请求都来自 CommandCode 上游，显式落 provider 字段，
+    // 供面板按上游维度分口径聚合（历史缺字段的记录读取时归一为 commandcode）。
+    provider: 'commandcode',
     model,
     inputTokens: usage.inputTokens || 0,
     outputTokens: usage.outputTokens || 0,
@@ -124,6 +128,8 @@ export function persistCompletion(
     status,
     ...(errorCode ? { errorCode } : {}),
     traceId,
+    // T105：全链路请求 ID（安全链 onRequest 生成，X-Request-Id 响应头同值）。
+    ...(requestId ? { requestId } : {}),
     mode,
     ...(context.sessionId ? { sessionId: context.sessionId } : {}),
     ...(context.project ? { project: context.project } : {}),

@@ -236,6 +236,12 @@ describe('B3 非回环绑定且无密钥时拒绝启动（真实 spawn 编译产
         COMMANDCODE_MODELS_CACHE_PATH: path.join(dir, 'models.json'),
         COMMANDCODE_PRICING_CACHE_PATH: path.join(dir, 'pricing.json'),
         USAGE_HISTORY_PATH: path.join(dir, 'usage.jsonl'),
+        // T103 启动守卫的隔离：本用例验证的是 B3（非回环拒启），不能被凭据加密检查
+        // 抢先拦住。父进程（同 worker）import config.js 时会把仓库根 .env 读进
+        // process.env，故这里显式清空明文凭据来源与加密库路径。
+        COMMANDCODE_ACCOUNTS_V1: '',
+        CREDENTIAL_STORE_PATH: path.join(dir, 'credentials.enc'),
+        CREDENTIAL_ENCRYPTION_KEY: '',
         PROXY_API_KEY: '',
         ALLOW_INSECURE_BIND: '',
         ADMIN_API_TOKEN: '',

@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import { CommandCodeAdapter } from '../adapters/commandcode/adapter.js';
 import { sendToCC, isAbortError, estimateTextTokens, estimateWireInputTokens, IMAGE_TOKEN_ALLOWANCE } from '../adapters/commandcode/upstream.js';
 import { accumulateUsage, createUsageAccumulator, toAnthropicUsage } from '../adapters/commandcode/usage.js';
-import { buildRequestContext, systemTextOf } from '../utils/request-context.js';
+import { buildRequestContext, resolveRequestId, systemTextOf } from '../utils/request-context.js';
 import { hardenConnectionForLongStream, persistCompletion, writeSSEHeaders, parseEventLine } from './sse-common.js';
 import { AnthropicRequest, CCEvent } from '../types/index.js';
 import { getActiveApiKey, getGatewayRunning, checkAndRotateAccountsOnQuota } from '../utils/config.js';
@@ -98,6 +98,9 @@ export async function messagesRoutes(fastify: FastifyInstance) {
     const translated = adapter.translateAnthropicRequest(body);
     const modelName = translated.params.model;
     const msgId = `msg_${crypto.randomUUID().slice(0, 8)}`;
+    // T105：全链路请求 ID（安全链 onRequest 已写入 X-Request-Id 响应头；此处读
+    // req.requestId，独立挂载路由（测试）时回退自行解析/生成）。
+    const requestId = (req as any).requestId || resolveRequestId(req.headers as any);
     // 只数真正进上下文的字段：原先 JSON.stringify 整个上行体会把 config 元数据和
     // 图片 base64 也算成 input_tokens（一张截图能量出几十万个假 token）。
     let inputTokens = estimateWireInputTokens(translated);
@@ -114,7 +117,7 @@ export async function messagesRoutes(fastify: FastifyInstance) {
       // 审计落盘与 TPM 出账和用量落库同点收敛：recorded 幂等保证一次请求只记一条。
       auditRequestEnd(audit, { model: modelName, inputTokens: usageAcc.inputTokens, outputTokens: usageAcc.outputTokens, status, accountId: accountTail(apiKey) });
       recordRequestOutput(req, usageAcc.outputTokens);
-      persistCompletion(modelName, usageAcc, requestContext, startTime, status, msgId, 'messages', errorCode);
+      persistCompletion(modelName, usageAcc, requestContext, startTime, status, msgId, 'messages', errorCode, requestId);
     };
 
     // 上游把「模型不可用 / 区域限制 / 无可用 provider / 网关请求失败」这类失败以 error

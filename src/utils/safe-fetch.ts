@@ -14,7 +14,7 @@
 
 import { fetch as undiciFetch } from 'undici';
 import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from 'undici';
-import { assertSafeUpstreamUrl } from './config.js';
+import { assertSafeUpstreamUrl } from './security-guard.js';
 
 /** 最大重定向跟随次数（超过即拒绝，第 max+1 个 3xx 响应触发）。 */
 export const MAX_REDIRECT_HOPS = 3;

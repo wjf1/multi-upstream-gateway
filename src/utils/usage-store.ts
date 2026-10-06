@@ -45,6 +45,16 @@ export interface UsageRecord {
   timestamp: string;
   /** 模型 id（与 /v1/models 一致） */
   model: string;
+  /**
+   * 归属上游（T108/T109，master-plan v1.2 §3.9）。缺省视为 'commandcode' —— 历史
+   * 记录全部产生于单源时期；T213 三源接线后各 Provider 显式落自己的名字。
+   */
+  provider?: 'commandcode' | 'freebuff' | 'workbuddy';
+  /**
+   * 原生计量（§3.9）：provider 不参与美元聚合时的并列展示口径（workbuddy 积分、
+   * freebuff 免费时长）。为 P1 预留；当前 commandcode 记录不填。
+   */
+  native?: { points?: number; freeSessionSec?: number };
   inputTokens: number;
   outputTokens: number;
   /** 命中缓存的输入 token。旧记录缺此字段，视为 0。 */
@@ -70,6 +80,8 @@ export interface UsageRecord {
    */
   errorCode?: string;
   traceId?: string;
+  /** 全链路请求 ID（T105）：安全链 onRequest 生成，与 X-Request-Id 响应头同值。 */
+  requestId?: string;
   mode: 'chat' | 'messages';
 
   // ── 归因字段 ──────────────────────────────────────────────────────────────
@@ -371,7 +383,96 @@ export function clearUsageHistory(): void {
 
 /** 读取全部会话历史（JSONL 逐行解析，容错跳过损坏行）。 */
 export function getUsageHistory(): UsageRecord[] {
-  return storage.loadAll();
+  // T109 三态归一：单源时期的旧记录没有 provider 字段——全部产生于 commandcode，
+  // 读入时补默认值，下游查询/聚合因此拿到显式字段（缺省 / 'commandcode' / 各上游名）。
+  return storage.loadAll().map(normalizeRecord);
+}
+
+/**
+ * 记录归一：缺 provider 字段的历史记录按 'commandcode' 补齐；其余字段原样透传。
+ */
+function normalizeRecord(record: UsageRecord): UsageRecord {
+  return record.provider ? record : { ...record, provider: 'commandcode' };
+}
+
+// ─── provider 维度查询与聚合（T109，master-plan v1.2 §3.9）──────────────────
+
+export type ProviderUsageQueryFilter = UsageRecord['provider'];
+
+/** queryUsage 的筛选条件；全部可选，全部为 AND 语义。 */
+export interface UsageQuery {
+  /** 按归属上游筛选。 */
+  provider?: ProviderUsageQueryFilter;
+  /** ISO 时间戳下界（含）。 */
+  from?: string;
+  /** ISO 时间戳上界（含）。 */
+  to?: string;
+  /** 按模型精确匹配。 */
+  model?: string;
+}
+
+/** 按条件筛选用量历史（排序与缓存沿用 getUsageHistory）。 */
+export function queryUsage(query: UsageQuery = {}): UsageRecord[] {
+  const from = query.from ? new Date(query.from).getTime() : undefined;
+  const to = query.to ? new Date(query.to).getTime() : undefined;
+  return getUsageHistory().filter(r => {
+    if (query.provider && r.provider !== query.provider) return false;
+    if (query.model && r.model !== query.model) return false;
+    const t = new Date(r.timestamp).getTime();
+    if (from !== undefined && !(t >= from)) return false;
+    if (to !== undefined && !(t <= to)) return false;
+    return true;
+  });
+}
+
+/** 单个 provider 的聚合桶（§3.9：美元与原生计量分列，不混加）。 */
+export interface ProviderUsageSummary {
+  provider: NonNullable<UsageRecord['provider']>;
+  runs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  /** 该上游的美元成本之和（当前 commandcode 记录恒为 number）。 */
+  costUsd: number;
+  /** 原生计量汇总（仅当组内出现 native 字段时携带）。 */
+  native?: { points?: number; freeSessionSec?: number };
+}
+
+/**
+ * 按 provider 汇总用量（§3.9 口径）。固定 provider 顺序（commandcode /
+ * freebuff / workbuddy），便于面板稳定呈现。
+ */
+export function summarizeByProvider(records: UsageRecord[]): ProviderUsageSummary[] {
+  const buckets = new Map<NonNullable<UsageRecord['provider']>, {
+    runs: number; inputTokens: number; outputTokens: number; cacheReadTokens: number;
+    cost: number; native: { points?: number; freeSessionSec?: number };
+  }>();
+  for (const r of records) {
+    const provider = r.provider ?? 'commandcode';
+    const b = buckets.get(provider) || {
+      runs: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cost: 0, native: {},
+    };
+    b.runs += 1;
+    b.inputTokens += r.inputTokens || 0;
+    b.outputTokens += r.outputTokens || 0;
+    b.cacheReadTokens += r.cacheReadTokens || 0;
+    b.cost += r.costUsd || 0;
+    if (r.native?.points) b.native.points = (b.native.points ?? 0) + r.native.points;
+    if (r.native?.freeSessionSec) b.native.freeSessionSec = (b.native.freeSessionSec ?? 0) + r.native.freeSessionSec;
+    buckets.set(provider, b);
+  }
+  const order: Array<NonNullable<UsageRecord['provider']>> = ['commandcode', 'freebuff', 'workbuddy'];
+  return Array.from(buckets.entries())
+    .sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))
+    .map(([provider, b]) => ({
+      provider,
+      runs: b.runs,
+      inputTokens: b.inputTokens,
+      outputTokens: b.outputTokens,
+      cacheReadTokens: b.cacheReadTokens,
+      costUsd: b.cost,
+      ...(Object.keys(b.native).length > 0 ? { native: b.native } : {}),
+    }));
 }
 
 interface DayBucket {
@@ -702,6 +803,8 @@ export function getUsageStats() {
     month: sum(month),
     byDay: Array.from(byDay.values()).sort((a, b) => a.date.localeCompare(b.date)),
     byModel: Array.from(byModel.values()).sort((a, b) => b.costUsd - a.costUsd),
+    // provider 维度聚合（T109 §3.9：按归属上游分口径，面板禁止混加）。
+    byProvider: summarizeByProvider(records),
     // 项目维度（推断）：costSource 意义上的 projectSource 保留在每行上，
     // 汇总时取"该项目下最强证据"，label 优先于 heuristic。
     byProject: Array.from(byProject.values())

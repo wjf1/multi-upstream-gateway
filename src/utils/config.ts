@@ -17,6 +17,9 @@ import { notify } from './notifier.js';
 import { getProjectRootDir } from './paths.js';
 import { loadDefaultApiKeyFromEnvOrSystem } from './auth-browser.js';
 import { assertSafeUpstreamUrl, assertSafeUpstreamDns } from './security-guard.js';
+import { migrateLegacyConfigIfNeeded, parseEnvAccountsV1, writeEnvAccountsV1, deepMergeKeepUnknown } from './unified-config.js';
+import { loadAccountsFromCredentialStore, getDefaultCredentialStore } from './credential-store.js';
+import { safeFetch } from './safe-fetch.js';
 
 // 路径解析收敛到 paths.ts（logger 也依赖它，避免循环导入）；此处保持再导出
 // 兼容既有 import（dashboard.ts 等）。
@@ -115,6 +118,9 @@ function loadEnvFileOnce(): void {
 /** config.json 的 mtime 缓存：文件未变时跳过每请求的读盘+解析。 */
 let configFileCache: { mtimeMs: number; size: number; data: Partial<GatewayConfigFile> } | null = null;
 
+/** T102 迁移钩子的去重标记：同一配置文件只检查一次，避免每请求都 parse 一遍。 */
+let migrationCheckedPath: string | null = null;
+
 function readFileConfig(): Partial<GatewayConfigFile> {
   try {
     if (!fs.existsSync(CONFIG_FILE_PATH)) {
@@ -136,7 +142,41 @@ function readFileConfig(): Partial<GatewayConfigFile> {
 
 export function loadConfig(): GatewayConfig {
   loadEnvFileOnce();
-  const fileConfig = readFileConfig();
+  // T102：旧形态 config.json → unified providers 结构的一次性迁移（幂等、原子写回；
+  // accounts[].apiKey 迁入 .env 的 COMMANDCODE_ACCOUNTS_V1，config.json 不再落明文
+  // 凭据，master-plan v1.2 §3.7-2）。
+  // 4.22.4 适配 ①：**测试进程绝不迁移**。CONFIG_FILE_PATH 是模块加载期常量，而部分
+  // 测试（如 health-check.test.ts 经探活调 loadConfig）不会、也无法再覆盖它，于是
+  // 迁移钩子会改写**仓库根的真实 config.json / .env**（实测事故：真实 config.json
+  // 被迁成 unified 形态）。测试环境直接跳过，生产（node dist）照常迁移。
+  // 4.22.4 适配 ②：按路径记忆已检查过，避免每个请求路径都 parse 一次 config.json ——
+  // loadConfig 是每请求热路径，4.22.4 专门给 readFileConfig 做了 mtime 缓存，这里
+  // 不能把它抵消掉。迁移本身幂等，检查一次即够。
+  const isTestEnv = process.env.NODE_ENV === 'test' || !!process.env.VITEST;
+  if (!isTestEnv && migrationCheckedPath !== CONFIG_FILE_PATH) {
+    migrateLegacyConfigIfNeeded(CONFIG_FILE_PATH, ENV_FILE_PATH);
+    migrationCheckedPath = CONFIG_FILE_PATH;
+  }
+  const rawFile = readFileConfig();
+  // T102：unified 形态（providers.commandcode 分片）投影回旧视图——存量读取逻辑
+  // （rotationMode/activeAccountId/upstream）继续工作，无需逐点改造。
+  const ccShard = ((rawFile as Record<string, unknown>).providers as Record<string, unknown> | undefined)
+    ?.commandcode as Record<string, unknown> | undefined;
+  const fileConfig: Partial<GatewayConfigFile> = {
+    ...(rawFile as Partial<GatewayConfigFile>),
+    rotationMode:
+      ((rawFile as Record<string, unknown>).rotationMode as GatewayConfigFile['rotationMode']) ??
+      (ccShard?.rotationMode as GatewayConfigFile['rotationMode']),
+    activeAccountId:
+      ((rawFile as Record<string, unknown>).activeAccountId as string | undefined) ??
+      (ccShard?.activeAccountId as string | undefined),
+    upstream:
+      ((rawFile as Record<string, unknown>).upstream as GatewayConfigFile['upstream']) ??
+      (ccShard?.upstream as GatewayConfigFile['upstream']),
+    accounts:
+      ((rawFile as Record<string, unknown>).accounts as AccountInfo[] | undefined) ??
+      (Array.isArray(ccShard?.accountsMeta) ? (ccShard.accountsMeta as AccountInfo[]) : []),
+  };
 
   const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : undefined;
   const port = envPort || fileConfig.port || DEFAULTS.port;
@@ -149,7 +189,20 @@ export function loadConfig(): GatewayConfig {
     process.env.ROTATION_MODE === 'auto-quota' || fileConfig.rotationMode === 'auto-quota'
       ? 'auto-quota'
       : 'manual';
-  const accounts: AccountInfo[] = Array.isArray(fileConfig.accounts) ? fileConfig.accounts : [];
+  // T102/T103：迁移后凭据从 .env 的 COMMANDCODE_ACCOUNTS_V1 合并——env 条目携带完整
+  // 账号（含 apiKey），config.json 侧的 accounts/accountsMeta 只保留展示元数据（面板
+  // 改名以文件侧为准回填）。凭据读取优先级：加密存储（密钥可用且加密库有数据）
+  // > COMMANDCODE_ACCOUNTS_V1（T102 兼容回退）。合并语义：文件侧元数据打底，凭据侧
+  // 整条覆盖。
+  let accounts: AccountInfo[] = Array.isArray(fileConfig.accounts) ? [...fileConfig.accounts] : [];
+  const credAccounts = loadAccountsFromCredentialStore();
+  const credentialSide = credAccounts.length > 0
+    ? credAccounts
+    : parseEnvAccountsV1(process.env.COMMANDCODE_ACCOUNTS_V1);
+  if (credentialSide.length > 0) {
+    const metaById = new Map(accounts.map(a => [a.id, a] as const));
+    accounts = credentialSide.map(e => ({ ...(metaById.get(String(e.id)) ?? {}), ...e }) as unknown as AccountInfo);
+  }
   if (accounts.length === 0) {
     const { apiKey: sysKey, source } = loadDefaultApiKeyFromEnvOrSystem();
     if (sysKey) {
@@ -224,6 +277,65 @@ export function saveConfigFile(updates: Partial<GatewayConfigFile>): boolean {
     // 临时文件名带 pid：固定名在两个实例共用同一数据目录时会互相踩，且 Windows 上
     // rename 覆盖被对方打开的文件会 EPERM。
     const tmp = `${CONFIG_FILE_PATH}.${process.pid}.tmp`;
+
+    if (current && typeof current === 'object' && 'providers' in (current as Record<string, unknown>)) {
+      // T102：文件已迁移为 unified providers 形态——保持该结构写回，updates 合入
+      // 顶层与 commandcode 分片；账号凭据同步到 .env 的 COMMANDCODE_ACCOUNTS_V1，
+      // config.json 只保留展示元数据（不落明文）。
+      const next = deepMergeKeepUnknown(current as unknown as Record<string, unknown>, {
+        port: updated.port,
+        host: updated.host,
+        providers: {
+          commandcode: {
+            rotationMode: updated.rotationMode,
+            activeAccountId: updated.activeAccountId,
+            upstream: updated.upstream,
+          },
+        },
+      });
+      const providers = next.providers as Record<string, unknown>;
+      const cc = providers.commandcode as Record<string, unknown>;
+      // 账号列表语义：调用方显式传入（loginNewAccount/logoutAccount）用传入值；
+      // 否则取当前有效账号 —— 加密库可读时优先加密库（T103 凭据真身），再退回
+      // .env 的 COMMANDCODE_ACCOUNTS_V1（T102 兼容）。unified 形态的文件里没有顶层
+      // accounts，不能用 current.accounts 兜底。
+      const envAccounts = parseEnvAccountsV1(process.env.COMMANDCODE_ACCOUNTS_V1);
+      const storeAccounts = loadAccountsFromCredentialStore();
+      const accounts = (
+        updates.accounts ?? (storeAccounts.length > 0 ? storeAccounts : envAccounts)
+      ) as AccountInfo[];
+      cc.accountsMeta = accounts.map(a => {
+        const { apiKey: _omit, ...meta } = a;
+        return meta;
+      });
+      // T103（§3.7-2，T103 残留收口）：面板保存不再把凭据明文回写 .env。
+      //  - CREDENTIAL_ENCRYPTION_KEY 可用：凭据增量吸收进加密存储（AES-256-GCM），
+      //    并摘除 .env 明文行（含本进程副本）——凭据 at-rest 只以密文存在；
+      //  - 密钥不可用：保持 T102 现行为（明文回写 .env 的 COMMANDCODE_ACCOUNTS_V1）。
+      //    权衡：不静默丢弃凭据，把风险留给启动校验 —— 下次启动
+      //    assertCredentialsEncryptedOrThrow 会拒绝启动并给出密钥生成指引。
+      // 4.22.4 适配：仅在"确实要持久化账号"（调用方显式传 accounts，或当前已有账号）
+      // 时动凭据通道 —— 纯设置类保存（改端口/轮换模式）不得把现有凭据写空。参照树
+      // 无条件写，会在此场景下把加密库/ACCOUNTS_V1 清空。
+      const accountsProvided = updates.accounts !== undefined;
+      const credentialed = accounts.filter(a => a.apiKey);
+      const store = getDefaultCredentialStore();
+      if (accountsProvided || credentialed.length > 0) {
+        if (store.hasKey()) {
+          store.upsertAccounts(credentialed as unknown as Array<Record<string, unknown>>);
+          store.stripPlaintextEnvLine(ENV_FILE_PATH);
+        } else {
+          writeEnvAccountsV1(ENV_FILE_PATH, credentialed);
+        }
+        // 旧扁平形态遗留的 COMMANDCODE_API_KEY 明文行在 unified 形态下不再必要，
+        // 且会绕过"凭据不落明文"的承诺（删号后仍能被下次启动重新导入），一并摘除。
+        stripEnvKeyLine(ENV_FILE_PATH, 'COMMANDCODE_API_KEY');
+      }
+      fs.writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf-8');
+      fs.renameSync(tmp, CONFIG_FILE_PATH);
+      return true;
+    }
+
     fs.writeFileSync(tmp, JSON.stringify(updated, null, 2), 'utf-8');
     fs.renameSync(tmp, CONFIG_FILE_PATH);
 
@@ -264,6 +376,29 @@ function syncEnvFile(
     fs.writeFileSync(ENV_FILE_PATH, envLines.join('\n'), 'utf-8');
   } catch (err: any) {
     logger.warn(`[CONFIG] Could not sync .env file: ${err.message}`);
+  }
+}
+
+/**
+ * 从 .env 摘除某个 `KEY=` 开头的行（原子写回）。unified 形态下账号凭据由加密库 /
+ * COMMANDCODE_ACCOUNTS_V1 接管，旧扁平形态遗留的 COMMANDCODE_API_KEY 明文行必须
+ * 摘掉 —— 否则它作为 getActiveApiKey() 的兜底通道继续存在，"config.json 不落明文
+ * 凭据"的承诺在 .env 侧被绕过（T103 残留收口）。
+ */
+function stripEnvKeyLine(envFilePath: string, key: string): void {
+  try {
+    if (!fs.existsSync(envFilePath)) return;
+    const text = fs.readFileSync(envFilePath, 'utf-8');
+    const prefix = `${key}=`;
+    const lines = text.split(/\r?\n/);
+    const kept = lines.filter(l => !l.trim().startsWith(prefix));
+    if (kept.length === lines.length) return;
+    const tmp = `${envFilePath}.tmp`;
+    fs.writeFileSync(tmp, kept.join('\n'), 'utf-8');
+    fs.renameSync(tmp, envFilePath);
+    if (process.env[key]) delete process.env[key];
+  } catch (err: any) {
+    logger.warn(`[CONFIG] Could not strip ${key} from .env: ${err.message}`);
   }
 }
 
@@ -471,8 +606,9 @@ async function fetchJson(url: string, headers: Record<string, string>, timeoutMs
     return null;
   }
   try {
-    // Wave 3（SSRF）：3xx 不跟随，res.ok 为 false 走下方返回 null 的失败分支
-    const res = await fetch(safeUrl, { headers, signal: AbortSignal.timeout(timeoutMs), redirect: 'manual' } as RequestInit);
+    // T105：走 safeFetch（redirect:'manual' + 逐跳 Location 校验，≤3 跳），
+    // 封死用量统计通道的二跳 SSRF（初始 URL 本就过校验，safeFetch 内幂等复检）。
+    const res = await safeFetch(safeUrl, { headers, signal: AbortSignal.timeout(timeoutMs) });
     if (res.ok) return await res.json();
   } catch (err: any) {
     logger.warn(`[USAGE] ${safeUrl} fetch error: ${err.message}`);

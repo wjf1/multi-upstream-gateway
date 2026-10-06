@@ -17,6 +17,8 @@ import { getUpdateState } from '../utils/update-check.js';
 import { getProjectRootDir } from '../utils/config.js';
 import { isSameOriginIfPresent } from './sse-common.js';
 import { ADMIN_CSP, adminTokenOk, injectAdminTokenMeta, isLoopbackHostHeader } from '../utils/admin-guard.js';
+import { registerAuditLog } from '../utils/audit-log.js';
+import { acceptRiskDisclaimer, isRiskDisclaimerAccepted } from '../utils/risk-gate.js';
 import {
   loadConfig,
   resolveBodyLimit,
@@ -109,6 +111,10 @@ function parseEnvList(name: string): string[] {
 }
 
 export async function dashboardRoutes(fastify: FastifyInstance) {
+  // T105：/api/* 全部写操作落审计日志（audit-log.jsonl：时间/类别/目标/来源 IP/
+  // requestId/结果，不落正文与凭据；被 token 校验拒绝的写操作同样留痕）。
+  registerAuditLog(fastify);
+
   // 仅对公共 API 表面（/v1/*）开放 CORS。管理 /api/* 路由不发 CORS 头，
   // 这样浏览器里的随机网页就无法驱动它们。
   fastify.addHook('onRequest', async (req, reply) => {
@@ -216,6 +222,8 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
       hasApiKey: !!getActiveApiKey(),
       modelsCount: getCachedModels().length,
       authRequired: !!process.env.PROXY_API_KEY,
+      // T106（§3.7-7）：风险告知确认状态。false 时 /v1 一律 403，面板据此弹窗。
+      acceptedRiskDisclaimer: isRiskDisclaimerAccepted(),
       // 绑定非回环地址 = API 与管理面对局域网可见；未设 PROXY_API_KEY 时前端要醒目警示
       boundNonLoopback: !['127.0.0.1', 'localhost', '::1'].includes(config.host),
       // 版本更新检查（尽力而为，离线时 latest 为 null）
@@ -329,6 +337,23 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
   });
 
   fastify.get('/api/logs', async () => ({ logs: logger.getLogs() }));
+
+  /**
+   * T106（§3.7-7）：确认合规风险告知。
+   *
+   * 写操作 —— 自动受管理面鉴权约束（非 GET 的 /api/* 需 x-admin-token，
+   * 且由 T105 的审计链记录）。成功后写回 config.json 并**热生效**（无需重启）：
+   * 下一个 /v1 请求即放行。
+   */
+  fastify.post('/api/risk/accept', async (_req, reply) => {
+    try {
+      acceptRiskDisclaimer();
+      return { status: 'success', acceptedRiskDisclaimer: true };
+    } catch (err: any) {
+      logger.error(`[RISK] Failed to persist risk disclaimer acceptance: ${err?.message || err}`);
+      return reply.status(500).send({ error: `Could not persist acceptance: ${err?.message || err}` });
+    }
+  });
 
   fastify.post('/api/logs/clear', async () => {
     logger.clearLogs();

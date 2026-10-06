@@ -14,7 +14,13 @@
 //
 // 两者都只覆盖**经过本代理的流量**：上游 usage summary 显示本周期全账号 2511 次
 // 请求，代理侧仅记录到约 448 次（约 18%），其余为直连 CLI 或其他客户端。
+//
+// 3. 全链路请求 ID（T105）：入口 resolveRequestId() 生成并传播到日志 / 用量记录 /
+//    审计 / 响应头 X-Request-Id。沿用本模块的 header 提取机制：客户端显式携带
+//    `x-request-id`（格式受白名单约束）时透传复用，否则 crypto.randomUUID()。
 // =============================================================================
+
+import { randomUUID } from 'node:crypto';
 
 /** 项目归属的置信度来源。 */
 export type ProjectSource =
@@ -119,6 +125,22 @@ export function isValidTimezone(tz: string | null): boolean {
   } catch {
     return false;
   }
+}
+
+// ── 请求 ID（T105：全链路传播）────────────────────────────────────────────────
+
+/**
+ * 客户端 `x-request-id` 的白名单：8..128 位、首字符为字母数字、其余限
+ * 字母数字与 `._-`。约束格式是为了让该值能安全进日志/响应头/审计，杜绝
+ * 注入（换行、控制字符）与超长值。
+ */
+const REQUEST_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
+
+/** 解析全链路请求 ID：客户端合法 x-request-id 透传复用，否则生成 UUID。 */
+export function resolveRequestId(headers: HeaderBag | undefined): string {
+  const v = header(headers, 'x-request-id');
+  if (v && REQUEST_ID_RE.test(v)) return v;
+  return randomUUID();
 }
 
 // ── 项目推断 ────────────────────────────────────────────────────────────────

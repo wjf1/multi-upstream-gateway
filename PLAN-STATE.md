@@ -49,7 +49,22 @@
   - deps: P0-PORT-A
   - 范围：`providers/core/{interface,router,registry}.ts`、`utils/{unified-config,credential-store,rate-limiter,security-guard,sanitize,audit-log,safe-fetch,risk-gate}.ts`、`providers/freebuff/**`（T201 成果）及配套测试
   - blocked: —
-- [ ] P0-PORT-D 接缝文件改造
+- [x] P0-PORT-D1 安全链 / 风险门 / 审计 / 用量维度接线（2026-10-07）
+  - 完成：`registerSecurityGuards`（鉴权前）+ `registerRiskGate`（鉴权后）、T103 凭据启动钩子、NODE_DEBUG 剥离、
+    pino redact + genReqId、`/api/status.acceptedRiskDisclaimer`、`POST /api/risk/accept`、管理面审计钩子、
+    请求 ID 全链路、`config.ts` 迁移/加密接缝、`usage-store` provider 维度
+  - 实跑（隔离端口 9196）：未确认 → `/v1` 403 RISK_DISCLAIMER_NOT_ACCEPTED（带 x-request-id）→
+    `/api/risk/accept` 无 token 401 / 带 token 200 → 热生效后 `/v1` 越过风险门
+  - **事故已处置**：首次 `npm test` 因 `health-check.test.ts` 探活调用 `loadConfig()`（`CONFIG_FILE_PATH` 为
+    模块加载期常量、测试无法覆盖）**误迁移了真实 config.json**。已从备份逐字节还原（md5 一致）、清除 `.env`
+    中残留的 `COMMANDCODE_ACCOUNTS_V1`、并加固：`loadConfig` 在 `NODE_ENV=test`/`VITEST` 下跳过迁移。
+    9090 全程未重启（uptime 连续、账号正确）。
+  - 遗留：限流/modelAccess 双轨配置源 → T213 收口；`providers/commandcode` 建议不搬家只做薄适配（D2 决策）
+  - blocked: —
+- [ ] P0-PORT-D2 接缝收尾（`providers/commandcode` 薄适配层决策 + T213 收口项）
+  - deps: P0-PORT-D1
+  - blocked: —
+- [ ] P0-PORT-D 接缝文件改造（历史条目，已拆分为 D1/D2）
   - deps: P0-PORT-B,P0-PORT-C
   - 范围：`index.ts`（安全链/风险门/凭据钩子/NODE_DEBUG/pino redact）、`routes/{chat,messages,sse-common}.ts`（safeFetch/requestId/provider 字段/风险门顺序）、`routes/dashboard.ts`（`/js/*`、status 字段、`/api/risk/accept`、审计钩子）、`utils/config.ts`（迁移钩子/加密优先/保存分支）、`utils/usage-store.ts`（provider 维度）、`utils/errors.ts`（+6 码）、`adapters/commandcode` → `providers/commandcode`
   - blocked: —

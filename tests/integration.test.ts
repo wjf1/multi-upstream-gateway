@@ -339,6 +339,14 @@ beforeAll(async () => {
       // 压到 19ms，吞吐算出 2000+ t/s 的假高值（历史事故：claude-sonnet-5 505/505
       // 条、claude-opus-4-8 13/13 条均为测试残留）。
       USAGE_HISTORY_PATH: path.join(stateDir, 'usage.jsonl'),
+      // T106：合规风险门默认关闭（acceptedRiskDisclaimer=false），未确认时所有 /v1
+      // 请求 403。本套件验证的是 /v1 的业务语义，故显式接受风险告知（CI / 一次性
+      // 脚本跳过风险门的正规通道，见 risk-gate.ts）。
+      ACCEPTED_RISK_DISCLAIMER: '1',
+      // T103 启动守卫隔离：不带明文凭据、不指向用户主目录的加密库，避免机器上
+      // 既有的 ~/.commandcode/credentials.enc 让子进程拒绝启动。
+      COMMANDCODE_ACCOUNTS_V1: '',
+      CREDENTIAL_STORE_PATH: path.join(stateDir, 'credentials.enc'),
       NO_OPEN_BROWSER: '1',
     },
     stdio: 'ignore',

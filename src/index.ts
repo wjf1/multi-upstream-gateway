@@ -11,6 +11,7 @@
 //   7. 监听端口；默认自动打开浏览器显示仪表盘
 // =============================================================================
 import Fastify from 'fastify';
+import crypto from 'node:crypto';
 import { loadConfig, openBrowser, checkAndRotateAccountsOnQuota, getActiveApiKey, resolveBodyLimit, enrichDefaultAccountName, fetchWindowLimits } from './utils/config.js';
 import { fetchUpstreamModels } from './utils/models.js';
 import { logger } from './utils/logger.js';
@@ -21,6 +22,10 @@ import { messagesRoutes } from './routes/messages.js';
 import { modelsRoutes } from './routes/models.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { registerPromptRoutes } from './routes/prompts.js';
+import { registerSecurityGuards } from './utils/security-guard.js';
+import { registerRiskGate, isRiskDisclaimerAccepted } from './utils/risk-gate.js';
+import { stripDangerousNodeDebug } from './utils/sanitize.js';
+import { assertCredentialsEncryptedOrThrow, migratePlaintextCredentialsIfNeeded } from './utils/credential-store.js';
 import { recordQuotaSample, getQuotaProjection } from './utils/quota-tracker.js';
 import { flushPendingWrites } from './utils/usage-store.js';
 import { scheduleUpdateChecks } from './utils/update-check.js';
@@ -58,8 +63,51 @@ process.on('unhandledRejection', (reason: any) => {
 const config = loadConfig();
 await initOutboundProxy(config);
 
+// T105（§3.7-5）：启动时剥离 NODE_DEBUG 中的 undici/http/http2 项。这些项会让
+// Node 原生客户端把完整请求头（含 Authorization）打到 stderr —— 绕过全部日志
+// 脱敏（sanitizeLog 只覆盖本代理的日志通道），必须在最前面掐断。
+{
+  const stripped = stripDangerousNodeDebug(process.env);
+  if (stripped.changed) {
+    logger.warn(
+      `[SECURITY] NODE_DEBUG 已剥离危险调试项：${stripped.removed.join(', ')} —— ` +
+      'undici/http 的原生调试输出会打印完整请求头（含 Authorization），日志脱敏覆盖不到该通路。',
+    );
+  }
+}
+
+// T103（master-plan v1.2 §3.7-2）：凭据加密-at-rest 启动钩子。
+// 1) 校验：存在凭据（明文 V1 / auths/*.json / 已有加密库）而
+//    CREDENTIAL_ENCRYPTION_KEY 未设置或非法 → 拒绝启动并给出生成密钥指引；
+// 2) 首次带密钥启动：把明文凭据加密落盘（credentials.enc）、摘除 .env 明文行、
+//    旧明文 auths/*.json 改名 *.plain.bak 并告警提示删除。
+try {
+  assertCredentialsEncryptedOrThrow();
+  migratePlaintextCredentialsIfNeeded();
+} catch (err: any) {
+  logger.error(`${err?.message || err}`);
+  process.exit(1);
+}
+
 const fastify = Fastify({
-  logger: false,
+  // T105（§3.7-5）：Fastify 内建 pino 日志启用在 warn 级（不产生逐请求噪音，仅
+  // 框架级错误可见），并对凭据类请求头做 redact —— 兜底覆盖 pino 序列化路径。
+  // 项目自身的日志控制台（utils/logger.ts）与此通道并行，互不影响。
+  logger: {
+    level: 'warn',
+    redact: {
+      paths: [
+        'req.headers.authorization',
+        'req.headers["proxy-authorization"]',
+        'req.headers.cookie',
+        'req.headers["x-api-key"]',
+        'req.headers["x-admin-token"]',
+      ],
+      censor: '[REDACTED]',
+    },
+  },
+  // T105：Fastify 内部 req.id 也用 UUID，与安全链生成的 X-Request-Id 同构。
+  genReqId: () => crypto.randomUUID(),
   trustProxy: true,
   // 视觉/多图请求的 base64 负载可能超过 Fastify 默认 1MB，触发 413
   // (FST_ERR_CTP_BODY_TOO_LARGE)。默认 64MB，可用环境变量 MAX_BODY_MB 调整。
@@ -128,8 +176,19 @@ function exitForCrashBudget(kind: string): void {
 
 const start = async () => {
   try {
+    // T105 安全中间件链（请求 ID 传播 / modelAccess / 限流 / 请求日志）。
+    // 必须先于 verifyProxyAuth 注册：请求 ID 的 onRequest 钩子要先执行，
+    // 被 401 拒绝的请求才能带上 X-Request-Id 响应头。
+    registerSecurityGuards(fastify);
+
     // 可选的共享密钥鉴权（PROXY_API_KEY 环境变量），作用于 /v1/*。
     verifyProxyAuth(fastify);
+
+    // T106（§3.7-7）：合规风险告知门，作用于 /v1/*。
+    // 必须排在 verifyProxyAuth 之后：鉴权先答"你是谁"（401），风险门再答
+    // "你确认过风险了吗"（403）。顺序反了会看到 403 而非 401，把鉴权失败
+    // 伪装成合规拦截。未确认时（默认）所有 /v1 请求 403。
+    registerRiskGate(fastify);
 
     await fastify.register(dashboardRoutes);
     await fastify.register(chatRoutes);
@@ -238,6 +297,12 @@ const start = async () => {
     // 管理面写操作凭据。控制台输出它是有意的：本机脚本需要一个稳定途径拿到 token，
     // 而能读到这份日志的账号本来就能读到 config.json 里的明文上游密钥。
     console.log(`  🔑 Admin token:             ${ADMIN_TOKEN}（管理面写操作凭据；重启换代，可用 ADMIN_API_TOKEN 固定）`);
+    // T106：未确认风险告知时 /v1 一律 403。启动时就讲清楚，不要等到用户
+    // 拿着 403 回来问"为什么突然不能用了"。
+    if (!isRiskDisclaimerAccepted()) {
+      console.log('  ⚠️  Risk disclaimer:        NOT ACCEPTED —— /v1/* 请求将返回 403');
+      console.log('                              打开面板确认风险告知，或设 ACCEPTED_RISK_DISCLAIMER=1');
+    }
     console.log('=============================================================\n');
 
     logger.info(`[SERVER] CommandCode Proxy v4 running on ${dashboardUrl}`);
