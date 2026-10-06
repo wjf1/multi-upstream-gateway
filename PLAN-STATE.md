@@ -1,6 +1,6 @@
 # PLAN-STATE
 
-> **执行依据**：`F:/AI/Qdor/review/multi-upstream-gateway/master-plan-v1.2.md`（v1.2.3 起含基准勘误修订）。
+> **执行依据**：`docs/master-plan-v1.2.md`（v1.2.3 起含基准勘误修订）。
 > **工程仓库（唯一工作副本）**：`C:\Users\admin\Doubao\chats\2026-09-03\new-chat-5\commandcode-proxy`
 > —— v4.22.4，git 分支 `feat/p0-port`，与上游 `wjf1/commandcode-proxy` main 同步（HEAD `87b1a05`）。
 >
@@ -27,7 +27,7 @@
 
 **处置**（用户 2026-10-06 决定）：**重定基到 v4.22.4**，把已完成的成果移植过去；移植完成并验证后才重启 9090。
 
-**已确认仍然有效的工作**：审计批次 B（`batch-b.patch`）在 v4.22.4 上**同样未应用**（无 `admin-guard.ts`），
+**已确认仍然有效的工作**：审计批次 B（`docs/review/batch-b.patch`）在 v4.22.4 上**同样未应用**（无 `admin-guard.ts`），
 故 G0-T3 依旧需要。P0 的成果多为**新增文件**，移植冲突集中在少量接缝文件。
 
 **安全网**：部署副本的 `dist/`、`config.json`、`package.json` 已备份至
@@ -43,7 +43,7 @@
   - blocked: —
 - [ ] P0-PORT-B 审计批次 B 移植
   - deps: P0-PORT-A
-  - 范围：把 `batch-b.patch`（ADMIN_API_KEY 分离 / Host 白名单 / 非回环拒启 / OAuth state / CSP）适配到 4.22.4（其 `dashboard.ts`/`chat.ts`/`config.ts`/`public/index.html` 均已演进）
+  - 范围：把 `docs/review/batch-b.patch`（ADMIN_API_KEY 分离 / Host 白名单 / 非回环拒启 / OAuth state / CSP）适配到 4.22.4（其 `dashboard.ts`/`chat.ts`/`config.ts`/`public/index.html` 均已演进）
   - blocked: —
 - [ ] P0-PORT-C 新增文件移植（增量文件 + import 适配）
   - deps: P0-PORT-A

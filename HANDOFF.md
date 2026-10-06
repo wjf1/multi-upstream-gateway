@@ -11,8 +11,8 @@
 - **工程仓库（唯一工作副本）**：`C:\Users\admin\Doubao\chats\2026-09-03\new-chat-5\commandcode-proxy`
   —— 上游 **v4.22.4** 基线 + Phase A~C 移植，当前分支 **`feat/p0-port`**（HEAD `c352726`）。
   remote 布局：`origin` = 产品仓库（推送目标）、`upstream` = `wjf1/commandcode-proxy`（**仅 fetch，禁止 push**）、`ghproxy` = 上游镜像。
-- **执行依据（SSOT）**：`F:/AI/Qdor/review/multi-upstream-gateway/master-plan-v1.2.md`（v1.2.3 起含基准勘误）。
-  评审与审计材料：`F:/AI/Qdor/review/commandcode-proxy/`（`batch-b.patch`、`architecture-review.md`、`remediation-plan.md`）。
+- **执行依据（SSOT）**：`docs/master-plan-v1.2.md`（已纳入仓库）（v1.2.3 起含基准勘误）。
+  审计与评审材料（已随仓库分发）：`docs/review/`（`batch-b.patch`、`architecture-review.md`、`remediation-plan.md`）。
 - **当前状态（2026-10-06）**：**基准重定进行中**。
   - **重要**：方案的基线事实基于过期检出（`F:/AI/Qdor/repos/commandcode-proxy` = v4.17.0）。真实基准是 v4.22.4。
     G0+P0+T201 的全部成果都做在 4.17.0 上，现正**按 Phase A~F 移植到 4.22.4**（详见 `PLAN-STATE.md`）。

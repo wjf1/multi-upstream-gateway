@@ -9,7 +9,7 @@
 ## 1. 源码获取方式与 commit / 版本信息
 
 - 获取方式:`git clone https://github.com/linguo2625469/workbuddy2api-panel` 经代理 `http://127.0.0.1:7900` 一次成功,无 404,无需 zip 兜底。
-- 本地路径:`F:/AI/Qdor/review/workbuddy2api-panel`
+- 本地路径:`F:/AI/Qdor/review/workbuddy2api-panel`（**第三方 Go 源码，未随本仓库分发**；上游 `https://github.com/linguo2625469/workbuddy2api-panel`，行号引用以本机该 clone 为准）
 - HEAD commit:`947828777c4496e6b3d6b6dee987be75056f7925`(`chore: 版本号 1.12.0-panel`)
 - 近期提交示例:`b1a2284 fix(scheduler): 暂停号口径修正`、`ea3a51c Merge PR #113 paused-account-state`、`beb0a1b Merge PR #116 model-blocked-status`
 - README 自述:Sliverkiss/workbuddy2api 的增强 fork(**上游已删库**,本项目同步至上游删库前最后一次更新 `ea8b1e5` 后独立演进);Go 1.22.5;版本 1.12.0-panel
@@ -183,7 +183,7 @@ internal/
 
 ### 附:证据文件索引(绝对路径)
 
-- 选号:`F:/AI/Qdor/review/workbuddy2api-panel/internal/pool/pick.go`
+- 选号:`<workbuddy2api-panel clone>/internal/pool/pick.go`
 - 冷却/熔断/负缓存:`internal/pool/cooldown.go`;迁移矩阵:`internal/pool/transition.go`;参数常量:`internal/pool/entry.go:499-543`;持久化:`internal/pool/persist.go`
 - Classify:`internal/upstream/client.go:27-80/460-600`;错误策略:`internal/server/handler.go:1235-1362`;轮转退避:`internal/server/backoff.go`
 - payload 管线:`internal/upstream/payload.go`;SSE:`internal/upstream/sse.go`;思维链:`internal/upstream/thinking.go`;脱敏:`internal/upstream/sanitize.go`;tool 配对:`internal/upstream/tool_pairing.go`;headers:`internal/upstream/headers.go`;行为事件链:`internal/upstream/desktop.go` + `internal/panel/autotask.go`

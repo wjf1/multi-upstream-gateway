@@ -1,0 +1,1119 @@
+From 617c57845a6368662157298b4bd60bb32ca61d31 Mon Sep 17 00:00:00 2001
+From: wjf1 <wjf1@users.noreply.github.com>
+Date: Sun, 20 Sep 2026 23:57:29 +0800
+Subject: [PATCH] =?UTF-8?q?feat(security):=20=E6=89=B9=E6=AC=A1=20B=20?=
+ =?UTF-8?q?=E2=80=94=E2=80=94=20=E9=87=8D=E5=88=92=E7=AE=A1=E7=90=86?=
+ =?UTF-8?q?=E9=9D=A2=E9=89=B4=E6=9D=83=E8=BE=B9=E7=95=8C=EF=BC=8C=E5=A0=B5?=
+ =?UTF-8?q?=E6=8E=89=20rebinding=20=E5=8F=AF=E7=BB=95=E8=BF=87=E7=9A=84?=
+ =?UTF-8?q?=E5=90=8C=E6=BA=90=E6=A3=80=E6=9F=A5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+审查里 P0-2 的完整形态是：管理面默认零鉴权，且唯一那道跨站防线读的是**攻击者可控
+的 Host 头**。`isSameOriginIfPresent` 比较 Origin 与 Host 是否同源，而 DNS rebinding
+把 evil.tld 解析到 127.0.0.1 之后两者天然自洽——检查必然放行。于是浏览器里一个恶意
+页面就能静默增删账号、改配置、清空用量历史。这批改动按依赖顺序落地。
+
+B2 Host 回环白名单（承重项，必须先做）
+- `/` 与 `/api/*` 只接受 `127.0.0.1` / `localhost` / `::1`（端口不限）；LAN 自托管用
+  `ADMIN_ALLOWED_HOSTS` 追加。
+- 判定走 `new URL()` 取 hostname 再比对，所以 `127.0.0.1.evil.tld`、
+  `127.0.0.1:9090@evil.tld` 这类写法骗不过去。
+- 命名刻地与**出站**的 `COMMANDCODE_UPSTREAM_ALLOWED_HOSTS` 区分开：两者语义相反，
+  做成邻居式命名迟早有人填错。
+
+B1 管理面一次性 token
+- 每次启动 `randomUUID()` 生成，`ADMIN_API_TOKEN` 可固定（本机脚本需要稳定值）。
+- 以 `<meta name="ccproxy-admin-token">` 注入仪表盘页面，SPA 的 fetch 包装自动给
+  `/api/*` 写请求附 `x-admin-token`。选 meta 而不是内联 script，是为了不被将来的
+  `script-src` 卡住。
+- **这条依赖 B2**：Host 不先关进白名单，rebinding 的页面会连着 token 一起读走。
+  所以「带对 token 的 rebinding 写请求」必须、也确实拿到 403。
+- 只卡写不卡读：管理面 16 个端点的 GET 保持开放，本机 `curl /api/usage` 这类监控
+  脚本不受影响。
+- **行为变更：`PROXY_API_KEY` 不再覆盖 `/api/*`**，只管 `/v1/*`。此前一把密钥同时是
+  数据面与管理面凭据，等于发给任何客户端的密钥都能用来改配置（权限未分离）。
+- 页面收到 `/api` 写 401 时刷新一次取新 token（网关重启即换代），并拦住连环刷新。
+
+B3 非回环绑定且无密钥 → 拒绝启动
+- 此前只打一行警告然后照常启动。逃生阀 `ALLOW_INSECURE_BIND=1`：LAN 部署是合法场景，
+  但必须是主动选择。
+
+B4 OAuth 回调缺 `state` 不再放行
+- 改判 400。旧实现把「不带 state」当作兼容旧版 CLI 的有意取舍，等于在这个本地回调端口
+  上留了一个无 CSRF 防护的入口；确需兼容用 `COMMANDCODE_ALLOW_LEGACY_OAUTH=1` 显式打开。
+
+B5 只上零风险项 CSP
+- `frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';
+  img-src 'self' data:; font-src 'self'; connect-src 'self'`。
+- **刻意不含 `script-src`**：`index.html` 第 392 行起是一整块内联脚本，另有 19 处
+  `onclick` / 2 处 `onchange`，一收紧仪表盘全废。内联脚本外置化是独立重构批次，
+  审查清单里把它记成 S 是低估了。
+
+启动横幅输出 admin token 是有意的权衡：本机脚本需要一条稳定途径拿到它，而能读这份
+日志的账号本来就能读 `config.json` 里的明文上游密钥。
+
+测试：新增 `tests/admin-boundary.test.ts` 共 16 项，全部先观察到失败再实现。契约变更
+牵动 3 个既有文件，改法是让断言继续锁原意而不是绕开——`auth.test.ts` 从「/api 也要
+密钥」改成锁权限分离；`guard.test.ts` 的放行用例补 token 并新增「异源 + 合法 token
+仍然 403」证明两道门独立；`integration.test.ts` 的暂停网关用例改为钉住 `ADMIN_API_TOKEN`
+并先断言 toggle 返回 200，否则鉴权拦下请求时它会以「网关没暂停」的面目失败，把排查
+方向整个带偏。`admin-key-mask`（上一批新增）也补上了 token。
+
+全量 **322 项通过**（288 + 批次 A 16 + 批次 B 16 + 契约调整新增 2），`tsc --noEmit`
+与 `eslint .` 无错误，语句覆盖率 57.57% → 60.17%。另在 Chromium 里实跑复核：页面无
+CSP 违规、meta 中 token 与启动横幅一致、点「停止引擎」的真实 POST 带 `x-admin-token`
+返回 200、用 XHR 绕过包装发无 token 写请求返回 401；HTTP 层再验 `Host: evil.tld` 即使
+带正确 token 也是 403，且此时首页根本不投递 token。
+---
+ CHANGELOG.md                 |  25 ++-
+ README.md                    |  13 +-
+ public/index.html            |  50 ++++--
+ src/index.ts                 |  24 +++
+ src/routes/chat.ts           |  14 +-
+ src/routes/dashboard.ts      |  37 ++++-
+ src/utils/admin-guard.ts     |  98 ++++++++++++
+ src/utils/config.ts          |   8 +-
+ tests/admin-boundary.test.ts | 300 +++++++++++++++++++++++++++++++++++
+ tests/admin-key-mask.test.ts |   4 +
+ tests/auth.test.ts           |  51 ++++--
+ tests/guard.test.ts          |  37 ++++-
+ tests/integration.test.ts    |  10 +-
+ 13 files changed, 621 insertions(+), 50 deletions(-)
+ create mode 100644 src/utils/admin-guard.ts
+ create mode 100644 tests/admin-boundary.test.ts
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index d653328..89f9695 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,7 +4,7 @@
+ 
+ ## [Unreleased]
+ 
+-架构审查（批次 A）修复。7 项中有 2 项是**行为变更**，已单独标注。
++架构审查后的整改：批次 A 消除 7 处静默失效，批次 B 重划鉴权边界。两批合计 **4 项行为变更**，已逐条标注。
+ 
+ ### 修复
+ - **额度/瞬时错误重试时的账号切换现在真正生效**（原 `onRetry` 死代码，见 4.17.0「已知问题」）。这条路径上实际有**三层**缺陷，只补第 1 层仍然不会切号：
+@@ -20,19 +20,34 @@
+ - **`/api/auth/manual-login` 不再明文回传上游 apiKey**，改为与 `/api/accounts` 一致的 `apiKeyMasked`。`loginNewAccount` 的返回类型仍带完整凭据（内部调用方需要），收口在 HTTP 边界。
+ - **仪表盘 `badge()` 转义 text**：`title` 参数一直走 `esc()`，`text` 却是裸拼进 innerHTML，而调用点把上游定价页抓来的 `m.deal.discountPercent` 直接传入。全站仍无 CSP，故属纵深防御缺口。
+ 
++### 鉴权边界（批次 B —— 动 API 契约）
++
++根因是同一个：**管理面默认零鉴权，而唯一的跨站防线读的是攻击者可控的 `Host` 头**。`isSameOriginIfPresent` 比的是 `Origin` 与 `Host` 是否同源，DNS rebinding 把 `evil.tld` 解析到 127.0.0.1 之后两者天然自洽，这个检查形同不存在——浏览器里一个恶意页面因此可以静默增删账号、改配置、清空用量历史。
++
++- **B2 `Host` 回环白名单（承重项，必须先做）**：`/` 与 `/api/*` 只接受 `127.0.0.1` / `localhost` / `::1`（端口不限），LAN 自托管用 `ADMIN_ALLOWED_HOSTS` 追加名字。判定走 `new URL()` 解析 hostname，`127.0.0.1.evil.tld`、`127.0.0.1:9090@evil.tld` 这类写法骗不过去。
++- **B1 管理面一次性 token**：每次启动生成（`ADMIN_API_TOKEN` 可固定，供本机脚本用），以 `<meta name="ccproxy-admin-token">` 注入仪表盘页面，SPA 的 fetch 包装自动给 `/api/*` 写请求附上 `x-admin-token`。选 meta 而非内联 script 投递，是为了不被将来的 `script-src` 卡住。**这一条依赖 B2**：Host 不先关进白名单，rebinding 的页面会连着 token 一起读走。
++  - **只卡写不卡读**：管理面 16 个端点的 GET 保持开放，本机 `curl /api/usage` 之类的监控脚本不受影响。
++  - **行为变更：`PROXY_API_KEY` 不再覆盖 `/api/*`**，只管 `/v1/*`。此前一把密钥同时是数据面与管理面凭据，发给任何客户端的密钥都能拿来改配置（审查 P0-2 的权限未分离）。
++  - 页面若收到 `/api` 写操作 401（几乎只可能是网关重启换了 token 代次）自动刷新一次取新值，并拦住连环刷新。
++- **B3 非回环绑定且无密钥 = 拒绝启动**：此前只打一行警告然后照常启动。逃生阀 `ALLOW_INSECURE_BIND=1`——LAN 部署是合法场景，但必须是主动选择。
++- **B4 OAuth 回调缺 `state` 不再放行**：改判 400；确需兼容不回显 state 的旧版 CLI，用 `COMMANDCODE_ALLOW_LEGACY_OAUTH=1` 显式打开。
++- **B5 只上零风险项 CSP**：`frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'`。**刻意不含 `script-src`**：`index.html` 第 392 行起是一整块内联脚本，另有 19 处 `onclick` / 2 处 `onchange`，一收紧仪表盘全废。内联脚本外置化属独立重构批次，届时再补 `script-src`。
++- 启动横幅输出 admin token。这是有意的权衡：本机脚本需要一条稳定途径拿到它，而能读到这份日志的账号本来就能读到 `config.json` 里的明文上游密钥。
++
+ ### 构建
+ - `pkg.assets` 移除 `models.json`：它是运行时生成的缓存且已在 `.gitignore` 里，全新克隆上打包会静默缺该资产。
+ 
+ ### 测试
+ - 新增 5 个文件共 16 项，全部先观察到失败再实现：`onretry-account-switch`（断言上游实际收到的 `Authorization` 头变化，而非"回调被调用过"）、`upstream-total-timeout`（把 `idleTimeoutMs` 刻意设得大于总时限，使超时只能归因于挂钟上限）、`admin-key-mask`、`spa-badge-escape`（取出 index.html 里真实的 `badge`/`esc`/`BADGE_TONES` 源码执行）、`update-check-tags`。
+ - 新增 `COMMANDCODE_ENV_PATH` 覆盖（与 `COMMANDCODE_CONFIG_PATH` / `..._MODELS_CACHE_PATH` 等同一套约定，不设置时行为不变）。动机是修一处测试自伤：`admin-key-mask` 走进程内 `app.inject`，`.env` 路径按 `getProjectRootDir()`(=cwd) 解析，于是它把一次账号保存的副作用写进了**仓库根 `.env`**；而 `.env` 在启动时被回注且 `COMMANDCODE_API_BASE`/`COMMANDCODE_VERSION` 的优先级高于 `config.json`（`config.ts:264`）——在既当部署目录又当源码目录的地方跑一次测试，下次启动就会被指到别处。`.env` 命中 `.gitignore:4`，`git status` 看不见它。基线（4.17.0）跑测试只留 `logs/`、`models.json`（同样被忽略），不写 `.env`，所以这条是本次新增测试带来的。
+-- 全量 **304 项通过**（原 288 + 16），`tsc --noEmit`、`eslint .` 无错误；语句覆盖率 48.36% → **57.57%（1460/2536，无污染下的真实值）**。
+-  - 顺带修正一处读数：早先记的 57.8% 偏高，因为仓库根存在 `.env` 时 `loadEnvFile()` 的解析分支会被顺带跑到的语句计入覆盖。实测同一棵树：有仓库根 `.env` → 1472 条，无 → 1460 条，差 12 条。反过来说，`loadEnvFile()` 的正经解析路径目前**没有任何直接覆盖**，靠副作用才被动跑到——补测试归入后续批次。
++- 批次 B 新增 1 个文件 16 项（`admin-boundary`）：Host 白名单纯函数（含 `127.0.0.1.evil.tld`、`127.0.0.1:9090@evil.tld` 这类骗法）、token 常量时间比较、`isInsecureBind`、`oauthStateAcceptable`，端到端的「缺 token → 401 / rebinding Host → 403（优先于 token 检查）/ 只卡写 / `PROXY_API_KEY` 不再管 `/api`」，以及真 spawn 编译产物验证非回环无密钥启动即失败、`ALLOW_INSECURE_BIND=1` 时正常启动并把 token 打到控制台。**其中「带对 token 的 rebinding 写请求被 403」这条正是批次 A 之前无法存在的用例**。
++- 契约变更牵动 3 个既有测试文件，改法是让断言继续锁原意而不是绕开：`auth.test.ts` 的「/api 也要密钥」两例改成锁权限分离（`/api` 桩端点带不带密钥都 200，`/v1` 才要），`guard.test.ts` 的放行两例补上 token 并新增「异源 + 合法 token 仍然 403」（证明两道门独立），`integration.test.ts` 的暂停网关用例改为钉住 `ADMIN_API_TOKEN` 并先断言 toggle 返回 200——否则鉴权拦下请求时它会以「网关没暂停」的面目失败，把排查方向整个带偏。
++- 浏览器实跑复核（Chromium，隔离实例 + 独立状态目录）：页面零 CSP 违规（唯一告警是既有的 Tailwind Play CDN 提示）、`meta` 里的 token 与启动横幅一致、点「停止引擎」的真实 POST 带上 `x-admin-token` 返回 200、用 XHR 绕过 fetch 包装发无 token 写请求返回 401；HTTP 层另验 `Host: evil.tld:9191` 即使带正确 token 也是 403，且此时首页根本不投递 token。
++- 全量 **322 项通过**（原 288 + 批次 A 16 + 批次 B 16 + 契约调整新增 2），`tsc --noEmit`、`eslint .` 无错误；语句覆盖率 48.36% → **60.17%（1553/2581）**。
++  - 读数修正：批次 A 期间记的 57.8% 偏高，因为仓库根存在 `.env` 时 `loadEnvFile()` 的解析分支会被顺带跑到的语句计入覆盖。实测同一棵树：有仓库根 `.env` → 1472 条，无 → 1460 条，差 12 条。反过来说，`loadEnvFile()` 的正经解析路径目前**没有任何直接覆盖**，靠副作用才被动跑到——补测试归入后续批次。
+ 
+ ### 已知问题（本次排查中发现，未修）
+-- **管理面默认零鉴权**：`PROXY_API_KEY` 未设置时 `verifyProxyAuth` 直接 return，`/api/*` 16 个管理端点完全无鉴权；且 `/v1` 数据面与 `/api` 管理面共用同一把密钥，未做权限分离。跨站驱动已被 `isSameOriginIfPresent` 挡住，但该检查比对的是**攻击者可控的 `Host` 头**，DNS rebinding 可绕过（无 Host 白名单）。属需要设计决策的独立批次，未随本次一起改。
+ - 出站 fetch 未设 `redirect:'manual'`，`assertSafeUpstreamUrl` 只校验初始 URL，二跳可逃逸 SSRF 白名单。
+-- OAuth 回调在 `state` 缺失时放行（`config.ts` 注释说明是为兼容旧版 CLI 的有意取舍）。
+ - 密钥以明文写入 `config.json` / `.env`，无文件权限加固；`.env` 会被回注 `process.env`。
+ - **`syncEnvFile` 把 `apiBase`/`ccVersion` 写死成默认值**（`config.ts:342-343`），而回注时这两个 env 的优先级高于 `config.json`（`config.ts:264`）。于是一个用自建/反代上游的人：在仪表盘加或切换一次账号 → `.env` 被写入 `COMMANDCODE_API_BASE=https://api.commandcode.ai` → 下次重启后他的自定义 `upstream.apiBase` 被**静默改回公网默认**。默认部署里两者取值相同（都是 `https://api.commandcode.ai` / `1.27.1`），所以这台机器上不会触发，属潜伏缺陷。修法是把写入值改成生效配置，或干脆不写这两行。
+ - `rewriteSafely`（仅 dev 工具，不在服务路径）的 `renameSync` 无 try/catch，Windows 上偶发 `EPERM` 会抛出并泄漏临时文件。
+diff --git a/README.md b/README.md
+index 15a3373..f95b062 100644
+--- a/README.md
++++ b/README.md
+@@ -67,7 +67,7 @@
+ ### 🛡 可靠性与安全
+ 
+ - **长连接加固** — 429/5xx/网络错误指数退避重试，**并覆盖上游藏在 HTTP 200 流里的失败**（网关请求失败 / 服务过载 / 无可用 provider）：在把流交给路由之前预判流内事件，因此错误不再被当成模型的回答返回；确定性不可用（区域限制、模型不认识）刻意不重试以免白耗额度；空闲流看门狗（不会无限挂起）；客户端断开立即取消上游；流干净收尾（补 finish、SSE 心跳防代理断连）
+-- **安全默认** — 仅绑定 `127.0.0.1`；可选 `PROXY_API_KEY` 共享密钥（**同时覆盖 API 与管理面**，仪表盘首次访问弹密钥输入）；`/api/*` 写操作校验 Origin；XSS 加固；CORS 仅对公共 API 表面开放；绑定非回环且未鉴权时界面与启动日志双重警告
++- **安全默认** — 仅绑定 `127.0.0.1`；`PROXY_API_KEY` 只保护数据面 `/v1/*`（可选）；管理面 `/api/*` 的写操作要一次性 `x-admin-token`（随仪表盘页面自动携带，`ADMIN_API_TOKEN` 可固定），读操作保持开放；`/` 与 `/api/*` 只接受回环 `Host`（LAN 场景用 `ADMIN_ALLOWED_HOSTS` 追加），因此 DNS rebinding 无法伪造同源；绑定非回环且未设密钥时**直接拒绝启动**（逃生阀 `ALLOW_INSECURE_BIND=1`）；XSS 加固 + 管理页 CSP；CORS 仅对公共 API 表面开放
+ - **上游 SSRF 防护（fail-closed）** — 所有服务端上游请求经白名单校验：仅 `http(s)`、拒绝内嵌凭据、默认拒绝环回/私有/保留地址、非回环强制 `https`，详见[安全校验](#security)
+ - **结构化错误码** — 17 个稳定错误码 + 可执行提示，按出口分别返回 OpenAI `error.type/code` 与 Anthropic `error.type`，调用方可据此决定等额度、换模型还是改配置（见[错误码表](#errors)）
+ - **桌面通知（Windows toast）** — 额度将耗尽、账号被切走、引擎暂停时主动弹出；原生 `Windows.UI.Notifications` 零依赖，30 分钟去重限频；**自诊断**系统通知总开关（被静默拒绝的 toast 只能靠主动检测暴露），`COMMANDCODE_NOTIFY=0` 关闭
+@@ -170,7 +170,7 @@ Anthropic 出口（`/v1/messages`）：
+ |---|:---:|---|
+ | `MISSING_CREDENTIAL` | 401 | 没有任何可用 Key（环境变量/auth.json/账号池皆空） |
+ | `INVALID_CREDENTIAL` | 401 | Key 失效或被吊销 |
+-| `PROXY_AUTH_REQUIRED` | 401 | 未携带匹配的 `PROXY_API_KEY` |
++| `PROXY_AUTH_REQUIRED` | 401 | `/v1/*` 未携带匹配的 `PROXY_API_KEY`；管理面写操作缺 `x-admin-token` 时也回 401（响应体带说明） |
+ | `RATE_LIMIT` | 429 | 5 小时/周额度耗尽，或余额不足 |
+ | `MODEL_NOT_IN_PLAN` | 403 | 模型超出当前套餐档位 |
+ | `MODEL_NOT_FOUND` | 404 | 模型 id 不存在（刷新目录后重试） |
+@@ -199,7 +199,11 @@ Anthropic 出口（`/v1/messages`）：
+ |---|---|---|
+ | `PORT` | `9090` | 监听端口 |
+ | `HOST` | `127.0.0.1` | 绑定地址（`0.0.0.0` 暴露到局域网） |
+-| `PROXY_API_KEY` | 未设置 | 要求 `/v1/*` **与管理面 `/api/*`** 携带该密钥（Bearer 或 `x-api-key`）；仪表盘首次访问会弹出密钥输入，本标签页内记住 |
++| `PROXY_API_KEY` | 未设置 | 只要求数据面 `/v1/*` 携带该密钥（Bearer 或 `x-api-key`）。**不再充当管理面凭据**，避免发给客户端的密钥同时能改配置 |
++| `ADMIN_API_TOKEN` | 每次启动随机生成 | 管理面 `/api/*` **写操作**的凭据（请求头 `x-admin-token`）。仪表盘页面自带 `<meta name="ccproxy-admin-token">`，前端自动附加；本机脚本要用的话固定这个变量，或从启动横幅读取。读操作不需要 |
++| `ADMIN_ALLOWED_HOSTS` | 未设置 | `/` 与 `/api/*` 允许的**入站** `Host` 追加名单（逗号分隔，供 LAN 自托管）。默认只认 `127.0.0.1`/`localhost`/`::1`，这是 DNS rebinding 的防线。注意与下面那个**出站**的 `COMMANDCODE_UPSTREAM_ALLOWED_HOSTS` 是两回事 |
++| `ALLOW_INSECURE_BIND` | 未设置 | 设为 `1` 才允许「绑定非回环且未设 `PROXY_API_KEY`」启动；否则该配置直接拒绝启动 |
++| `COMMANDCODE_ALLOW_LEGACY_OAUTH` | 未设置 | 设为 `1` 才允许 OAuth 回调不带 `state`（旧版 CLI 不回显 state 的兼容通道） |
+ | `COMMANDCODE_API_KEY` | 取自 auth.json | 上游密钥兜底；无命名账号时账号名显示为 `CLI Key (尾4位 xxxx)` / `Env Key (尾4位 xxxx)`，启动后由 whoami 异步补全真实用户名 |
+ | `COMMANDCODE_API_BASE` | `https://api.commandcode.ai` | 上游服务地址 |
+ | `COMMANDCODE_UPSTREAM_ALLOWED_HOSTS` | 未设置 | 追加允许的上游 host（逗号分隔，供自建网关/镜像）；环回/私有/保留地址默认拒绝，仅在此显式加入才放行 |
+@@ -210,6 +214,7 @@ Anthropic 出口（`/v1/messages`）：
+ | `USAGE_HISTORY_MAX_MB` | `20` | 会话历史大小上限（MB）；超限保留较新的一半，防止无限增长拖慢聚合 |
+ | `PERF_MIN_OUTPUT_TOKENS` | `32` | 性能面板的吞吐闸门：输出不足该值（token）的请求只计入延迟、不计入吞吐（分母趋零会让 tok/s 失真）；设 `0` 关闭 |
+ | `USAGE_HISTORY_PATH` | `~/.commandcode/usage-history.jsonl` | 用量历史文件路径。测试与多实例部署必须覆盖它，否则会写进生产库 |
++| `COMMANDCODE_ENV_PATH` | `<项目根>/.env` | `.env` 落盘位置（账号变更时同步，启动时回注）。测试与多实例部署同样必须覆盖：进程内测试的 cwd 就是仓库根，写进去的 `COMMANDCODE_API_BASE` 优先级高于 `config.json`，而 `.env` 被 `.gitignore` 遮住 |
+ | `COMMANDCODE_LOG_PATH` | `<项目根>/logs/proxy.log` | 运行日志落盘路径（超 5MB 轮转 `.old`） |
+ | `DAILY_BUDGET_USD` | 未设置（关） | 每日预算告警：当日累计成本（服务器本地日）达到阈值时弹一次 toast；进程重启会从历史回填当日已计费金额 |
+ | `MAX_UPSTREAM_CONCURRENCY` | 不限制 | 上游并发上限；超限请求以 `GATEWAY_BUSY`(503) 快速失败，防失控客户端压起大量长流 |
+@@ -336,7 +341,7 @@ Point any OpenAI-style client (Cursor, Continue, Aider, OpenWebUI, Hermes, your
+ **Reliability & security**
+ 
+ - Exponential-backoff retries on 429/5xx/network errors; **retries also cover failures the upstream reports inside an HTTP 200 stream** (gateway failure / overload / no available provider) by probing events before the stream is handed to the route, so an error is no longer returned as if it were the model's answer — deterministic unavailability (region, unknown model) is deliberately not retried; idle-stream watchdog (no infinite hangs); client-disconnect cancellation; clean stream termination with SSE keepalive comments
+-- Secure defaults: loopback-only binding; optional `PROXY_API_KEY` covering **both `/v1/*` and the admin surface `/api/*`** (dashboard prompts on first visit); Origin check on `/api/*` mutations; XSS-hardened dashboard; CORS limited to the public API surface; prominent warnings when bound non-loopback without auth
++- Secure defaults: loopback-only binding; optional `PROXY_API_KEY` for the data plane `/v1/*` only; admin mutations on `/api/*` additionally require a per-boot `x-admin-token` (served to the dashboard via `<meta name="ccproxy-admin-token">`, pinnable with `ADMIN_API_TOKEN`), reads stay open; `/` and `/api/*` accept loopback `Host` values only (`ADMIN_ALLOWED_HOSTS` extends them), which is what actually stops DNS rebinding; startup refuses a non-loopback bind without a key unless `ALLOW_INSECURE_BIND=1`; XSS-hardened dashboard with a CSP on the admin page; CORS limited to the public API surface
+ - **SSRF guard, fail-closed** — see the bilingual [Upstream URL safety](#security) section
+ - **Structured error codes** — 17 stable codes with actionable hints, surfaced as OpenAI `error.type/code` or Anthropic `error.type` (table below)
+ - Windows toast notifications for quota exhaustion / account switch / engine pause — native, zero dependencies, 30-min dedupe, with **self-diagnosis** of the system-wide notification switch; disable via `COMMANDCODE_NOTIFY=0`
+diff --git a/public/index.html b/public/index.html
+index 9f73ef9..9a6901b 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -380,7 +380,7 @@
+ <div id="adminKeyModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[60] flex items-center justify-center hidden">
+   <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 max-w-sm w-full shadow-2xl space-y-4">
+     <h3 class="text-base font-bold text-white flex items-center gap-2"><i class="fa-solid fa-shield-halved text-indigo-400"></i> 管理密钥</h3>
+-    <p class="text-xs text-slate-400">本网关设置了 <code class="font-mono text-slate-300">PROXY_API_KEY</code>，访问管理接口与 API 都需要携带该密钥。验证通过后本标签页内记住（sessionStorage），关闭标签页即清除。</p>
++    <p class="text-xs text-slate-400"><code class="font-mono text-slate-300">PROXY_API_KEY</code> 现在只保护 <code class="font-mono text-slate-300">/v1/*</code> 数据面（API 调用方携带）。管理面写操作改用网关本次启动生成的一次性 token，由本页自动携带，无需你输入；若提示凭据无效，刷新页面即可取到新值。</p>
+     <input type="password" id="adminKeyInput" placeholder="PROXY_API_KEY" autocomplete="off" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500">
+     <div class="flex justify-end space-x-2 pt-1">
+       <button onclick="dismissAdminKeyModal()" class="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-xs font-medium">取消</button>
+@@ -1160,16 +1160,30 @@ function settleConfirm(ok) {
+   if (r) r(!!ok);
+ }
+ 
+-// ─── 管理面鉴权（PROXY_API_KEY 开启时）───────────────────────────────────────
+-// 服务端开启密钥后 /api/* 与 /v1/* 都要求 x-api-key。这里包装 fetch：
+-// 自动附带头；收到 401 弹密钥框，提交后自动重试原请求。密钥仅存 sessionStorage。
++// ─── 管理面鉴权（批次 B）─────────────────────────────────────────────────────
++// /api/* 的写操作要 x-admin-token：它由服务端注入在本页的 <meta name="ccproxy-admin-token">
++// 里（回环 Host 才会被投递，见 src/utils/admin-guard.ts）。PROXY_API_KEY 从此只覆盖
++// /v1/*，不再充当管理面凭据。收到 /api 401 基本只有一种解释：网关重启换了一代 token，
++// 而这是旧页面 —— 刷新一次拿新 token，且不允许连环刷新。
+ const realFetch = window.fetch.bind(window);
+-function adminKeyHeaders(init) {
+-  const key = sessionStorage.getItem('adminKey') || '';
+-  if (!key) return init;
++const ADMIN_TOKEN = (() => {
++  const meta = document.querySelector('meta[name="ccproxy-admin-token"]');
++  return meta ? (meta.getAttribute('content') || '') : '';
++})();
++function authHeadersFor(url, init) {
+   const headers = new Headers((init && init.headers) || {});
+-  headers.set('x-api-key', key);
+-  return Object.assign({}, init, { headers });
++  let touched = false;
++  if (url.startsWith('/api/') && ADMIN_TOKEN) { headers.set('x-admin-token', ADMIN_TOKEN); touched = true; }
++  if (url.startsWith('/v1/')) {
++    const key = sessionStorage.getItem('adminKey') || '';
++    if (key) { headers.set('x-api-key', key); touched = true; }
++  }
++  return touched ? Object.assign({}, init, { headers }) : init;
++}
++function methodOf(input, init) {
++  if (init && init.method) return String(init.method).toUpperCase();
++  if (typeof Request !== 'undefined' && input instanceof Request) return input.method.toUpperCase();
++  return 'GET';
+ }
+ let adminKeyWaiters = [];
+ let adminKeyMutedUntil = 0;
+@@ -1205,11 +1219,21 @@ function dismissAdminKeyModal() {
+ }
+ window.fetch = async function (input, init) {
+   const url = typeof input === 'string' ? input : (input && input.url) || String(input);
+-  const needsAuth = url.startsWith('/api/') || url.startsWith('/v1/');
+-  let res = await realFetch(input, needsAuth ? adminKeyHeaders(init) : init);
+-  if (res.status === 401 && needsAuth) {
++  const write = !['GET', 'HEAD', 'OPTIONS'].includes(methodOf(input, init));
++  let res = await realFetch(input, authHeadersFor(url, init));
++  if (res.status === 401 && url.startsWith('/api/') && write) {
++    if (!sessionStorage.getItem('adminTokenReloaded')) {
++      sessionStorage.setItem('adminTokenReloaded', '1');
++      location.reload();
++    } else {
++      showToast('管理凭据无效：本页携带的 token 与网关当前值不一致，请确认没有另开实例或固定 ADMIN_API_TOKEN。', 'error');
++    }
++    return res;
++  }
++  if (res.ok && url.startsWith('/api/') && write) sessionStorage.removeItem('adminTokenReloaded');
++  if (res.status === 401 && url.startsWith('/v1/')) {
+     const key = await promptAdminKeyOnce();
+-    if (key) res = await realFetch(input, adminKeyHeaders(init));
++    if (key) res = await realFetch(input, authHeadersFor(url, init));
+   }
+   return res;
+ };
+diff --git a/src/index.ts b/src/index.ts
+index bc7939b..0de999c 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -16,6 +16,7 @@ import { fetchUpstreamModels } from './utils/models.js';
+ import { logger } from './utils/logger.js';
+ import { PROXY_VERSION } from './utils/version.js';
+ import { chatRoutes, verifyProxyAuth } from './routes/chat.js';
++import { ADMIN_TOKEN, isInsecureBind } from './utils/admin-guard.js';
+ import { messagesRoutes } from './routes/messages.js';
+ import { modelsRoutes } from './routes/models.js';
+ import { dashboardRoutes } from './routes/dashboard.js';
+@@ -173,6 +174,26 @@ const start = async () => {
+       });
+     }
+ 
++    // B3：非回环绑定却没有数据面密钥，等于把整台网关交给局域网 —— 任何人都能增删
++    // 账号、改配置、清空用量历史。此前只打一行警告然后照常启动；现在拒绝启动，
++    // 除非显式 ALLOW_INSECURE_BIND=1（LAN 自托管是合法场景，但必须是主动选择）。
++    if (
++      isInsecureBind({
++        host: config.host,
++        hasProxyKey: !!process.env.PROXY_API_KEY?.trim(),
++        allowInsecure: process.env.ALLOW_INSECURE_BIND === '1',
++      })
++    ) {
++      const reason =
++        `[STARTUP] 拒绝启动：绑定到非回环地址 ${config.host} 却未设置 PROXY_API_KEY。` +
++        '这样局域网内任何主机都能调用 API 并完整操作管理面（增删账号、改配置、清空历史）。' +
++        '三选一：把 HOST 改回 127.0.0.1；设置 PROXY_API_KEY；' +
++        '确实要开放则设 ALLOW_INSECURE_BIND=1（同时建议给管理面固定 ADMIN_API_TOKEN）。';
++      logger.error(reason);
++      console.error(reason);
++      process.exit(1);
++    }
++
+     await fastify.listen({ port: config.port, host: config.host });
+ 
+     const displayHost = config.host === '0.0.0.0' || config.host === '::' ? 'localhost' : config.host;
+@@ -185,6 +206,9 @@ const start = async () => {
+     console.log(`  🤖 OpenAI Chat Completions: ${dashboardUrl}v1/chat/completions`);
+     console.log(`  💬 Anthropic Messages:      ${dashboardUrl}v1/messages`);
+     console.log(`  🔒 Bound to:                ${config.host}${process.env.PROXY_API_KEY ? ' (API auth ON)' : ''}`);
++    // 管理面写操作凭据。控制台输出它是有意的：本机脚本需要一个稳定途径拿到 token，
++    // 而能读到这份日志的账号本来就能读到 config.json 里的明文上游密钥。
++    console.log(`  🔑 Admin token:             ${ADMIN_TOKEN}（管理面写操作凭据；重启换代，可用 ADMIN_API_TOKEN 固定）`);
+     console.log('=============================================================\n');
+ 
+     logger.info(`[SERVER] CommandCode Proxy v4 running on ${dashboardUrl}`);
+diff --git a/src/routes/chat.ts b/src/routes/chat.ts
+index 086aae4..3ae40e4 100644
+--- a/src/routes/chat.ts
++++ b/src/routes/chat.ts
+@@ -44,18 +44,20 @@ function safeEqual(a: string, b: string): boolean {
+ }
+ 
+ /**
+- * 可选的共享密钥鉴权。设置 PROXY_API_KEY 环境变量后：
+- *  - `/v1/*`：API 调用方必须以 `Authorization: Bearer <key>` 或 `x-api-key` 携带它；
+- *  - `/api/*`：管理面同一把密钥（绑定 0.0.0.0 时防止局域网直连增删账号）。
+- * 未设置 = 开放本机访问（默认回环绑定已保证安全）。仪表盘 HTML 本身保持公开，
+- * 前端在 /api 401 时弹密钥输入框。
++ * 可选的数据面共享密钥鉴权。设置 PROXY_API_KEY 环境变量后，`/v1/*` 的调用方必须以
++ * `Authorization: Bearer <key>` 或 `x-api-key` 携带它；未设置 = 开放本机访问（默认回环
++ * 绑定 + 批次 B 的非回环拒绝启动已保证安全）。
++ *
++ * 它**不再覆盖 `/api/*`**（审查 P0-2 的「权限未分离」）：一把密钥同时管数据面与管理面，
++ * 意味着发给任何客户端的密钥都能用来增删账号、清空历史。管理面改由
++ * `src/utils/admin-guard.ts` 的一次性 token 保护。
+  */
+ export function verifyProxyAuth(fastify: FastifyInstance): void {
+   const requiredKey = process.env.PROXY_API_KEY?.trim();
+   if (!requiredKey) return;
+ 
+   fastify.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
+-    if (!req.url.startsWith('/v1/') && !req.url.startsWith('/api/')) return;
++    if (!req.url.startsWith('/v1/')) return;
+     // CORS 预检请求不携带自定义头（含鉴权），必须放行，否则浏览器客户端
+     // 在设置 PROXY_API_KEY 后连预检都过不去。
+     if (req.method === 'OPTIONS') return;
+diff --git a/src/routes/dashboard.ts b/src/routes/dashboard.ts
+index 30c0ca9..8b530e9 100644
+--- a/src/routes/dashboard.ts
++++ b/src/routes/dashboard.ts
+@@ -16,6 +16,7 @@ import { logger, LOG_FILE_PATH } from '../utils/logger.js';
+ import { getUpdateState } from '../utils/update-check.js';
+ import { getProjectRootDir } from '../utils/config.js';
+ import { isSameOriginIfPresent } from './sse-common.js';
++import { ADMIN_CSP, adminTokenOk, injectAdminTokenMeta, isLoopbackHostHeader } from '../utils/admin-guard.js';
+ import {
+   loadConfig,
+   resolveBodyLimit,
+@@ -44,18 +45,45 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
+   // 仅对公共 API 表面（/v1/*）开放 CORS。管理 /api/* 路由不发 CORS 头，
+   // 这样浏览器里的随机网页就无法驱动它们。
+   fastify.addHook('onRequest', async (req, reply) => {
++    const routePath = req.url.split('?')[0];
++    const isAdminApi = routePath.startsWith('/api/');
++    const isDashboardPage = routePath === '/';
++
+     if (req.url.startsWith('/v1/') || req.url === '/health') {
+       reply.header('Access-Control-Allow-Origin', '*');
+     }
++
++    // B2：页面与 /api/* 只认回环 Host（或 ADMIN_ALLOWED_HOSTS 显式放行的名字）。
++    // 这是旧防线缺的那一环：isSameOriginIfPresent 比的 host 来自请求头本身，
++    // DNS rebinding 下 Origin 与 Host 天然自洽，检查形同不存在。
++    if ((isAdminApi || isDashboardPage) && !isLoopbackHostHeader(req.headers.host as string | undefined)) {
++      return reply.status(403).send({ error: 'Host not allowed for admin surface' });
++    }
++
+     // 防跨站驱动管理操作：CORS 只能阻止"读响应"，阻止不了"发请求"。
+     // 校验逻辑见 isSameOriginIfPresent（纯函数，tests/guard.test.ts 锁定）。
+-    if (req.url.startsWith('/api/') && !['GET', 'OPTIONS', 'HEAD'].includes(req.method)) {
++    if (isAdminApi && !['GET', 'OPTIONS', 'HEAD'].includes(req.method)) {
+       if (!isSameOriginIfPresent(req.headers.origin as string | undefined, req.headers.host as string | undefined)) {
+         return reply.status(403).send({ error: 'Cross-origin admin request rejected' });
+       }
++      // B1：管理面写操作要一次性 token。PROXY_API_KEY 从此只管 /v1/*——两把凭据
++      // 混用意味着数据面密钥泄露即可改配置、删账号（审查 P0-2 的权限未分离）。
++      // 只卡写不卡读：/api/* 的 16 个读端点保持可被本机脚本直接访问。
++      if (!adminTokenOk(req.headers['x-admin-token'] as string | undefined)) {
++        return reply.status(401).send({
++          error: 'Missing or invalid x-admin-token. It is served in the dashboard page '
++            + '(<meta name="ccproxy-admin-token">) and printed at startup; pin it with ADMIN_API_TOKEN.',
++        });
++      }
+     }
++
++    // B5：只上零风险项，刻意不含 script-src（SPA 还有一整块内联脚本 + 21 处内联事件）。
++    if (isDashboardPage) {
++      reply.header('Content-Security-Policy', ADMIN_CSP);
++    }
++
+     // 仪表盘 HTML 与管理 API 禁用缓存：升级后浏览器不会再用旧页面调新接口。
+-    if (req.url === '/' || req.url.startsWith('/api/') || req.url.startsWith('/?')) {
++    if (isDashboardPage || isAdminApi || req.url.startsWith('/?')) {
+       reply.header('Cache-Control', 'no-cache');
+     }
+   });
+@@ -421,7 +449,10 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
+   fastify.get('/', async (_req, reply) => {
+     try {
+       const html = await fs.promises.readFile(DASHBOARD_HTML_PATH, 'utf-8');
+-      return reply.header('Content-Type', 'text/html; charset=utf-8').header('Cache-Control', 'no-cache').send(html);
++      return reply
++        .header('Content-Type', 'text/html; charset=utf-8')
++        .header('Cache-Control', 'no-cache')
++        .send(injectAdminTokenMeta(html));
+     } catch (err: any) {
+       logger.error(`[DASHBOARD] Failed to load public/index.html: ${err.message}`);
+       return reply.status(500).send('Dashboard assets missing: public/index.html not found.');
+diff --git a/src/utils/admin-guard.ts b/src/utils/admin-guard.ts
+new file mode 100644
+index 0000000..5bfcb20
+--- /dev/null
++++ b/src/utils/admin-guard.ts
+@@ -0,0 +1,98 @@
++// =============================================================================
++// 管理面鉴权边界（批次 B）
++// -----------------------------------------------------------------------------
++// 三条互相咬合的规则，缺一不可：
++//   B2 Host 回环白名单 —— 旧防线 isSameOriginIfPresent 比的是**攻击者可控的 Host 头**。
++//      DNS rebinding 把 evil.tld 指到 127.0.0.1 后，Origin 与 Host 天然相等，必然放行。
++//   B1 管理面一次性 token —— 只卡写操作；PROXY_API_KEY 从此只管 /v1/*，实现权限分离。
++//      token 注入进页面 HTML，所以它**依赖 B2**：Host 不先关进白名单，rebinding 的
++//      页面能把带着 token 的 HTML 一起读走。
++//   B3 非回环绑定且无密钥时拒绝启动；B4 OAuth 缺 state 不再放行。
++// 全部判据做成纯函数，便于单测锁定（tests/admin-boundary.test.ts）。
++// =============================================================================
++import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
++
++/** 管理面写操作的一次性凭据。显式设置 ADMIN_API_TOKEN 可固定（脚本用）。 */
++export const ADMIN_TOKEN: string = process.env.ADMIN_API_TOKEN?.trim() || randomUUID();
++
++const LOOPBACK_NAMES = new Set(['127.0.0.1', 'localhost', '::1']);
++
++/** 把 `name:port` / `[v6]:port` 形态的 Host 值拆成小写主机名；无法解析时返回 null。 */
++function hostNameOf(value: string): string | null {
++  try {
++    // 借 URL 解析：凭据（user@host）、路径、通配等畸形写法都会被归到真实 hostname 上。
++    const url = new URL(`http://${value}`);
++    if (url.pathname !== '/' || url.search || url.hash) return null;
++    return url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
++  } catch {
++    return null;
++  }
++}
++
++/**
++ * 入站 Host 是否属于回环名（或 ADMIN_ALLOWED_HOSTS 追加的名字）。
++ * 端口不参与判定：同源检查已经约束了 host:port 的一致性。
++ */
++export function isLoopbackHostHeader(host: string | undefined, extraCsv?: string): boolean {
++  if (!host) return false;
++  const name = hostNameOf(host.trim());
++  if (!name) return false;
++  if (LOOPBACK_NAMES.has(name)) return true;
++  const allowed = (extraCsv ?? process.env.ADMIN_ALLOWED_HOSTS ?? '')
++    .split(',')
++    .map(s => s.trim().toLowerCase().replace(/^\[|\]$/g, ''))
++    .filter(Boolean);
++  return allowed.includes(name);
++}
++
++/** 常量时间比较，避免用计时侧信道逐字节猜 token。长度不同也要走完哈希。 */
++export function adminTokenOk(presented: string | undefined): boolean {
++  if (!presented) return false;
++  const a = createHash('sha256').update(presented).digest();
++  const b = createHash('sha256').update(ADMIN_TOKEN).digest();
++  return timingSafeEqual(a, b);
++}
++
++/** 绑定地址不是回环、又没有数据面密钥、也没显式逃生阀 = 不允许启动。 */
++export function isInsecureBind(opts: {
++  host: string;
++  hasProxyKey: boolean;
++  allowInsecure: boolean;
++}): boolean {
++  if (opts.hasProxyKey || opts.allowInsecure) return false;
++  const h = opts.host.trim().toLowerCase();
++  return !(LOOPBACK_NAMES.has(h) || h === '' || h === '0' || h.startsWith('127.'));
++}
++
++/**
++ * OAuth 回调的 state 判定。默认要求回显且与本流程生成的一致；
++ * 只有显式打开兼容开关（旧版 CLI 不回显 state）时才允许缺失。
++ */
++export function oauthStateAcceptable(
++  presented: string | null,
++  expected: string,
++  legacyFlowAllowed: boolean,
++): boolean {
++  if (presented === null || presented === undefined) return legacyFlowAllowed;
++  return presented === expected;
++}
++
++function escapeAttr(v: string): string {
++  return v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
++}
++
++/** 以 meta 而非内联 script 投递 token：不依赖 script-src 放宽，也不被 CSP 拦。 */
++export function injectAdminTokenMeta(html: string): string {
++  const tag = `<meta name="ccproxy-admin-token" content="${escapeAttr(ADMIN_TOKEN)}">`;
++  if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, `  ${tag}\n</head>`);
++  return `${tag}\n${html}`;
++}
++
++/**
++ * B5：只上零风险项。刻意**不含 script-src** —— index.html 里有一整块内联脚本
++ * （第 392 行起）加 19 处 onclick / 2 处 onchange，一旦收紧仪表盘直接全废。
++ * 把内联脚本外置化属独立重构批次，届时再补 script-src。
++ */
++export const ADMIN_CSP =
++  "frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; " +
++  "img-src 'self' data:; font-src 'self'; connect-src 'self'";
+diff --git a/src/utils/config.ts b/src/utils/config.ts
+index c6b4979..168e668 100644
+--- a/src/utils/config.ts
++++ b/src/utils/config.ts
+@@ -14,6 +14,7 @@ import crypto from 'crypto';
+ import { spawn } from 'child_process';
+ import { GatewayConfig, GatewayConfigFile, AccountInfo } from '../types/index.js';
+ import { logger } from './logger.js';
++import { oauthStateAcceptable } from './admin-guard.js';
+ import { notify } from './notifier.js';
+ import { getProjectRootDir } from './paths.js';
+ 
+@@ -680,9 +681,12 @@ export function startBrowserLoginFlow(port = 5959): Promise<AccountInfo> {
+           // CSRF 防护：若回调携带 state，必须与本流程随机生成的 stateToken 一致。
+           // 不携带 state 时视为兼容旧版 CLI 流程（其可能不回显 state），不阻断。
+           const cbState = reqUrl.searchParams.get('state');
+-          if (cbState && cbState !== stateToken) {
++          // B4：此前「不带 state 就视为兼容旧版 CLI」直接放行，等于在这个本地回调端口
++          // 上留了一个无 CSRF 防护的入口（3 分钟窗口内任何本机页面都能凑一次授权）。
++          // 现在默认拒绝，确需兼容旧 CLI 再用 COMMANDCODE_ALLOW_LEGACY_OAUTH=1 显式打开。
++          if (!oauthStateAcceptable(cbState, stateToken, process.env.COMMANDCODE_ALLOW_LEGACY_OAUTH === '1')) {
+             res.writeHead(400, { 'Content-Type': 'text/plain' });
+-            res.end('Auth failed: invalid state');
++            res.end(cbState ? 'Auth failed: invalid state' : 'Auth failed: missing state');
+             return;
+           }
+           let apiKey =
+diff --git a/tests/admin-boundary.test.ts b/tests/admin-boundary.test.ts
+new file mode 100644
+index 0000000..e7afcb3
+--- /dev/null
++++ b/tests/admin-boundary.test.ts
+@@ -0,0 +1,300 @@
++// =============================================================================
++// 批次 B：鉴权边界（B1 管理面 token / B2 Host 回环白名单 / B3 非回环拒绝启动 /
++// B4 OAuth state / B5 不含 script-src 的 CSP）。
++// -----------------------------------------------------------------------------
++// 这一批的根因是同一个：**管理面默认零鉴权，而唯一的跨站防线读的是攻击者可控的
++// Host 头**。DNS rebinding 把 evil.tld 解析到 127.0.0.1 后，Origin 与 Host 天然
++// 相等，旧的 isSameOriginIfPresent 必然放行。所以 B2 是 B1 的前提：不先把页面
++// 和 token 的投递关进回环白名单，注入到 HTML 里的 token 会被攻击者一并读走。
++// =============================================================================
++import { describe, it, expect, beforeAll, afterAll } from 'vitest';
++import Fastify from 'fastify';
++import type { FastifyInstance } from 'fastify';
++import { mkdtempSync, existsSync, rmSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import path from 'node:path';
++import { spawn } from 'node:child_process';
++import { randomUUID } from 'node:crypto';
++
++import {
++  ADMIN_TOKEN,
++  adminTokenOk,
++  isLoopbackHostHeader,
++  isInsecureBind,
++  oauthStateAcceptable,
++} from '../src/utils/admin-guard.js';
++import { dashboardRoutes } from '../src/routes/dashboard.js';
++import { verifyProxyAuth } from '../src/routes/chat.js';
++
++let stateDir: string;
++let app: FastifyInstance;
++
++const LOOPBACK_HOST = '127.0.0.1:9090';
++/** rebinding 场景下浏览器会带上与 Host 自洽的 Origin —— 旧防线正是被这一对骗过的。 */
++const REBOUND_HOST = 'evil.tld:9090';
++
++const post = (
++  url: string,
++  headers: Record<string, string>,
++  body: unknown = {},
++) => app.inject({ method: 'POST', url, headers: { host: LOOPBACK_HOST, ...headers }, body: JSON.stringify(body) });
++
++beforeAll(async () => {
++  // 写操作正例真的会走 handler 并保存配置：状态文件必须隔离，否则 .env / config.json
++  // 会落到仓库根（.env 里的 COMMANDCODE_API_BASE 优先级高于 config.json）。
++  stateDir = mkdtempSync(path.join(tmpdir(), 'ccproxy-boundary-'));
++  process.env.COMMANDCODE_CONFIG_PATH = path.join(stateDir, 'config.json');
++  process.env.COMMANDCODE_ENV_PATH = path.join(stateDir, '.env');
++  process.env.COMMANDCODE_MODELS_CACHE_PATH = path.join(stateDir, 'models.json');
++  process.env.COMMANDCODE_PRICING_CACHE_PATH = path.join(stateDir, 'pricing.json');
++  process.env.USAGE_HISTORY_PATH = path.join(stateDir, 'usage.jsonl');
++
++  app = Fastify();
++  await app.register(dashboardRoutes);
++  await app.ready();
++});
++
++afterAll(async () => {
++  await app?.close();
++  rmSync(stateDir, { recursive: true, force: true });
++});
++
++describe('B2 isLoopbackHostHeader —— 回环名白名单', () => {
++  it('接受回环名，端口随意', () => {
++    expect(isLoopbackHostHeader('127.0.0.1:9090')).toBe(true);
++    expect(isLoopbackHostHeader('localhost:9090')).toBe(true);
++    expect(isLoopbackHostHeader('LOCALHOST')).toBe(true);
++    expect(isLoopbackHostHeader('[::1]:9090')).toBe(true);
++    expect(isLoopbackHostHeader('127.0.0.1')).toBe(true);
++  });
++
++  it('拒绝外部域名、裸 IP 与被污染的 Host，包括 rebinding 的那个 evil.tld', () => {
++    expect(isLoopbackHostHeader(REBOUND_HOST)).toBe(false);
++    expect(isLoopbackHostHeader('attacker.example')).toBe(false);
++    expect(isLoopbackHostHeader('10.0.0.5:9090')).toBe(false);
++    expect(isLoopbackHostHeader('127.0.0.1.evil.tld')).toBe(false);
++    // 端口分隔符之后的凭据/路径注入不接受
++    expect(isLoopbackHostHeader('127.0.0.1:9090@evil.tld')).toBe(false);
++    expect(isLoopbackHostHeader(undefined)).toBe(false);
++    expect(isLoopbackHostHeader('')).toBe(false);
++  });
++
++  it('ADMIN_ALLOWED_HOSTS 追加的名字生效（LAN 自托管场景）', () => {
++    expect(isLoopbackHostHeader('gw.lan:9090')).toBe(false);
++    expect(isLoopbackHostHeader('gw.lan:9090', 'gw.lan')).toBe(true);
++    expect(isLoopbackHostHeader('gw.lan:9090', 'other.lan')).toBe(false);
++  });
++});
++
++describe('B1 adminTokenOk —— 常量时间比较', () => {
++  it('只对完全一致的 token 为真', () => {
++    expect(adminTokenOk(ADMIN_TOKEN)).toBe(true);
++    expect(adminTokenOk(undefined)).toBe(false);
++    expect(adminTokenOk('')).toBe(false);
++    expect(adminTokenOk(ADMIN_TOKEN.slice(0, -1))).toBe(false);
++    expect(adminTokenOk(ADMIN_TOKEN + 'x')).toBe(false);
++  });
++});
++
++describe('B4 oauthStateAcceptable', () => {
++  const expected = randomUUID();
++  it('state 一致才通过；缺失在默认下拒绝，旧版兼容开关打开才放行', () => {
++    expect(oauthStateAcceptable(expected, expected, false)).toBe(true);
++    expect(oauthStateAcceptable('other', expected, false)).toBe(false);
++    expect(oauthStateAcceptable(null, expected, false)).toBe(false);
++    expect(oauthStateAcceptable(null, expected, true)).toBe(true);
++  });
++});
++
++describe('B3 isInsecureBind', () => {
++  it('非回环绑定 + 无密钥 = 拒绝启动；回环或有密钥或显式逃生阀则放行', () => {
++    expect(isInsecureBind({ host: '0.0.0.0', hasProxyKey: false, allowInsecure: false })).toBe(true);
++    expect(isInsecureBind({ host: '192.168.1.7', hasProxyKey: false, allowInsecure: false })).toBe(true);
++    expect(isInsecureBind({ host: '0.0.0.0', hasProxyKey: true, allowInsecure: false })).toBe(false);
++    expect(isInsecureBind({ host: '0.0.0.0', hasProxyKey: false, allowInsecure: true })).toBe(false);
++    expect(isInsecureBind({ host: '127.0.0.1', hasProxyKey: false, allowInsecure: false })).toBe(false);
++    expect(isInsecureBind({ host: 'localhost', hasProxyKey: false, allowInsecure: false })).toBe(false);
++  });
++});
++
++describe('B1/B2 端到端：管理面写操作的 token 门与 Host 门', () => {
++  it('缺 x-admin-token 的管理面写请求 → 401', async () => {
++    const res = await post('/api/gateway/toggle', { origin: `http://${LOOPBACK_HOST}` }, { running: false });
++    expect(res.statusCode).toBe(401);
++    expect(res.json().error).toMatch(/token/i);
++  });
++
++  it('带正确 token 的同一请求不再被鉴权层拦下', async () => {
++    const res = await post('/api/gateway/toggle', {
++      origin: `http://${LOOPBACK_HOST}`,
++      'x-admin-token': ADMIN_TOKEN,
++    }, { running: false });
++    expect(res.statusCode).not.toBe(401);
++    expect(res.statusCode).not.toBe(403);
++  });
++
++  it('rebinding（Host 与 Origin 自洽的外链）→ 403，且这条优先于 token 检查', async () => {
++    const res = await post('/api/gateway/toggle', {
++      host: REBOUND_HOST,
++      origin: `http://${REBOUND_HOST}`,
++      'x-admin-token': ADMIN_TOKEN,
++    }, { running: false });
++    expect(res.statusCode).toBe(403);
++  });
++
++  it('只卡写：GET /api/status 不带 token 依然可读', async () => {
++    const res = await app.inject({ method: 'GET', url: '/api/status', headers: { host: LOOPBACK_HOST } });
++    expect(res.statusCode).toBe(200);
++  });
++
++  it('PROXY_API_KEY 不再是管理面凭据（权限分离）', async () => {
++    const key = `k-${randomUUID()}`;
++    process.env.PROXY_API_KEY = key;
++    const keyed = Fastify();
++    verifyProxyAuth(keyed);
++    await keyed.register(dashboardRoutes);
++    await keyed.ready();
++    try {
++      const res = await keyed.inject({
++        method: 'POST',
++        url: '/api/gateway/toggle',
++        headers: {
++          host: LOOPBACK_HOST,
++          origin: `http://${LOOPBACK_HOST}`,
++          authorization: `Bearer ${key}`,
++          'content-type': 'application/json',
++        },
++        body: JSON.stringify({ running: false }),
++      });
++      expect(res.statusCode).toBe(401);
++      // 但这把密钥仍然管得住 /v1（数据面不受本次改动影响）。
++      expect(await keyed.inject({
++        method: 'POST',
++        url: '/api/gateway/toggle',
++        headers: {
++          host: LOOPBACK_HOST,
++          origin: `http://${LOOPBACK_HOST}`,
++          'x-admin-token': ADMIN_TOKEN,
++          'content-type': 'application/json',
++        },
++        body: JSON.stringify({ running: false }),
++      }).then(r => r.statusCode)).not.toBe(401);
++    } finally {
++      await keyed.close();
++      delete process.env.PROXY_API_KEY;
++    }
++  });
++});
++
++describe('B2/B5 GET / 的投递面', () => {
++  it('回环 Host 下的页面带 token meta，且 CSP 不含 script-src（内联脚本还在用）', async () => {
++    const res = await app.inject({ method: 'GET', url: '/', headers: { host: LOOPBACK_HOST } });
++    expect(res.statusCode).toBe(200);
++    expect(res.body).toContain('ccproxy-admin-token');
++    expect(res.body).toContain(ADMIN_TOKEN);
++    const csp = res.headers['content-security-policy'] as string;
++    expect(csp).toMatch(/frame-ancestors\s+'none'/);
++    expect(csp).toMatch(/base-uri\s+'self'/);
++    expect(csp).toMatch(/form-action\s+'self'/);
++    expect(csp).not.toMatch(/script-src/);
++  });
++
++  it('外连 Host 打管理页 → 403，页面与 token 都不投递', async () => {
++    const res = await app.inject({ method: 'GET', url: '/', headers: { host: REBOUND_HOST } });
++    expect(res.statusCode).toBe(403);
++    expect(res.body).not.toContain(ADMIN_TOKEN);
++  });
++});
++
++describe('B3 非回环绑定且无密钥时拒绝启动（真实 spawn 编译产物）', () => {
++  const distEntry = path.resolve(__dirname, '..', 'dist', 'index.js');
++
++  /** Windows 上进程刚退掉时临时目录仍被占用（日志句柄未释放），必须带退避重试。 */
++  async function rmDirRetry(dir: string): Promise<void> {
++    for (let attempt = 0; attempt < 12; attempt++) {
++      try {
++        rmSync(dir, { recursive: true, force: true });
++        return;
++      } catch {
++        await new Promise(r => setTimeout(r, 150));
++      }
++    }
++    rmSync(dir, { recursive: true, force: true });
++  }
++
++  async function boot(env: Record<string, string>) {
++    const dir = mkdtempSync(path.join(tmpdir(), 'ccproxy-bind-'));
++    const proc = spawn(process.execPath, [distEntry], {
++      cwd: dir,
++      env: {
++        ...process.env,
++        HOST: '0.0.0.0',
++        PORT: '0',
++        NO_OPEN_BROWSER: '1',
++        COMMANDCODE_CONFIG_PATH: path.join(dir, 'config.json'),
++        COMMANDCODE_ENV_PATH: path.join(dir, '.env'),
++        COMMANDCODE_MODELS_CACHE_PATH: path.join(dir, 'models.json'),
++        COMMANDCODE_PRICING_CACHE_PATH: path.join(dir, 'pricing.json'),
++        USAGE_HISTORY_PATH: path.join(dir, 'usage.jsonl'),
++        PROXY_API_KEY: '',
++        ALLOW_INSECURE_BIND: '',
++        ADMIN_API_TOKEN: '',
++        ...env,
++      },
++      stdio: ['ignore', 'pipe', 'pipe'],
++    });
++    let out = '';
++    proc.stdout.on('data', d => { out += String(d); });
++    proc.stderr.on('data', d => { out += String(d); });
++
++    const exited = new Promise<void>(resolve => { proc.on('exit', () => resolve()); });
++    // 起来了就一直听着：见到 ACTIVE 横幅立刻 SIGKILL 并以 -1 回报，避免空等 20s。
++    const outcome = await new Promise<{ code: number | null; out: string }>(resolve => {
++      let settled = false;
++      let killed = false;
++      const finish = (code: number | null) => {
++        if (settled) return;
++        settled = true;
++        clearInterval(poll);
++        clearTimeout(timer);
++        resolve({ code, out });
++      };
++      const poll = setInterval(() => {
++        if (out.includes('is ACTIVE')) {
++          killed = true;
++          proc.kill('SIGKILL');
++          finish(-1);
++        }
++      }, 100);
++      const timer = setTimeout(() => {
++        killed = true;
++        proc.kill('SIGKILL');
++        finish(-1);
++      }, 20000);
++      proc.on('exit', code => finish(killed ? -1 : code));
++    });
++    await exited;
++    await rmDirRetry(dir);
++    return outcome;
++  }
++
++  it('前置：构建产物存在（否则本文件这几项毫无意义）', () => {
++    expect(existsSync(distEntry)).toBe(true);
++  });
++
++  it('HOST=0.0.0.0 且无密钥 → 退出码非 0 并打印原因', async () => {
++    const r = await boot({});
++    expect(r.code).not.toBe(0);
++    expect(r.code).not.toBe(-1);
++    expect(r.out).toMatch(/拒绝启动/);
++    expect(r.out).toMatch(/ALLOW_INSECURE_BIND/);
++  }, 30000);
++
++  it('显式 ALLOW_INSECURE_BIND=1 时照常启动，并把管理 token 打到控制台', async () => {
++    const pinned = `pinned-${randomUUID()}`;
++    const r = await boot({ ALLOW_INSECURE_BIND: '1', ADMIN_API_TOKEN: pinned });
++    expect(r.code).toBe(-1); // 没退出 = 一直在听，被我们 SIGKILL
++    expect(r.out).toMatch(/is ACTIVE/);
++    expect(r.out).toContain(pinned);
++  }, 30000);
++});
+diff --git a/tests/admin-key-mask.test.ts b/tests/admin-key-mask.test.ts
+index 25138ce..d229fc7 100644
+--- a/tests/admin-key-mask.test.ts
++++ b/tests/admin-key-mask.test.ts
+@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
+ import path from 'node:path';
+ import { randomUUID } from 'node:crypto';
+ import type { AddressInfo } from 'node:net';
++import { ADMIN_TOKEN } from '../src/utils/admin-guard.js';
+ 
+ const PLAINTEXT_KEY = `ck-plaintext-${randomUUID()}--do-not-leak`;
+ 
+@@ -64,6 +65,8 @@ describe('POST /api/auth/manual-login 凭据外泄（P1-4）', () => {
+     const res = await app.inject({
+       method: 'POST',
+       url: '/api/auth/manual-login',
++      // 批次 B 之后 /api/* 的写操作要管理 token。
++      headers: { 'x-admin-token': ADMIN_TOKEN },
+       payload: { apiKey: PLAINTEXT_KEY, name: 'manual' },
+     });
+ 
+@@ -75,6 +78,7 @@ describe('POST /api/auth/manual-login 凭据外泄（P1-4）', () => {
+     const res = await app.inject({
+       method: 'POST',
+       url: '/api/auth/manual-login',
++      headers: { 'x-admin-token': ADMIN_TOKEN },
+       payload: { apiKey: PLAINTEXT_KEY },
+     });
+     const json = res.json();
+diff --git a/tests/auth.test.ts b/tests/auth.test.ts
+index 06df88f..93fce0c 100644
+--- a/tests/auth.test.ts
++++ b/tests/auth.test.ts
+@@ -1,10 +1,14 @@
+-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
++import { describe, it, expect } from 'vitest';
+ import Fastify from 'fastify';
+ import { verifyProxyAuth } from '../src/routes/chat.js';
+ 
+ const KEY = 'test-admin-key-123';
+ 
+-/** 用 fastify.inject 构建不监听端口的鉴权契约测试。 */
++/**
++ * 用 fastify.inject 构建不监听端口的鉴权契约测试。
++ * 这里的 /api/status 是**桩路由**：批次 B 之后 PROXY_API_KEY 只管 /v1/*，管理面自己的
++ * token 门在 dashboard 钩子里，由 tests/admin-boundary.test.ts 端到端锁定。
++ */
+ async function buildApp() {
+   const app = Fastify();
+   verifyProxyAuth(app);
+@@ -18,59 +22,80 @@ async function buildApp() {
+ }
+ 
+ describe('verifyProxyAuth — PROXY_API_KEY set', () => {
+-  beforeAll(() => { process.env.PROXY_API_KEY = KEY; });
+-  afterAll(() => { delete process.env.PROXY_API_KEY; });
+-
+-  it('rejects /v1/* and /api/* without a key', async () => {
++  it('rejects /v1/* without a key', async () => {
++    process.env.PROXY_API_KEY = KEY;
+     const app = await buildApp();
+     expect((await app.inject({ method: 'GET', url: '/v1/ping' })).statusCode).toBe(401);
+-    expect((await app.inject({ method: 'GET', url: '/api/status' })).statusCode).toBe(401);
+     await app.close();
++    delete process.env.PROXY_API_KEY;
+   });
+ 
+-  it('accepts Bearer and x-api-key on both surfaces', async () => {
++  it('does not gate /api/* — 权限分离（P0-2）：数据面密钥不再等于管理面凭据', async () => {
++    process.env.PROXY_API_KEY = KEY;
++    const app = await buildApp();
++    // 不带任何凭据也能读到这个桩管理端点：PROXY_API_KEY 已经不管 /api 了。
++    expect((await app.inject({ method: 'GET', url: '/api/status' })).statusCode).toBe(200);
++    // 带对的密钥也不意味着什么 —— 管理面写操作的凭据是 x-admin-token，见 admin-boundary。
++    expect(
++      (await app.inject({ method: 'GET', url: '/api/status', headers: { 'x-api-key': KEY } })).statusCode
++    ).toBe(200);
++    await app.close();
++    delete process.env.PROXY_API_KEY;
++  });
++
++  it('accepts Bearer and x-api-key on the data surface', async () => {
++    process.env.PROXY_API_KEY = KEY;
+     const app = await buildApp();
+     expect(
+       (await app.inject({ method: 'GET', url: '/v1/ping', headers: { authorization: `Bearer ${KEY}` } })).statusCode
+     ).toBe(200);
+     expect(
+-      (await app.inject({ method: 'GET', url: '/api/status', headers: { 'x-api-key': KEY } })).statusCode
++      (await app.inject({ method: 'GET', url: '/v1/ping', headers: { 'x-api-key': KEY } })).statusCode
+     ).toBe(200);
+     await app.close();
++    delete process.env.PROXY_API_KEY;
+   });
+ 
+   it('rejects a wrong key', async () => {
++    process.env.PROXY_API_KEY = KEY;
+     const app = await buildApp();
+     expect(
+-      (await app.inject({ method: 'GET', url: '/api/status', headers: { 'x-api-key': 'wrong' } })).statusCode
++      (await app.inject({ method: 'GET', url: '/v1/ping', headers: { 'x-api-key': 'wrong' } })).statusCode
+     ).toBe(401);
+     await app.close();
++    delete process.env.PROXY_API_KEY;
+   });
+ 
+   it('returns the Anthropic error envelope for /v1/messages, OpenAI shape elsewhere', async () => {
++    process.env.PROXY_API_KEY = KEY;
+     const app = await buildApp();
+     const messages = JSON.parse((await app.inject({ method: 'POST', url: '/v1/messages' })).body);
+     expect(messages.type).toBe('error');
+     expect(messages.error.type).toBe('authentication_error');
+ 
+-    const api = JSON.parse((await app.inject({ method: 'GET', url: '/api/status' })).body);
+-    expect(api.error.type).toBe('authentication_error');
+-    expect(api.error.code).toBe('PROXY_AUTH_REQUIRED');
++    const openai = JSON.parse((await app.inject({ method: 'GET', url: '/v1/ping' })).body);
++    expect(openai.error.type).toBe('authentication_error');
++    expect(openai.error.code).toBe('PROXY_AUTH_REQUIRED');
+     await app.close();
++    delete process.env.PROXY_API_KEY;
+   });
+ 
+   it('leaves non-protected paths (e.g. /health, dashboard /) open', async () => {
++    process.env.PROXY_API_KEY = KEY;
+     const app = await buildApp();
+     expect((await app.inject({ method: 'GET', url: '/health' })).statusCode).toBe(200);
+     await app.close();
++    delete process.env.PROXY_API_KEY;
+   });
+ 
+   it('exempts CORS preflight (OPTIONS) from auth — browsers send no auth headers on preflight', async () => {
++    process.env.PROXY_API_KEY = KEY;
+     const app = await buildApp();
+     expect(
+       (await app.inject({ method: 'OPTIONS', url: '/v1/chat/completions', headers: { origin: 'https://web.example' } })).statusCode
+     ).toBe(200);
+     await app.close();
++    delete process.env.PROXY_API_KEY;
+   });
+ });
+ 
+diff --git a/tests/guard.test.ts b/tests/guard.test.ts
+index 852eccd..a58a0b5 100644
+--- a/tests/guard.test.ts
++++ b/tests/guard.test.ts
+@@ -1,6 +1,10 @@
+ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+ import Fastify from 'fastify';
++import { mkdtempSync, rmSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import path from 'node:path';
+ import { isSameOriginIfPresent } from '../src/routes/sse-common.js';
++import { ADMIN_TOKEN } from '../src/utils/admin-guard.js';
+ import { dashboardRoutes } from '../src/routes/dashboard.js';
+ 
+ describe('isSameOriginIfPresent', () => {
+@@ -24,13 +28,21 @@ describe('isSameOriginIfPresent', () => {
+ // 端到端：管理面写操作被异源 Origin 拒绝、同源放行（fastify.inject，不监听端口）。
+ describe('dashboard admin routes — cross-origin guard', () => {
+   let app: Fastify.FastifyInstance;
++  let stateDir: string;
+ 
+   beforeAll(async () => {
++    // 放行用例真的会执行 handler（切换网关、清日志），状态文件别落在仓库根。
++    stateDir = mkdtempSync(path.join(tmpdir(), 'ccproxy-guard-'));
++    process.env.COMMANDCODE_CONFIG_PATH = path.join(stateDir, 'config.json');
++    process.env.COMMANDCODE_ENV_PATH = path.join(stateDir, '.env');
+     app = Fastify();
+     await app.register(dashboardRoutes);
+     await app.ready();
+   });
+-  afterAll(async () => { await app.close(); });
++  afterAll(async () => {
++    await app.close();
++    rmSync(stateDir, { recursive: true, force: true });
++  });
+ 
+   it('rejects foreign-origin POST with 403', async () => {
+     const res = await app.inject({
+@@ -42,11 +54,31 @@ describe('dashboard admin routes — cross-origin guard', () => {
+     expect(res.statusCode).toBe(403);
+   });
+ 
++  // 批次 B 之后 token 与 Origin 是两道独立的门：带对 token 不豁免异源检查。
++  it('rejects foreign-origin POST even with a valid admin token', async () => {
++    const res = await app.inject({
++      method: 'POST',
++      url: '/api/gateway/toggle',
++      headers: {
++        origin: 'http://evil.example',
++        'x-admin-token': ADMIN_TOKEN,
++        'content-type': 'application/json',
++      },
++      body: JSON.stringify({ running: false }),
++    });
++    expect(res.statusCode).toBe(403);
++  });
++
+   it('allows same-origin POST', async () => {
+     const res = await app.inject({
+       method: 'POST',
+       url: '/api/gateway/toggle',
+-      headers: { origin: 'http://127.0.0.1', host: '127.0.0.1', 'content-type': 'application/json' },
++      headers: {
++        origin: 'http://127.0.0.1',
++        host: '127.0.0.1',
++        'x-admin-token': ADMIN_TOKEN,
++        'content-type': 'application/json',
++      },
+       body: JSON.stringify({ running: true }),
+     });
+     expect(res.statusCode).toBe(200);
+@@ -56,6 +88,7 @@ describe('dashboard admin routes — cross-origin guard', () => {
+     const res = await app.inject({
+       method: 'POST',
+       url: '/api/logs/clear',
++      headers: { 'x-admin-token': ADMIN_TOKEN },
+     });
+     expect(res.statusCode).toBe(200);
+   });
+diff --git a/tests/integration.test.ts b/tests/integration.test.ts
+index fd7bc68..53fcf40 100644
+--- a/tests/integration.test.ts
++++ b/tests/integration.test.ts
+@@ -23,6 +23,9 @@ async function getFreePort(): Promise<number> {
+ const MOCK_PORT = await getFreePort();
+ const PROXY_PORT = await getFreePort();
+ const PROXY_BASE = `http://127.0.0.1:${PROXY_PORT}`;
++// 管理面写操作要 x-admin-token（批次 B）。子进程默认每次启动随机生成，测试拿不到，
++// 所以在这里钉住一个已知值——顺带锁住 ADMIN_API_TOKEN 这条固定途径真的有效。
++const SPAWN_ADMIN_TOKEN = `itest-${randomUUID()}`;
+ 
+ // 集成测试启动的是编译产物 dist/index.js；干净克隆上没有 dist 会必然超时。
+ // 各 describe 上的 describe.skipIf 用于避免整片红。
+@@ -324,6 +327,7 @@ beforeAll(async () => {
+       // 生成一个随机占位符即可（不是任何真实凭据）。
+       COMMANDCODE_API_KEY: randomUUID(),
+       // 状态与目录缓存全部落到临时目录，绝不写进仓库。
++      ADMIN_API_TOKEN: SPAWN_ADMIN_TOKEN,
+       COMMANDCODE_CONFIG_PATH: path.join(stateDir, 'config.json'),
+       COMMANDCODE_MODELS_CACHE_PATH: path.join(stateDir, 'models.json'),
+       COMMANDCODE_PRICING_CACHE_PATH: path.join(stateDir, 'pricing.json'),
+@@ -997,11 +1001,13 @@ describe.skipIf(!distReady)('structured error contract', () => {
+     const toggle = (running: boolean) =>
+       fetch(`${PROXY_BASE}/api/gateway/toggle`, {
+         method: 'POST',
+-        headers: { 'Content-Type': 'application/json' },
++        headers: { 'Content-Type': 'application/json', 'x-admin-token': SPAWN_ADMIN_TOKEN },
+         body: JSON.stringify({ running }),
+       });
+ 
+-    await toggle(false);
++    // 这里先断言 200：鉴权一旦把请求拦下来，后面那句 503 会以「网关没暂停」的
++    // 面目失败，排查方向整个被带偏。
++    expect((await toggle(false)).status).toBe(200);
+     try {
+       const res = await postChat(ask('Hi'));
+       expect(res.status).toBe(503);
+-- 
+2.54.0.windows.1
+
