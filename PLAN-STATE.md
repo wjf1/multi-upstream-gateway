@@ -81,7 +81,7 @@
   - deps: P0-PORT-D
   - 范围：在 4.22.4 的 1816 行面板上重做 JS 外置 + hash 路由 + 明暗主题 + 首启引导 + 风险告知弹窗（**保留 4.18~4.22 新增的面板功能**，如通道健康卡片、运行开关卡片）
   - blocked: —
-- [ ] P0-PORT-F 全量回归 + 阶段门复验 + 部署（门禁已过，待用户确认重启）
+- [x] P0-PORT-F 全量回归 + 阶段门复验 + 部署（2026-10-07 完成）
   - deps: P0-PORT-E
   - 范围：`npm run verify`（≥626+移植新增）、`typecheck`、`lint`、`npm audit --omit=dev`、`scripts/bench-baseline.mjs` 基线；通过后按用户确认重启 9090
   - blocked: 重启动作需用户逐个确认（AGENTS.md 服务启停硬约束）
@@ -152,3 +152,20 @@
 - 新代码启动时若存在明文凭据且未设 `CREDENTIAL_ENCRYPTION_KEY` → **拒绝启动**。
   故重启前必须在部署 `.env` 中设好该密钥（详见 HANDOFF「部署检查清单」）。
 - 重启后 `/v1/*` 会先返回 403，直到在面板确认风险告知（用户已知并同意）。
+
+
+## 部署记录（2026-10-07）
+
+- **门禁**：`npm run verify` 50 文件 / 658 用例全绿；typecheck 双工程；lint 零输出；覆盖率 **65.87%**；
+  `npm audit --omit=dev` **0 漏洞**；E2E 全链；50 并发 **P99 126ms** / 468 rps / 0 错误。
+- **重启方式**：结束 node 进程 → 看门狗（`watchdog.ps1`，30s 轮询）自动拉起新代码。实测**第 5 秒**恢复。
+- **迁移结果（实测）**：`config.json` flat → unified（`providers.commandcode`，账号凭据移出）；
+  凭据加密写入 `credentials.enc`（1 账号）；`.env` 的 `COMMANDCODE_ACCOUNTS_V1` 明文行被自动摘除。
+- **风险门**：重启后 `/v1` 先返回 403；用户在面板点击确认（审计日志 `/api/risk/accept` 01:14:30 一条 200
+  来自 127.0.0.1），配置写回 `acceptedRiskDisclaimer: true` 并热生效，`/v1` 恢复放行。
+- **代理端口修正**：`.env` 的 `HTTP(S)_PROXY` 与 `config.json` 的 `upstream.proxy` 均已由 7897 改为 **7900**
+  （本机 Clash 混合端口）。**注意**：代理在启动时初始化，`config.json` 的改动**下次重启才生效**；
+  当前进程仍按 7897 尝试并自动回退直连（不影响可用性）。
+- **推送**：`feat/p0-port` 已推送至 `https://github.com/wjf1/multi-upstream-gateway`（private），
+  远端 `18b0a56..0b23beb`。推送前审计并补齐 `.gitignore`：`credentials.enc`、`auths/`（原先未被忽略，
+  首次 `git add -A` 会把加密凭据库一起推上远端）。
