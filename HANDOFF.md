@@ -95,3 +95,34 @@
    `origin` = 产品仓库 `wjf1/multi-upstream-gateway`（唯一推送目标）；`upstream` = `wjf1/commandcode-proxy`（**只 fetch，禁止 push**，否则污染上游）；
    `ghproxy` = 上游 `gh-proxy.com` 镜像，仅作 fetch 备用。产品 tag 暂继承上游全部历史 tag；首次正式发布前决定是否另起版本线。
 8. **面板 / CDN**：4.22.4 面板 1816 行、资源已本地化；Phase E 移植外置时勿引入外链（有测试守卫）。
+
+
+---
+
+## 7. 部署检查清单（P0-PORT-F 完成后，2026-10-07）
+
+**服务与运维机制（实测确认）**
+- 进程：`node dist/index.js`，工作目录 = 本仓库，监听 `127.0.0.1:9090`。
+- 自动拉起：计划任务 `CommandCodeProxy` → `wscript watchdog_launcher.vbs` → `watchdog.ps1`（**每 30s 检测端口，未监听即 `Start-Process node dist/index.js`**）。
+- **重启方式：结束 node 进程即可，看门狗会在 ≤30s 内用新代码自动拉起**（无需手工 start）。
+- 停机窗口：≤ 30s（轮询间隔）+ 约 2s 启动。
+
+**重启前必须满足**
+1. ✅ `CREDENTIAL_ENCRYPTION_KEY` 已写入部署 `.env`（64 hex = 32 字节）。
+   **⚠️ 此密钥必须单独备份**：丢失即无法解密 `credentials.enc`，等于丢失账号凭据。
+2. ✅ `dist/` 已用新代码构建（`npm run verify` 通过，50 文件 / 658 用例）。
+3. ✅ 备份就位：`F:/AI/Qdor/backup-deploy-20261006-220835/`（`dist/`、`config.json{,.pre-deploy}`、`.env{.post-incident,.pre-deploy}`）。
+
+**重启后会发生什么（已在副本上干跑验证）**
+1. `config.json` 由 flat 迁移为 unified（`providers.commandcode`），账号凭据移出 config.json；
+2. 凭据加密落盘 `credentials.enc`，`.env` 的 `COMMANDCODE_ACCOUNTS_V1` 明文行被自动摘除（日志：`env line removed: true`）；
+3. 面板与 API 正常，但 **`/v1/*` 一律返回 403 `RISK_DISCLAIMER_NOT_ACCEPTED`**，直到在面板确认风险告知（或设 `ACCEPTED_RISK_DISCLAIMER=1`）。
+
+**回滚路径（任一步出错）**
+`rm -rf dist && cp -r <备份>/dist dist`；`config.json` 用 `.pre-deploy` 版还原；`.env` 同理。看门狗会在 ≤30s 内拉起还原后的版本。
+
+**已知残留（非阻塞，登记待收口）**
+- `.env` 的 `COMMANDCODE_API_KEY` 明文行仍在（4.22.4 既有通道，`syncEnvFile` 会回写）——加密库之外的兜底通道，建议 T213 一并收口。
+- `.env` 的 `HTTPS_PROXY/HTTP_PROXY` 指向 `127.0.0.1:7897`，而本机 Clash 混合端口已改为 **7900**（见用户级 AGENTS.md）。
+  实测：代理不可达时代码会**自动回退直连**（4.22.4 的 Auto-fallback），因此不阻塞使用，但出站代理实际处于**静默失效**状态。
+  **建议**：把 `.env` 的 `HTTP(S)_PROXY` 改为 `http://127.0.0.1:7900` 以恢复代理链路。
