@@ -188,3 +188,24 @@
 
 教训：排查"改了配置不生效"时必须覆盖**环境变量来源**，而不只是配置文件；本机代理配置散落在
 `watchdog.ps1` / `start.cmd` / `.env` / `config.json` 四处，任何一处未同步都会造成静默漂移。
+
+## 现场交接（2026-10-07 第二轮）
+
+**并行会话已关闭**，它关闭前提交了两笔（`500ca41` 分支模型更正、`7983adc` 上游流掐断重试修复），
+提交状态在 `7983adc`。此前它留下的"未提交改动"经核实**已由其自行提交**，非孤儿代码。
+
+**本轮核验结论**：
+- 全量 `npm run verify` = **51 文件 / 667 用例全绿**；typecheck（src+tests）与 lint 零输出
+  → **这同时解决了"v5.0.0 上线构建的测试验证归属"这一待确认项**：当前提交状态已被验证。
+- **线上 `dist/` 与已提交源码一致**（曾发现 dist 编入了当时的未提交改动，现已对齐；
+  `capturedError`/`clientGone` 在已提交源码与 dist 中均可查到）。
+- 服务 v5.0.0 在线、真实对话与面板/静态资源正常、出站代理以 **7900** 启动（watchdog 修正生效）。
+- 远端 `main` 与 `feat/p0-port` 均在 `7983adc`。
+
+**P1 起点与待办**：
+- ✅ T201 Freebuff 核心移植（已在树中：`providers/freebuff/**` 7 文件）
+- ⬜ **T202 Freebuff Anthropic 桥 + tools schema 规范化**（下一步；注意 v5.0.0 已有
+  `adapters/commandcode/anthropic-response.ts` 与 `pipeline/`，须先评估复用而非另写桥）
+- ⬜ P0-PORT-D2（此前推迟）：`providers/commandcode/provider.ts` 外壳 —— 建议**不搬家、只做薄适配层**
+  （D1 报告结论：4.22.4+ 已把适配器模块化，整目录平移收益低、回归风险高）。它是 T213 统一接线的前置。
+- ⬜ T203 → T204'（WorkBuddy 联邦透传）→ T208~T212 面板五页 → T213 → T214
