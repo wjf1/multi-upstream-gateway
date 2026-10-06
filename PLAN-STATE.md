@@ -169,3 +169,22 @@
 - **推送**：`feat/p0-port` 已推送至 `https://github.com/wjf1/multi-upstream-gateway`（private），
   远端 `18b0a56..0b23beb`。推送前审计并补齐 `.gitignore`：`credentials.enc`、`auths/`（原先未被忽略，
   首次 `git add -A` 会把加密凭据库一起推上远端）。
+
+### 部署后的代理端口排查（2026-10-07，重要运维发现）
+
+现象：把 `.env` 与 `config.json` 的代理都改成 7900 并重启后，服务**仍读 7897**。
+
+根因：**代理有三处编码，且优先级是「进程环境变量 > config.json/.env」**——
+真正生效的是 `watchdog.ps1` 第 18-19 行**硬编码**的 `$env:HTTP(S)_PROXY = http://127.0.0.1:7897`，
+而它正是重启服务的那一环（计划任务 `CommandCodeProxy` → `watchdog_launcher.vbs` → `watchdog.ps1`）。
+`start.cmd` 早已改为 7900（还带注释说明 Clash 端口变更），**唯独 watchdog 这份漏改**——典型配置漂移。
+
+处置：`watchdog.ps1` 已改为 7900（含注释说明，备份于 `F:/AI/Qdor/backup-deploy-20261006-220835/watchdog.ps1.bak`，
+语法校验通过）。**但运行中的看门狗进程持有旧脚本的内存副本，文件改动不会热生效**：
+要让 7900 真正生效，必须「停看门狗 → 由计划任务重启看门狗 → 再重启服务」三步。
+
+影响与现状：当前服务按 7897 探活失败后**自动回退直连**（4.22.4 Auto-fallback），功能不受影响，
+但出站代理实际未走通。**该三步操作涉及看门狗进程，需用户单独确认**（AGENTS.md 服务启停硬约束）。
+
+教训：排查"改了配置不生效"时必须覆盖**环境变量来源**，而不只是配置文件；本机代理配置散落在
+`watchdog.ps1` / `start.cmd` / `.env` / `config.json` 四处，任何一处未同步都会造成静默漂移。
