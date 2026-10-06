@@ -204,8 +204,12 @@
 
 **P1 起点与待办**：
 - ✅ T201 Freebuff 核心移植（已在树中：`providers/freebuff/**` 7 文件）
-- ⬜ **T202 Freebuff Anthropic 桥 + tools schema 规范化**（下一步；注意 v5.0.0 已有
-  `adapters/commandcode/anthropic-response.ts` 与 `pipeline/`，须先评估复用而非另写桥）
+- ✅ **T202a tools schema 规范化**（2026-10-07 完成）：`src/providers/freebuff/tool-schema.ts`（311 行）
+  + `tests/freebuff-tool-schema.test.ts`（231 行，5 例），接入 `buildUpstreamBody`（注释标注 Go `server.go:364-366`/`:408`）。
+  覆盖 `$ref` 内联 + definitions/$defs 清理、nullable 简化（anyOf[null,T] / type:["T","null"] / nullable 字段）、
+  非 tools 直通、深拷贝不改调用方对象，以及**mock 上游实际收到体**的集成断言。全量 **52 文件 / 672 用例全绿**。
+- ⬜ **T202b Freebuff Anthropic 桥**（剩余一半；注意 v5.0.0 已有 `adapters/commandcode/anthropic-response.ts`
+  与 `pipeline/`，须先评估复用而非另写桥）
 - ⬜ P0-PORT-D2（此前推迟）：`providers/commandcode/provider.ts` 外壳 —— 建议**不搬家、只做薄适配层**
   （D1 报告结论：4.22.4+ 已把适配器模块化，整目录平移收益低、回归风险高）。它是 T213 统一接线的前置。
 - ⬜ T203 → T204'（WorkBuddy 联邦透传）→ T208~T212 面板五页 → T213 → T214

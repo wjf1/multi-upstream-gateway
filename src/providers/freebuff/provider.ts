@@ -13,9 +13,10 @@
 //   - upstream.ts     ← upstream.go（safe-fetch 出站：agent-runs / chat / session）
 //   - config.ts       ← config.go（apiBase 归一化 / UA / client session id）
 //
-// 明确定界（留给后续卡，本卡不越界）：
-//   - tools schema 规范化（Go server.go:408 normalizeToolSchemas）→ T202；
-//   - Anthropic /v1/messages 桥 → T202；
+// 明确定界：
+//   - tools schema 规范化（Go server.go:408 normalizeToolSchemas）→ **T202a 已落地**
+//     （tool-schema.ts，由本文件 buildUpstreamBody 接入）；
+//   - Anthropic /v1/messages 桥 → T202b；
 //   - 配额感知调度、账号健康分级、凭据持久化 → T203；
 //   - 等待室 HTTP 语义（Retry-After / waiting_room_queued 映射）→ T305
 //     （本卡已把 position/queueDepth/retryAfterSeconds 放进 ProxyError.context）。
@@ -43,6 +44,7 @@ import { ensureSession, invalidateSession } from './free-session.js';
 import { RunManager, type RunLease } from './run-manager.js';
 import { iterateSsePayloads, UpstreamClient, type ChatCompletionsResult } from './upstream.js';
 import { isWaitingRoomError, WaitingRoomError, type FreebuffConfig } from './types.js';
+import { normalizeToolSchemas } from './tool-schema.js';
 
 const PROVIDER_NAME: ProviderName = 'freebuff';
 
@@ -471,6 +473,12 @@ export function buildUpstreamBody(
 ): string {
   const source = { ...(req as unknown as Record<string, unknown>) };
   source.model = model;
+
+  // server.go:364-366 —— tools schema 规范化（$ref 解析 + nullable 简化）。
+  // 规范化返回深拷贝，避免就地改写调用方传入的 req.tools。
+  if (Array.isArray(source.tools)) {
+    source.tools = normalizeToolSchemas(source.tools);
+  }
 
   const existing = source.codebuff_metadata;
   const metadata: Record<string, unknown> =
