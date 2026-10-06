@@ -6,8 +6,11 @@
 ## 1. 项目概况与当前状态
 
 - **定位**：以 commandcode-proxy 为底座，把 Freebuff2API 与 workbuddy2api-panel 两个 Go 项目重写为 TS Provider 适配器，形成单面板三源（CommandCode / Freebuff / 腾讯 CodeBuddy）统一 AI 网关。
+- **产品仓库（新建，2026-10-07）**：`https://github.com/wjf1/multi-upstream-gateway`（**PRIVATE**，默认分支 `main`）。
+  产品线已与上游分化为独立仓库，但**完整保留上游历史**（`main` = 上游 v4.22.4 `87b1a05`），故仍可 `git merge upstream/main` 吸收上游改动。
 - **工程仓库（唯一工作副本）**：`C:\Users\admin\Doubao\chats\2026-09-03\new-chat-5\commandcode-proxy`
-  —— **v4.22.4**，git 分支 **`feat/p0-port`**，与上游 `wjf1/commandcode-proxy` main 同步（base `87b1a05`，remote 经 gh-proxy 镜像）。
+  —— 上游 **v4.22.4** 基线 + Phase A~C 移植，当前分支 **`feat/p0-port`**（HEAD `c352726`）。
+  remote 布局：`origin` = 产品仓库（推送目标）、`upstream` = `wjf1/commandcode-proxy`（**仅 fetch，禁止 push**）、`ghproxy` = 上游镜像。
 - **执行依据（SSOT）**：`F:/AI/Qdor/review/multi-upstream-gateway/master-plan-v1.2.md`（v1.2.3 起含基准勘误）。
   评审与审计材料：`F:/AI/Qdor/review/commandcode-proxy/`（`batch-b.patch`、`architecture-review.md`、`remediation-plan.md`）。
 - **当前状态（2026-10-06）**：**基准重定进行中**。
@@ -16,7 +19,8 @@
   - 已完成：**Phase A**（工程基座，commit `cab6282` + `4b2a134`）；**Phase B+C** 进行中（批次 B 安全语义 + 新增模块文件）。
   - 待做：Phase D（接缝接线）→ Phase E（面板移植）→ Phase F（回归+阶段门+**经用户确认后**重启 9090）。
   - **9090 部署未动**：仍在跑 v4.22.4 原进程；移植期间不重启、不部署（用户已明确）。
-- **目标分支模型**：`main`（= 上游同步线） + `feat/p0-port`（本次移植集成分支）。移植完成后合回 main 再考虑部署。
+- **目标分支模型**：`main`（= 上游 v4.22.4 干净基线） + `feat/p0-port`（本次移植集成分支）。移植完成后合回 `main` 再考虑部署。
+  **版本线待定**：产品首次正式发布建议另起版本序列（勿与上游 v4.22.x 撞号）；届时须同步 `package.json` / `CHANGELOG.md` / 中英双语 `README.md` / 本文件四文档齐全后再打 annotated tag 与建 Release。
 
 ## 2. 技术栈与运行基线
 
@@ -46,6 +50,10 @@
 
 ## 4. 最近一轮变更与交付成果
 
+- **仓库分离（2026-10-07）**：产品线自上游 `wjf1/commandcode-proxy` 分化为独立私有仓库 `wjf1/multi-upstream-gateway`。
+  采用 **clone 保留完整历史**的方式（非重建），上游 v4.22.4 为 `main` 现状，故 `git merge upstream/main` 能力未丢失；
+  已推送 `main` + `feat/p0-port` + 全部 29 个历史 tag。判定依据：本次为产品分化（多上游/Freebuff/风险门/面板五页）而非补丁系列，
+  且 `batch-b.patch` 对 4.22.4 全冲突，继续骑在上游分支上无收益。
 - **基准重大更正（2026-10-06）**：发现真实部署与上游 main 为 v4.22.4，而全部工作基于过期检出 v4.17.0。
   方案 §1.2「底座事实勘误表」因此整表失效（"48 个测试文件" 本就是正确数字，被误"勘误"成 23；面板实为 1816 行；适配器已模块化；undici 已是运行时依赖；engines 已是 >=20；pkg 已换 `@yao-pkg/pkg`）。
   证据与影响见 `PLAN-STATE.md` §0。
@@ -83,5 +91,7 @@
    而要断言的 `Admin token:` 行打印在它之后 → 高负载下管道投递与 SIGKILL 竞争导致偶发失败（4.17.0 树已定位，**本树移植该测试时建议直接修好**：等待更靠后的横幅标记）。
 6. **Git Bash 约束**：cwd 每条命令后重置（内联 `cd <dir> && …`）；禁止裸 `&`/`nohup` 起常驻进程；阻塞命令包 `timeout`；
    不要把 `/c/...` POSIX 路径交给 node（用 `C:/...`）。
-7. **git 代理**：全局 `http.proxy=http://127.0.0.1:7900`；本树 remote 走 `gh-proxy.com` 镜像。
+7. **git 代理 / remote 布局**：全局 `http.proxy=http://127.0.0.1:7900`。
+   `origin` = 产品仓库 `wjf1/multi-upstream-gateway`（唯一推送目标）；`upstream` = `wjf1/commandcode-proxy`（**只 fetch，禁止 push**，否则污染上游）；
+   `ghproxy` = 上游 `gh-proxy.com` 镜像，仅作 fetch 备用。产品 tag 暂继承上游全部历史 tag；首次正式发布前决定是否另起版本线。
 8. **面板 / CDN**：4.22.4 面板 1816 行、资源已本地化；Phase E 移植外置时勿引入外链（有测试守卫）。
