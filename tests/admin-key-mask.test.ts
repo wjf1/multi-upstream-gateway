@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
+import { ADMIN_TOKEN } from '../src/utils/admin-guard.js';
 
 const PLAINTEXT_KEY = `ck-plaintext-${randomUUID()}--do-not-leak`;
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -66,6 +67,8 @@ describe('POST /api/auth/manual-login 凭据外泄（P1-4）', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/auth/manual-login',
+      // 批次 B 之后 /api/* 的写操作要管理 token。
+      headers: { 'x-admin-token': ADMIN_TOKEN },
       payload: { apiKey: PLAINTEXT_KEY, name: 'manual' },
     });
 
@@ -77,6 +80,7 @@ describe('POST /api/auth/manual-login 凭据外泄（P1-4）', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/auth/manual-login',
+      headers: { 'x-admin-token': ADMIN_TOKEN },
       payload: { apiKey: PLAINTEXT_KEY },
     });
     const json = res.json();

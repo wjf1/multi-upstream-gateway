@@ -49,18 +49,20 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 /**
- * 可选的共享密钥鉴权。设置 PROXY_API_KEY 环境变量后：
- *  - `/v1/*`：API 调用方必须以 `Authorization: Bearer <key>` 或 `x-api-key` 携带它；
- *  - `/api/*`：管理面同一把密钥（绑定 0.0.0.0 时防止局域网直连增删账号）。
- * 未设置 = 开放本机访问（默认回环绑定已保证安全）。仪表盘 HTML 本身保持公开，
- * 前端在 /api 401 时弹密钥输入框。
+ * 可选的数据面共享密钥鉴权。设置 PROXY_API_KEY 环境变量后，`/v1/*` 的调用方必须以
+ * `Authorization: Bearer <key>` 或 `x-api-key` 携带它；未设置 = 开放本机访问（默认回环
+ * 绑定 + 批次 B 的非回环拒绝启动已保证安全）。
+ *
+ * 它**不再覆盖 `/api/*`**（审查 P0-2 的「权限未分离」）：一把密钥同时管数据面与管理面，
+ * 意味着发给任何客户端的密钥都能用来增删账号、清空历史。管理面改由
+ * `src/utils/admin-guard.ts` 的一次性 token 保护。
  */
 export function verifyProxyAuth(fastify: FastifyInstance): void {
   const requiredKey = process.env.PROXY_API_KEY?.trim();
   if (!requiredKey) return;
 
   fastify.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
-    if (!req.url.startsWith('/v1/') && !req.url.startsWith('/api/')) return;
+    if (!req.url.startsWith('/v1/')) return;
     // CORS 预检请求不携带自定义头（含鉴权），必须放行，否则浏览器客户端
     // 在设置 PROXY_API_KEY 后连预检都过不去。
     if (req.method === 'OPTIONS') return;

@@ -22,6 +22,7 @@ import crypto from 'crypto';
 import { spawn } from 'child_process';
 import { AccountInfo } from '../types/index.js';
 import { logger } from './logger.js';
+import { oauthStateAcceptable } from './admin-guard.js';
 import { loginNewAccount } from './config.js';
 
 /** 从环境变量或用户级 auth.json 加载默认 API Key（作为无账号配置时的兜底）。 */
@@ -107,11 +108,13 @@ export function startBrowserLoginFlow(port = 5959): Promise<AccountInfo> {
         const reqUrl = new URL(req.url || '/', `http://localhost:${port}`);
         if (reqUrl.pathname === '/callback') {
           // CSRF 防护：若回调携带 state，必须与本流程随机生成的 stateToken 一致。
-          // 不携带 state 时视为兼容旧版 CLI 流程（其可能不回显 state），不阻断。
+          // B4：此前「不带 state 就视为兼容旧版 CLI」直接放行，等于在这个本地回调端口
+          // 上留了一个无 CSRF 防护的入口（3 分钟窗口内任何本机页面都能凑一次授权）。
+          // 现在默认拒绝，确需兼容旧 CLI 再用 COMMANDCODE_ALLOW_LEGACY_OAUTH=1 显式打开。
           const cbState = reqUrl.searchParams.get('state');
-          if (cbState && cbState !== stateToken) {
+          if (!oauthStateAcceptable(cbState, stateToken, process.env.COMMANDCODE_ALLOW_LEGACY_OAUTH === '1')) {
             res.writeHead(400, { 'Content-Type': 'text/plain' });
-            res.end('Auth failed: invalid state');
+            res.end(cbState ? 'Auth failed: invalid state' : 'Auth failed: missing state');
             return;
           }
           let apiKey =

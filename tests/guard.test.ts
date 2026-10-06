@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import Fastify from 'fastify';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { isSameOriginIfPresent } from '../src/routes/sse-common.js';
+import { ADMIN_TOKEN } from '../src/utils/admin-guard.js';
 import { dashboardRoutes } from '../src/routes/dashboard.js';
 
 describe('isSameOriginIfPresent', () => {
@@ -62,13 +66,21 @@ describe('isSameOriginIfPresent — scheme 收紧（Wave 4）', () => {
 // 端到端：管理面写操作被异源 Origin 拒绝、同源放行（fastify.inject，不监听端口）。
 describe('dashboard admin routes — cross-origin guard', () => {
   let app: Fastify.FastifyInstance;
+  let stateDir: string;
 
   beforeAll(async () => {
+    // 放行用例真的会执行 handler（切换网关、清日志），状态文件别落在仓库根。
+    stateDir = mkdtempSync(path.join(tmpdir(), 'ccproxy-guard-'));
+    process.env.COMMANDCODE_CONFIG_PATH = path.join(stateDir, 'config.json');
+    process.env.COMMANDCODE_ENV_PATH = path.join(stateDir, '.env');
     app = Fastify();
     await app.register(dashboardRoutes);
     await app.ready();
   });
-  afterAll(async () => { await app.close(); });
+  afterAll(async () => {
+    await app.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  });
 
   it('rejects foreign-origin POST with 403', async () => {
     const res = await app.inject({
@@ -80,11 +92,31 @@ describe('dashboard admin routes — cross-origin guard', () => {
     expect(res.statusCode).toBe(403);
   });
 
+  // 批次 B 之后 token 与 Origin 是两道独立的门：带对 token 不豁免异源检查。
+  it('rejects foreign-origin POST even with a valid admin token', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/gateway/toggle',
+      headers: {
+        origin: 'http://evil.example',
+        'x-admin-token': ADMIN_TOKEN,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ running: false }),
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
   it('allows same-origin POST', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/gateway/toggle',
-      headers: { origin: 'http://127.0.0.1', host: '127.0.0.1', 'content-type': 'application/json' },
+      headers: {
+        origin: 'http://127.0.0.1',
+        host: '127.0.0.1',
+        'x-admin-token': ADMIN_TOKEN,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({ running: true }),
     });
     expect(res.statusCode).toBe(200);
@@ -94,6 +126,7 @@ describe('dashboard admin routes — cross-origin guard', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/logs/clear',
+      headers: { 'x-admin-token': ADMIN_TOKEN },
     });
     expect(res.statusCode).toBe(200);
   });

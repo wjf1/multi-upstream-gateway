@@ -23,6 +23,9 @@ async function getFreePort(): Promise<number> {
 const MOCK_PORT = await getFreePort();
 const PROXY_PORT = await getFreePort();
 const PROXY_BASE = `http://127.0.0.1:${PROXY_PORT}`;
+// 管理面写操作要 x-admin-token（批次 B）。子进程默认每次启动随机生成，测试拿不到，
+// 所以在这里钉住一个已知值——顺带锁住 ADMIN_API_TOKEN 这条固定途径真的有效。
+const SPAWN_ADMIN_TOKEN = `itest-${randomUUID()}`;
 
 // 集成测试启动的是编译产物 dist/index.js；干净克隆上没有 dist 会必然超时。
 // 各 describe 上的 describe.skipIf 用于避免整片红。
@@ -324,6 +327,7 @@ beforeAll(async () => {
       // 生成一个随机占位符即可（不是任何真实凭据）。
       COMMANDCODE_API_KEY: randomUUID(),
       // 状态与目录缓存全部落到临时目录，绝不写进仓库。
+      ADMIN_API_TOKEN: SPAWN_ADMIN_TOKEN,
       COMMANDCODE_CONFIG_PATH: path.join(stateDir, 'config.json'),
       COMMANDCODE_MODELS_CACHE_PATH: path.join(stateDir, 'models.json'),
       COMMANDCODE_PRICING_CACHE_PATH: path.join(stateDir, 'pricing.json'),
@@ -997,11 +1001,13 @@ describe.skipIf(!distReady)('structured error contract', () => {
     const toggle = (running: boolean) =>
       fetch(`${PROXY_BASE}/api/gateway/toggle`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': SPAWN_ADMIN_TOKEN },
         body: JSON.stringify({ running }),
       });
 
-    await toggle(false);
+    // 这里先断言 200：鉴权一旦把请求拦下来，后面那句 503 会以「网关没暂停」的
+    // 面目失败，排查方向整个被带偏。
+    expect((await toggle(false)).status).toBe(200);
     try {
       const res = await postChat(ask('Hi'));
       expect(res.status).toBe(503);

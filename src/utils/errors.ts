@@ -33,6 +33,15 @@ export const ErrorCode = {
   GATEWAY_PAUSED: 'GATEWAY_PAUSED',
   GATEWAY_BUSY: 'GATEWAY_BUSY',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
+  // ── 多上游 Provider 层新增（master-plan v1.2 §3.1，T101）─────────────────────
+  NO_PROVIDER_AVAILABLE: 'NO_PROVIDER_AVAILABLE',
+  PROVIDER_DEGRADED: 'PROVIDER_DEGRADED',
+  RISK_DISCLAIMER_NOT_ACCEPTED: 'RISK_DISCLAIMER_NOT_ACCEPTED',
+  UPSTREAM_ACCOUNT_UNAVAILABLE: 'UPSTREAM_ACCOUNT_UNAVAILABLE',
+  MODEL_AMBIGUOUS: 'MODEL_AMBIGUOUS',
+  // ── 安全中间件链新增（T105；§3.1 之外的最小扩展，报告已注明）─────────────────
+  /** 模型名命中 modelAccess.blocklist 或未命中非空 allowlist → 403。 */
+  MODEL_ACCESS_DENIED: 'MODEL_ACCESS_DENIED',
 } as const;
 
 export type ErrorCodeName = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -75,6 +84,21 @@ const HINTS: Record<ErrorCodeName, string> = {
     'Too many concurrent upstream requests (MAX_UPSTREAM_CONCURRENCY). Retry with backoff or raise the limit.',
   INTERNAL_ERROR:
     'Unexpected proxy-side failure. Check the dashboard log tab for the underlying stack trace.',
+  // ── 多上游 Provider 层（移植自 P0-T101/T105）─────────────────────────────
+  NO_PROVIDER_AVAILABLE:
+    'No enabled provider can serve this request. Enable a provider in the dashboard, target one via X-Upstream-Provider, or fix routing.defaultProvider.',
+  PROVIDER_DEGRADED:
+    'The selected provider is degraded (health probe failing or fallback aborted). Retry with backoff or pick another provider via X-Upstream-Provider.',
+  RISK_DISCLAIMER_NOT_ACCEPTED:
+    'This gateway requires accepting the risk disclaimer before serving /v1 requests. Confirm it on the dashboard first screen.',
+  UPSTREAM_ACCOUNT_UNAVAILABLE:
+    'All accounts in the selected provider pool are cooling down, exhausted or disabled. Wait for cooldown to expire or add a new account.',
+  MODEL_AMBIGUOUS:
+    'The bare model name matches more than one provider. Prefix it with the provider namespace, e.g. "codebuddy/<model>".',
+  MODEL_ACCESS_DENIED:
+    'The requested model is denied by the gateway model access policy (blocklist hit, or not on the allowlist). ' +
+    'Adjust the modelAccess section of config.json, or the MODEL_ACCESS_ALLOW / MODEL_ACCESS_BLOCK environment variables.',
+
 };
 
 /**
@@ -127,6 +151,13 @@ const STATUS_BY_CODE: Record<ErrorCodeName, number> = {
   SERVER_ERROR: 502,
   PROVIDER_PROTOCOL_ERROR: 502,
   INTERNAL_ERROR: 500,
+  NO_PROVIDER_AVAILABLE: 503,
+  PROVIDER_DEGRADED: 503,
+  RISK_DISCLAIMER_NOT_ACCEPTED: 403,
+  UPSTREAM_ACCOUNT_UNAVAILABLE: 409,
+  MODEL_AMBIGUOUS: 400,
+  MODEL_ACCESS_DENIED: 403,
+
 };
 
 /** OpenAI 错误族（error.type 取值）。 */
@@ -149,6 +180,13 @@ const OPENAI_TYPE: Record<ErrorCodeName, string> = {
   SERVER_ERROR: 'api_error',
   PROVIDER_PROTOCOL_ERROR: 'api_error',
   INTERNAL_ERROR: 'api_error',
+  NO_PROVIDER_AVAILABLE: 'api_error',
+  PROVIDER_DEGRADED: 'api_error',
+  RISK_DISCLAIMER_NOT_ACCEPTED: 'permission_error',
+  UPSTREAM_ACCOUNT_UNAVAILABLE: 'api_error',
+  MODEL_AMBIGUOUS: 'invalid_request_error',
+  MODEL_ACCESS_DENIED: 'permission_error',
+
 };
 
 /** Anthropic 错误族（error.type 取值，客户端按它分支）。 */
@@ -171,6 +209,13 @@ const ANTHROPIC_TYPE: Record<ErrorCodeName, string> = {
   SERVER_ERROR: 'api_error',
   PROVIDER_PROTOCOL_ERROR: 'api_error',
   INTERNAL_ERROR: 'api_error',
+  NO_PROVIDER_AVAILABLE: 'api_error',
+  PROVIDER_DEGRADED: 'api_error',
+  RISK_DISCLAIMER_NOT_ACCEPTED: 'permission_error',
+  UPSTREAM_ACCOUNT_UNAVAILABLE: 'api_error',
+  MODEL_AMBIGUOUS: 'invalid_request_error',
+  MODEL_ACCESS_DENIED: 'permission_error',
+
 };
 
 export interface ProxyErrorInit {

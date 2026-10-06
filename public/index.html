@@ -462,7 +462,7 @@ mark{background:var(--c-hl-bg);color:var(--c-hl-text);border-radius:3px;padding:
 <div id="adminKeyModal" role="dialog" aria-modal="true" aria-label="输入管理密钥" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[60] flex items-center justify-center hidden">
   <div class="card rounded-xl p-6 max-w-sm w-full shadow-2xl space-y-4">
     <h3 class="text-base font-bold text-white flex items-center gap-2"><i aria-hidden="true" class="fa-solid fa-shield-halved text-indigo-400"></i> 管理密钥</h3>
-    <p class="text-xs text-slate-400">本网关设置了 <code class="font-mono text-slate-300">PROXY_API_KEY</code>，访问管理接口与 API 都需要携带该密钥。验证通过后本标签页内记住（sessionStorage），关闭标签页即清除。</p>
+    <p class="text-xs text-slate-400"><code class="font-mono text-slate-300">PROXY_API_KEY</code> 现在只保护 <code class="font-mono text-slate-300">/v1/*</code> 数据面（API 调用方携带）。管理面写操作改用网关本次启动生成的一次性 token，由本页自动携带，无需你输入；若提示凭据无效，刷新页面即可取到新值。</p>
     <input type="password" id="adminKeyInput" placeholder="PROXY_API_KEY" autocomplete="off" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500">
     <div class="flex justify-end space-x-2 pt-1">
       <button onclick="dismissAdminKeyModal()" class="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-xs font-medium">取消</button>
@@ -1686,16 +1686,30 @@ function settleConfirm(ok) {
   if (r) r(!!ok);
 }
 
-// ─── 管理面鉴权（PROXY_API_KEY 开启时）───────────────────────────────────────
-// 服务端开启密钥后 /api/* 与 /v1/* 都要求 x-api-key。这里包装 fetch：
-// 自动附带头；收到 401 弹密钥框，提交后自动重试原请求。密钥仅存 sessionStorage。
+// ─── 管理面鉴权（批次 B）─────────────────────────────────────────────────────
+// /api/* 的写操作要 x-admin-token：它由服务端注入在本页的 <meta name="ccproxy-admin-token">
+// 里（回环 Host 才会被投递，见 src/utils/admin-guard.ts）。PROXY_API_KEY 从此只覆盖
+// /v1/*，不再充当管理面凭据。收到 /api 401 基本只有一种解释：网关重启换了一代 token，
+// 而这是旧页面 —— 刷新一次拿新 token，且不允许连环刷新。
 const realFetch = window.fetch.bind(window);
-function adminKeyHeaders(init) {
-  const key = sessionStorage.getItem('adminKey') || '';
-  if (!key) return init;
+const ADMIN_TOKEN = (() => {
+  const meta = document.querySelector('meta[name="ccproxy-admin-token"]');
+  return meta ? (meta.getAttribute('content') || '') : '';
+})();
+function authHeadersFor(url, init) {
   const headers = new Headers((init && init.headers) || {});
-  headers.set('x-api-key', key);
-  return Object.assign({}, init, { headers });
+  let touched = false;
+  if (url.startsWith('/api/') && ADMIN_TOKEN) { headers.set('x-admin-token', ADMIN_TOKEN); touched = true; }
+  if (url.startsWith('/v1/')) {
+    const key = sessionStorage.getItem('adminKey') || '';
+    if (key) { headers.set('x-api-key', key); touched = true; }
+  }
+  return touched ? Object.assign({}, init, { headers }) : init;
+}
+function methodOf(input, init) {
+  if (init && init.method) return String(init.method).toUpperCase();
+  if (typeof Request !== 'undefined' && input instanceof Request) return input.method.toUpperCase();
+  return 'GET';
 }
 let adminKeyWaiters = [];
 let adminKeyMutedUntil = 0;
@@ -1731,11 +1745,21 @@ function dismissAdminKeyModal() {
 }
 window.fetch = async function (input, init) {
   const url = typeof input === 'string' ? input : (input && input.url) || String(input);
-  const needsAuth = url.startsWith('/api/') || url.startsWith('/v1/');
-  let res = await realFetch(input, needsAuth ? adminKeyHeaders(init) : init);
-  if (res.status === 401 && needsAuth) {
+  const write = !['GET', 'HEAD', 'OPTIONS'].includes(methodOf(input, init));
+  let res = await realFetch(input, authHeadersFor(url, init));
+  if (res.status === 401 && url.startsWith('/api/') && write) {
+    if (!sessionStorage.getItem('adminTokenReloaded')) {
+      sessionStorage.setItem('adminTokenReloaded', '1');
+      location.reload();
+    } else {
+      showToast('管理凭据无效：本页携带的 token 与网关当前值不一致，请确认没有另开实例或固定 ADMIN_API_TOKEN。', 'error');
+    }
+    return res;
+  }
+  if (res.ok && url.startsWith('/api/') && write) sessionStorage.removeItem('adminTokenReloaded');
+  if (res.status === 401 && url.startsWith('/v1/')) {
     const key = await promptAdminKeyOnce();
-    if (key) res = await realFetch(input, adminKeyHeaders(init));
+    if (key) res = await realFetch(input, authHeadersFor(url, init));
   }
   return res;
 };

@@ -16,6 +16,7 @@ import { logger, LOG_FILE_PATH } from '../utils/logger.js';
 import { getUpdateState } from '../utils/update-check.js';
 import { getProjectRootDir } from '../utils/config.js';
 import { isSameOriginIfPresent } from './sse-common.js';
+import { ADMIN_CSP, adminTokenOk, injectAdminTokenMeta, isLoopbackHostHeader } from '../utils/admin-guard.js';
 import {
   loadConfig,
   resolveBodyLimit,
@@ -111,18 +112,45 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
   // 仅对公共 API 表面（/v1/*）开放 CORS。管理 /api/* 路由不发 CORS 头，
   // 这样浏览器里的随机网页就无法驱动它们。
   fastify.addHook('onRequest', async (req, reply) => {
+    const routePath = req.url.split('?')[0];
+    const isAdminApi = routePath.startsWith('/api/');
+    const isDashboardPage = routePath === '/';
+
     if (req.url.startsWith('/v1/') || req.url === '/health') {
       reply.header('Access-Control-Allow-Origin', '*');
     }
+
+    // B2：页面与 /api/* 只认回环 Host（或 ADMIN_ALLOWED_HOSTS 显式放行的名字）。
+    // 这是旧防线缺的那一环：isSameOriginIfPresent 比的 host 来自请求头本身，
+    // DNS rebinding 下 Origin 与 Host 天然自洽，检查形同不存在。
+    if ((isAdminApi || isDashboardPage) && !isLoopbackHostHeader(req.headers.host as string | undefined)) {
+      return reply.status(403).send({ error: 'Host not allowed for admin surface' });
+    }
+
     // 防跨站驱动管理操作：CORS 只能阻止"读响应"，阻止不了"发请求"。
     // 校验逻辑见 isSameOriginIfPresent（纯函数，tests/guard.test.ts 锁定）。
-    if (req.url.startsWith('/api/') && !['GET', 'OPTIONS', 'HEAD'].includes(req.method)) {
+    if (isAdminApi && !['GET', 'OPTIONS', 'HEAD'].includes(req.method)) {
       if (!isSameOriginIfPresent(req.headers.origin as string | undefined, req.headers.host as string | undefined, req.protocol)) {
         return reply.status(403).send({ error: 'Cross-origin admin request rejected' });
       }
+      // B1：管理面写操作要一次性 token。PROXY_API_KEY 从此只管 /v1/*——两把凭据
+      // 混用意味着数据面密钥泄露即可改配置、删账号（审查 P0-2 的权限未分离）。
+      // 只卡写不卡读：/api/* 的读端点保持可被本机脚本直接访问。
+      if (!adminTokenOk(req.headers['x-admin-token'] as string | undefined)) {
+        return reply.status(401).send({
+          error: 'Missing or invalid x-admin-token. It is served in the dashboard page '
+            + '(<meta name="ccproxy-admin-token">) and printed at startup; pin it with ADMIN_API_TOKEN.',
+        });
+      }
     }
+
+    // B5：只上零风险项，刻意不含 script-src（SPA 还有一整块内联脚本 + 大量内联事件）。
+    if (isDashboardPage) {
+      reply.header('Content-Security-Policy', ADMIN_CSP);
+    }
+
     // 仪表盘 HTML 与管理 API 禁用缓存：升级后浏览器不会再用旧页面调新接口。
-    if (req.url === '/' || req.url.startsWith('/api/') || req.url.startsWith('/?')) {
+    if (isDashboardPage || isAdminApi || req.url.startsWith('/?')) {
       reply.header('Cache-Control', 'no-cache');
     }
   });
@@ -557,7 +585,10 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
   fastify.get('/', async (_req, reply) => {
     try {
       const html = await fs.promises.readFile(DASHBOARD_HTML_PATH, 'utf-8');
-      return reply.header('Content-Type', 'text/html; charset=utf-8').header('Cache-Control', 'no-cache').send(html);
+      return reply
+        .header('Content-Type', 'text/html; charset=utf-8')
+        .header('Cache-Control', 'no-cache')
+        .send(injectAdminTokenMeta(html));
     } catch (err: any) {
       logger.error(`[DASHBOARD] Failed to load public/index.html: ${err.message}`);
       return reply.status(500).send('Dashboard assets missing: public/index.html not found.');

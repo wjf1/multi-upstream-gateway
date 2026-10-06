@@ -16,6 +16,7 @@ import { fetchUpstreamModels } from './utils/models.js';
 import { logger } from './utils/logger.js';
 import { PROXY_VERSION } from './utils/version.js';
 import { chatRoutes, verifyProxyAuth } from './routes/chat.js';
+import { ADMIN_TOKEN, isInsecureBind } from './utils/admin-guard.js';
 import { messagesRoutes } from './routes/messages.js';
 import { modelsRoutes } from './routes/models.js';
 import { dashboardRoutes } from './routes/dashboard.js';
@@ -202,6 +203,26 @@ const start = async () => {
       });
     }
 
+    // B3：非回环绑定却没有数据面密钥，等于把整台网关交给局域网 —— 任何人都能增删
+    // 账号、改配置、清空用量历史。此前只打一行警告然后照常启动；现在拒绝启动，
+    // 除非显式 ALLOW_INSECURE_BIND=1（LAN 自托管是合法场景，但必须是主动选择）。
+    if (
+      isInsecureBind({
+        host: config.host,
+        hasProxyKey: !!process.env.PROXY_API_KEY?.trim(),
+        allowInsecure: process.env.ALLOW_INSECURE_BIND === '1',
+      })
+    ) {
+      const reason =
+        `[STARTUP] 拒绝启动：绑定到非回环地址 ${config.host} 却未设置 PROXY_API_KEY。` +
+        '这样局域网内任何主机都能调用 API 并完整操作管理面（增删账号、改配置、清空历史）。' +
+        '三选一：把 HOST 改回 127.0.0.1；设置 PROXY_API_KEY；' +
+        '确实要开放则设 ALLOW_INSECURE_BIND=1（同时建议给管理面固定 ADMIN_API_TOKEN）。';
+      logger.error(reason);
+      console.error(reason);
+      process.exit(1);
+    }
+
     await fastify.listen({ port: config.port, host: config.host });
 
     const displayHost = config.host === '0.0.0.0' || config.host === '::' ? 'localhost' : config.host;
@@ -214,19 +235,13 @@ const start = async () => {
     console.log(`  🤖 OpenAI Chat Completions: ${dashboardUrl}v1/chat/completions`);
     console.log(`  💬 Anthropic Messages:      ${dashboardUrl}v1/messages`);
     console.log(`  🔒 Bound to:                ${config.host}${process.env.PROXY_API_KEY ? ' (API auth ON)' : ''}`);
+    // 管理面写操作凭据。控制台输出它是有意的：本机脚本需要一个稳定途径拿到 token，
+    // 而能读到这份日志的账号本来就能读到 config.json 里的明文上游密钥。
+    console.log(`  🔑 Admin token:             ${ADMIN_TOKEN}（管理面写操作凭据；重启换代，可用 ADMIN_API_TOKEN 固定）`);
     console.log('=============================================================\n');
 
     logger.info(`[SERVER] CommandCode Proxy v4 running on ${dashboardUrl}`);
     scheduleUpdateChecks();
-
-    // 绑定到非回环地址 = API 与管理面对整个局域网可见。未设共享密钥时必须讲清楚后果。
-    if (!['127.0.0.1', 'localhost', '::1'].includes(config.host) && !process.env.PROXY_API_KEY) {
-      logger.warn(
-        '[SECURITY] 绑定在非回环地址且未设置 PROXY_API_KEY：局域网内任何人都可以调用 API ' +
-        '并管理本网关（增删账号、切换 Key、清空历史）。建议设置 PROXY_API_KEY，或改回 127.0.0.1。'
-      );
-      console.warn('\n⚠️  局域网暴露且未鉴权：请设置 PROXY_API_KEY（见 README）或改回 127.0.0.1。\n');
-    }
 
     if (process.env.NODE_ENV !== 'test' && !process.env.NO_OPEN_BROWSER) {
       openBrowser(dashboardUrl);
