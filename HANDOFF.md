@@ -15,7 +15,7 @@
 - **执行依据（SSOT）**：`docs/master-plan-v1.2.md`（已纳入仓库）（v1.2.3 起含基准勘误）。
   审计与评审材料（已随仓库分发）：`docs/review/`（`batch-b.patch`、`architecture-review.md`、`remediation-plan.md`）。
 - **当前状态（2026-10-07）**：**P0 移植已完成并部署，产品首发 v5.0.0；随后发布 v5.0.1（上游流中断重试修复）；
-  本版 v5.0.2（施工完成、未推送）修同族第二形态 —— 产出内容前的空闲超时也进入重试**。见 §4 首条。
+  v5.0.2（产出内容前的空闲超时也纳入重试）已发布并部署上线**。见 §4 首条。
   - **Phase A~F 全部完成**：A 工程基座 / B 审计批次 B 安全语义 / C 新增模块 / D1 接缝接线 / E 面板移植 / F 阶段门复验。
   - **门禁数据（F）**：`npm run verify` **50 文件 / 658 用例全绿**；覆盖率 65.87%；`npm audit --omit=dev` **0 漏洞**；50 并发 P99 126ms / 468rps / 0 错误。
   - **门禁数据（v5.0.1）**：`npm run verify` **51 文件 / 667 用例全绿**、`npm run lint` 零输出、`npm run typecheck` 双工程通过；新增 1 文件 9 用例锁定「内容产出前中断必重试 / 内容产出后必不重试」。
@@ -88,7 +88,11 @@
   **关键认知（勿再踩）**：`ProxyError.anthropicPayload()` **不下发 `retryable` 字段**，且 ZCode 包里
   `STREAM_IDLE_TIMEOUT` **0 次出现** —— 「改代理标志让客户端重试」这条路不通，**修复必须落在代理自身的重试循环**。
   验证：`build`/`lint` 零输出、src 工程 `tsc --noEmit` 通过、**55 文件 / 713 用例全绿**（v5.0.1 基线 55/709，+4 例）。
-  **尚未推送**（tag / push / Release 待用户点头）。
+  **已发布并部署（2026-10-07）**：commit `e106bf4`（分支 `feat/p0-port` 与 `main` 同点）、annotated tag
+  `v5.0.2: 产出内容前的空闲超时纳入重试`、Release 由 CI 自动创建且标题/正文合规
+  （https://github.com/wjf1/multi-upstream-gateway/releases/tag/v5.0.2）；推送前按 CI 视角
+  （仅已跟踪测试文件）复跑 **58 文件 / 754 用例全绿**（含并行会话已提交的 WorkBuddy 用例）。
+  部署：16:57 重建 dist → 16:58:02 看门狗拉起 PID 19748，`/api/status` 报 `version 5.0.2`。
 
 - **P1 交付（2026-10-07，四卡）**：
   - **T201 Freebuff 核心移植**：`src/providers/freebuff/` 7 文件 2,388 行（`run-manager` 含 RunManager/TokenPool：
