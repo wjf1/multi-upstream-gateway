@@ -34,8 +34,11 @@ let stateDir = '';
 /** 每次请求到达时，按序记录该次尝试发给上游的 model。 */
 let attempts: string[] = [];
 /** 用哪套剧本：'cut-before-content' 在首个内容事件之前掐断；'cut-mid-stream' 产出一段后再掐断；
- *  'stall-before-content' 起了流（响应头已发）但一个字节都不吐，只由空闲看门狗定性。 */
-let scenario: 'cut-before-content' | 'cut-mid-stream' | 'stall-before-content' = 'cut-before-content';
+ *  'stall-before-content' 起了流（响应头已发）但一个字节都不吐，只由空闲看门狗定性；
+ *  'stall-after-start' 吐了 start（元数据，不等于内容）后既不吐内容也不断连，同由看门狗定性
+ *  —— v5.0.2 按「有没有字节」判，这条会被放行，正是 2026-10-07 20:36 的线上形态。 */
+let scenario: 'cut-before-content' | 'cut-mid-stream' | 'stall-before-content' | 'stall-after-start' =
+  'cut-before-content';
 
 beforeAll(async () => {
   stateDir = mkdtempSync(path.join(tmpdir(), 'ccproxy-stream-retry-'));
@@ -70,6 +73,11 @@ beforeAll(async () => {
         // 已经产出内容之后才断：这条不能再丢弃重试（会重复投递内容）。
         res.write(TEXT_MID);
         setTimeout(() => res.destroy(), 20);
+        return;
+      }
+      if (attempt === 1 && scenario === 'stall-after-start') {
+        // start 已经写进去了（上面的 res.write(START)），之后既不吐内容也不断连：字节
+        // 到过、内容没到，只有空闲看门狗能定性 —— v5.0.2 按「有没有字节」判会放行。
         return;
       }
 
@@ -165,5 +173,25 @@ describe('上游在产出内容前被掐断 → 丢弃本次尝试重试', () =>
     expect(attempts.length).toBe(2);
     expect(got.error).toBeUndefined();
     expect(got.text).toContain('recovered');
+  }, 20_000);
+
+  // 2026-10-07 20:36 的线上形态（v5.0.2 漏掉的那条）：CC 的流以 start 事件开场，字节在
+  // 第一毫秒就到了，随后彻底静默直到空闲看门狗判死。注入点按「上游有没有吐过字节」给的
+  // retryable 是 false（字节到过），旧探测层据此放行 → 客户端白等 30s 探测 + 120s 看门狗
+  // 才拿到不可重试的 504（实测 timingMs=151274）。判据改成「有没有内容事件」后，这条与
+  // 同族的零字节形态同判。
+  it('只吐了 start 就彻底静默 → 按「没有内容事件」丢弃重试', async () => {
+    const { sendToCC } = await import('../src/adapters/commandcode/upstream.js');
+    attempts = [];
+    scenario = 'stall-after-start';
+
+    const stream = await sendToCC(makeBody(), { apiKey: 'ck-a' });
+    const got = await drain(stream);
+
+    expect(attempts.length).toBe(2);
+    expect(got.error).toBeUndefined();
+    expect(got.text).toContain('recovered');
+    // 第一次尝试的 start 只该出现一次：它在预读缓冲里、从未转发，随丢弃一起没了。
+    expect(got.text.match(/"type":"start"/g)?.length).toBe(1);
   }, 20_000);
 });

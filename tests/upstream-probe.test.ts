@@ -136,9 +136,9 @@ describe('classifyBuffered — 增量扫描，处理被截断的半行', () => {
 // 里 `close`/`error` 只调用 finish() 而不落判定，于是判成 ignore 放行 —— 把一个
 // **已经死掉的流**交给路由，外层重试循环根本没被触发，用户看到的就是一轮失败。
 //
-// 这里的判据是「客户端是否已经收到过字节」：预读期间所有字节都只在本地缓冲里，
-// 从未转发，所以此刻丢弃重试永远是安全的。反之，只要已经放行（内容事件先到、
-// 或超了 30s/64KB 窗口）就不再重试 —— 那条边界由下面「中途失败不重试」的用例锁死。
+// 这里的判据是「客户端是否已经收到过**内容**」：预读期间所有字节都只在本地缓冲里，
+// 从未转发，所以此刻丢弃重试永远是安全的。反之，一旦放行（内容事件先到，或 64KB 缓冲
+// /两轮窗口耗尽）就不再重试 —— 那条边界由下面「中途失败不重试」的用例锁死。
 // =============================================================================
 describe('probeUpstream — 传输层中断的判定', () => {
   /** 依次吐出给定文本，然后以 err 结束的流（Readable.from 会把它转成 'error' 事件）。 */
@@ -194,53 +194,80 @@ describe('probeUpstream — 传输层中断的判定', () => {
     expect(await outcome(probe.stream)).toBe('ERR:The operation was aborted');
   });
 
-  it('UpstreamError 沿用自身的 retryable 标志', async () => {
-    // 已经收到过字节（startLine）之后才空闲超时：注入点给的是 retryable=false，
-    // 内容可能已经转发出去，重试会重复投递 —— 探测层必须原样放行。
-    const idle = new UpstreamError('No data from upstream for 120s', 504, false, ErrorCode.STREAM_IDLE_TIMEOUT);
-    const p1 = await probeUpstream(thenError([startLine], idle));
+  it('挂钟超时注入（retryable=false）→ 原样放行，探测层不改判', async () => {
+    // 挂钟上限不是「没等到内容」那类成因（idleStall），沿用注入点自己的标志：给的是
+    // false 就放行，按既有契约把错误原样交给下游。
+    const deadline = new UpstreamError('Upstream exceeded 600s total deadline', 504, false, ErrorCode.REQUEST_TIMEOUT);
+    const p1 = await probeUpstream(thenError([startLine], deadline));
     expect(p1.rejected).toBe(false);
-    expect(await outcome(p1.stream)).toBe('ERR:No data from upstream for 120s');
+    expect(await outcome(p1.stream)).toBe('ERR:Upstream exceeded 600s total deadline');
 
     const retryable = new UpstreamError('connect ECONNRESET', undefined, true, ErrorCode.NETWORK_ERROR);
     expect((await probeUpstream(thenError([startLine], retryable))).rejected).toBe(true);
   });
 
+  // 2026-10-07 20:36 的事故形态（v5.0.2 漏掉的那条）：CC 的流以 start 事件开场，
+  // 字节在第一毫秒就到了，随后彻底静默直到空闲看门狗判死。注入点按「上游有没有吐过
+  // 字节」给的是 retryable=**false**，而判据应该是「有没有产出**内容**」—— 探测层
+  // 掌握这个真判据，必须覆盖它，否则重试预算一次都用不上（实测 151.3s = 30s 放行
+  // + 120s 看门狗，客户端拿到的是不可重试的 504）。
+  it('start 已到、之后彻底静默 → 按「没有内容事件」覆盖 retryable，丢弃重试', async () => {
+    const idle = new UpstreamError('No data from upstream for 120s', 504, false, ErrorCode.STREAM_IDLE_TIMEOUT);
+    const probe = await probeUpstream(thenError([startLine], idle));
+    expect(probe.rejected).toBe(true);
+    expect(probe.reason).toBe('content-stall');
+    expect(probe.detail).toBe('No data from upstream for 120s');
+  });
+
   // 2026-10-07 10:03 的事故形态：上游回了响应头、body 一个字节都不给，直到空闲看门狗
   // 判死。修复前注入点给的是 retryable=false，探测层据此放行，重试预算一次都没用上。
-  it('零字节 + 空闲看门狗注入（retryable=true）→ 判为首字节停顿，丢弃重试', async () => {
+  it('零字节 + 空闲看门狗注入（retryable=true）→ 判为内容停顿，丢弃重试', async () => {
     // 注入点在「一个字节都没收到」时给的正是 true（pipeline/stream.ts 的
     // wrapUpstreamStream）：本次尝试什么都没产出，丢弃重试是安全的。
     const idle = new UpstreamError('No data from upstream for 120s', 504, true, ErrorCode.STREAM_IDLE_TIMEOUT);
     const probe = await probeUpstream(thenError([], idle));
     expect(probe.rejected).toBe(true);
-    expect(probe.reason).toBe('first-byte-stall');
+    expect(probe.reason).toBe('content-stall');
     expect(probe.detail).toBe('No data from upstream for 120s');
   });
 
-  it('一个字节都不吐的流不会被放行：窗口到期改等看门狗时限，仍无数据则判为首字节停顿', async () => {
-    // 探测窗口（50ms）到期时零字节 → 不放行（放行也无可转发的内容，只是把一个永远
-    // 等不到内容的流交给路由），改等 idleTimeoutMs（100ms）。这里没有任何东西把它
-    // 判死，于是走兜底分支：同样按「产出内容前失败」丢弃重试。
+  it('一直等不到内容的流不会被放行：窗口到期改等看门狗时限，仍无内容且已静默满时限则丢弃', async () => {
+    // 探测窗口（50ms）到期时还没看到内容事件 → 不放行（放行也无可转发的正文，只是把
+    // 一个永远等不到内容的流交给路由），改等 idleTimeoutMs（100ms）。这里没有任何东西
+    // 把它判死，于是走兜底分支：静默已满 100ms，按「产出内容前失败」丢弃重试。
     const silent = new Readable({ read() {} });
     const probe = await probeUpstream(silent, { probeTimeoutMs: 50, idleTimeoutMs: 100 });
     expect(probe.rejected).toBe(true);
-    expect(probe.reason).toBe('first-byte-stall');
+    expect(probe.reason).toBe('content-stall');
     silent.destroy();
   });
 
-  it('窗口内收了数据（哪怕只是 start）仍按时放行，不为判别拖住请求', async () => {
+  it('只吐 start 然后彻底静默 → 同样不放行，按内容停顿丢弃重试（v5.0.2 漏掉的形态）', async () => {
+    // 旧实现按「有没有字节」判：start 已到即按时放行，把一个死流交给路由。判据改成
+    // 「有没有内容事件」后，这条必须与零字节同判。
     const chatty = new Readable({ read() {} });
     setTimeout(() => chatty.push(Buffer.from(startLine)), 10);
+    const probe = await probeUpstream(chatty, { probeTimeoutMs: 50, idleTimeoutMs: 100 });
+    expect(probe.rejected).toBe(true);
+    expect(probe.reason).toBe('content-stall');
+    chatty.destroy();
+  });
+
+  it('只吐元数据但一直在流动的活流 → 保守放行，不因本修复被拖住', async () => {
+    // 二轮窗口到期时距最后一次字节很近（< idleTimeoutMs）说明流是活的（只是还没产出
+    // 内容），按既有语义交给路由 —— 本修复只针对「静默到死的流」，不扩大语义范围。
+    const trickle = new Readable({ read() {} });
+    const t = setInterval(() => trickle.push(Buffer.from(startLine)), 20);
     const t0 = Date.now();
-    const probe = await probeUpstream(chatty, { probeTimeoutMs: 60, idleTimeoutMs: 5_000 });
+    const probe = await probeUpstream(trickle, { probeTimeoutMs: 50, idleTimeoutMs: 100 });
     const elapsed = Date.now() - t0;
+    clearInterval(t);
     expect(probe.rejected).toBe(false);
-    // 关键：没有等满 idleTimeoutMs（5s）。延窗只针对「零字节」，有字节就按 30s 窗口
-    // 放行 —— 这条锁死「30s 窗口的既有语义不被本次修复放大」。
+    // 等满二轮窗口（50 + 100ms 量级），但没被当成死流丢弃，也没等满生产配置的 30s。
+    expect(elapsed).toBeGreaterThanOrEqual(140);
     expect(elapsed).toBeLessThan(1_000);
     probe.stream.destroy();
-    chatty.destroy();
+    trickle.destroy();
   });
 
   it('内容事件先到：放行而不是重试（此后中途失败不能再丢弃）', async () => {

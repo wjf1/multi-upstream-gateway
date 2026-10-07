@@ -320,8 +320,9 @@ export async function sendToCC(body: CCRequestBody, opts: SendOptions): Promise<
       });
       const rawStream = wrapped.stream;
 
-      // 上游在产出任何内容之前就失败（流内 error 事件，或传输层中断）时，这次调用
-      // 什么都没产出，而此刻客户端还没收到任何字节 —— 丢弃重试是安全的。
+      // 上游在产出任何内容之前就失败（流内 error 事件、传输层中断、或起了流却等不到
+      // 内容事件）时，这次调用什么都没产出，而此刻客户端还没收到任何字节 —— 丢弃重试
+      // 是安全的。
       //
       // 只在**还有重试预算**时才探测：最后一次尝试直接放行，让调用方按既有逻辑处理
       // （把错误并入流）。这样本机制是纯增量——只多试几次，不改对客户端的契约。
@@ -332,12 +333,12 @@ export async function sendToCC(body: CCRequestBody, opts: SendOptions): Promise<
           rawStream.destroy();
           const why = probe.reason === 'error-event'
             ? 'Upstream reported an error event before producing any content'
-            : probe.reason === 'first-byte-stall'
-              ? 'Upstream sent no data at all before stalling'
+            : probe.reason === 'content-stall'
+              ? 'Upstream produced no content before stalling'
               : 'Upstream stream ended prematurely before producing any content';
           const detail = probe.detail ? `: ${probe.detail}` : '';
           // 客户端已经走了就别重试：这一轮对话已被放弃，替它再打一次上游只是白耗额度。
-          // 空闲超时**会**在探测窗口内触发（一个字节都不吐的流由看门狗定性，见
+          // 空闲超时**会**在探测窗口内触发（还没产出内容的流由看门狗定性，见
           // probeUpstream），所以两种超时都必须用 idleFired / deadlineFired 排除在
           // 「客户端中止」之外 —— 否则一次上游卡死会被记成客户端中止，既不重试、
           // 又把失败成因落错。

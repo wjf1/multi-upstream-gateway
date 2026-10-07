@@ -8,9 +8,11 @@
 //      丢弃本次调用交给编排层重试。三种形态都覆盖：
 //        - 上游以 HTTP 200 的流内 error 事件报错（error-event）；
 //        - 传输层中断 —— 流被对端掐断 / undici 抛 terminated（stream-error）；
-//        - 起了流但一个字节都不吐，被空闲看门狗判死（first-byte-stall）。
+//        - 起了流、只吐了 start/元数据就没有下文，被空闲看门狗判死（content-stall）。
 //      三种形态下客户端都一个字节还没收到（预读到的字节全在本地缓冲里、从未转发），
 //      因此丢弃重试是安全的；判错两个方向的代价见 isRetryableEventMessage 的注释。
+//      第三种形态的判据是「有没有**内容**事件」，不是「有没有字节」—— CC 的流以 start
+//      事件开场，字节第一毫秒就到了，按字节判会让这条路径永不触发（v5.0.2 的缺口）。
 //
 // 状态归属：wrapUpstreamStream 内部的 discarded 标志由返回句柄的 markDiscarded()
 // 显式开启（探测拒绝时编排层调用）；并发槽位释放通过 onStreamGone 回调注入，
@@ -140,9 +142,13 @@ const PROBE_MAX_BYTES = 64 * 1024;
 /**
  * 探测的时间上限：上游迟迟不吐可判定的事件就放行，不为判别而拖住请求。
  *
- * 唯一例外是**一个字节都没收到**的流（见 first-byte-stall）：那种情况下放行并不会让
- * 客户端更早看到任何东西 —— 没有字节就没有可转发的内容，只是把一个永远等不到内容的
- * 流交给路由；所以改由空闲看门狗定性，等它的时限（`idleTimeoutMs`）而不是这个窗口。
+ * 唯一例外是**还没看到内容事件**的流（见 content-stall）：放行并不会让客户端更早看到
+ * 任何东西 —— 没有内容事件就没有可转发的正文（start/保活字节对客户端只是元数据，拿到
+ * 手也等不来正文），只是把一个永远等不到内容的流交给路由，白等一整轮且不触发重试；
+ * 所以改由空闲看门狗定性，等它的时限（`idleTimeoutMs`）而不是这个窗口。
+ *
+ * 判据必须是「有没有内容事件」而非「有没有字节」：CC 的流以 start 事件开场，字节在第
+ * 一毫秒就到了，按字节判会让这条路径永不触发（v5.0.2 的缺口，2026-10-07 20:36 事故）。
  */
 const PROBE_TIMEOUT_MS = 30_000;
 
@@ -168,8 +174,12 @@ export type ProbeRejectionReason =
   | 'error-event'
   /** 流在产出任何内容之前被掐断（undici 的 terminated / ECONNRESET）。 */
   | 'stream-error'
-  /** 上游连首个字节都没吐就被空闲看门狗判死（2026-10-07 事故形态）。 */
-  | 'first-byte-stall';
+  /**
+   * 流在产出任何**内容事件**之前就没有下文（空闲看门狗判死，或探测两轮窗口耗尽）。
+   * 只吐了 start / 保活字节也算：那些字节对客户端只是元数据，正文一个字都没到
+   * （2026-10-07 20:36 的 151.3s 事故形态；v5.0.2 曾按「有字节」放行，漏了这条）。
+   */
+  | 'content-stall';
 
 export interface ProbeResult {
   rejected: boolean;
@@ -184,7 +194,7 @@ export interface ProbeOptions {
   /** 有数据但攒不出可判定事件时的放行时限，默认 `PROBE_TIMEOUT_MS`。 */
   probeTimeoutMs?: number;
   /**
-   * 空闲看门狗时限。**一个字节都没收到**时探测不会按 `probeTimeoutMs` 放行，而是等
+   * 空闲看门狗时限。**还没看到内容事件**时探测不会按 `probeTimeoutMs` 放行，而是等
    * 看门狗定性（再过这么久），因此这一步必须知道生产配置里的真实值。
    */
   idleTimeoutMs?: number;
@@ -195,8 +205,9 @@ export interface ProbeOptions {
  *   - 中止类（客户端已断开 / 上游 abort 信号）：不重试。替一个已经走了的客户端再打
  *     一次上游只会白耗额度。
  *   - 已是 UpstreamError 的（挂钟 / 空闲超时注入）：沿用它自己的 retryable 标志，
- *     不在这里改判。空闲看门狗在「一个字节都没收到」时注入的是可重试的（什么都没
- *     产出，丢弃安全）；已经收到过字节则不可重试（内容可能已转发，重试会重复投递）。
+ *     不在这里改判。注入点按「上游有没有吐过字节」给这个标志（pipeline 层拿不到事件
+ *     语义），**字节到过、内容没到**时由 probeUpstream 按内容判定覆盖它 —— 那里才
+ *     掌握「有没有内容事件」这个真判据。
  *   - 其余（undici 的 terminated / ECONNRESET / 对端提前关流）：瞬时故障，可重试。
  */
 function isRetryableProbeFailure(err: any): boolean {
@@ -211,9 +222,10 @@ function isRetryableProbeFailure(err: any): boolean {
  * 已读字节不会丢：判定为放行时把它们写回返回流的最前面，其余原样透传。预读期间会
  * `pause()`，确保从摘掉监听器到接上管道之间不会有 chunk 落在空档里被丢掉。
  *
- * 两种失败形态：
+ * 三种失败形态：
  *   - 流内 error 事件（error-event）—— 上游用 200 的流报告失败；
- *   - 传输层中断（stream-error）—— 流在预读期间被掐断。
+ *   - 传输层中断（stream-error）—— 流在预读期间被掐断；
+ *   - 一直没等到内容事件（content-stall）—— 探测定性不了就交给空闲看门狗。
  * 后者是后补的：此前 `close`/`error` 只调用 `finish()` 而不落判定，于是判成 ignore
  * 放行，把一个**已经死掉的流**交给路由（reflow 把错误转给下游），外层重试循环完全
  * 没被触发 —— 日志里表现为 `[MESSAGES] Upstream stream error | Trace … | terminated`
@@ -229,7 +241,9 @@ export async function probeUpstream(raw: Readable, opts: ProbeOptions = {}): Pro
   let consumedBytes = 0;
   /** 预读期间上游流自己抛出的错误（传输层中断 / 超时注入）。 */
   let capturedError: any = null;
-  /** 窗口到期时「一个字节都没收到」，已改用空闲看门狗时限再等一轮。 */
+  /** 最后一次收到字节的时刻：二轮窗口到期时按「静默了多久」判断流是死是活。 */
+  let lastDataAt = Date.now();
+  /** 窗口到期时**还没看到内容事件**，已改用空闲看门狗时限再等一轮。 */
   let waitedForIdle = false;
   /** 看门狗也没能定性（配置异常）：按死流处理，不放行。 */
   let stallDetected = false;
@@ -254,17 +268,21 @@ export async function probeUpstream(raw: Readable, opts: ProbeOptions = {}): Pro
       timer = setTimeout(onWindowExpiry, ms);
     };
     const onWindowExpiry = () => {
-      // 一个字节都没收到的流不放行：放行也无可转发的内容，只会让客户端白等一个握
-      // 手，并把一个永远等不到内容的流交给路由。改等空闲看门狗（它到点会把注入的
-      // UpstreamError 打到流上，经下面的 onError 落成判定），窗口再到期就是看门狗
-      // 也没能定性的配置异常，按死流处理。
-      if (consumedBytes === 0 && !capturedError) {
+      // 还没看到**内容**事件就不放行 —— 判据是「有没有内容」不是「有没有字节」：CC 的
+      // 流以 start 事件开场，字节第一毫秒就到了，按字节判这条路径永不触发。放行只会把
+      // 一个永远等不到内容的流交给路由：客户端拿到 start 元数据，再在 idleTimeoutMs
+      // 后被看门狗以 receivedBytes>0 掐断（不可重试），白等一整轮。改等空闲看门狗定性：
+      // 它到点会把注入的 UpstreamError 打到流上，经下面的 onError 落成判定。
+      if (state.verdict === 'ignore' && !capturedError) {
         if (!waitedForIdle) {
           waitedForIdle = true;
           armWindow(idleWaitMs);
           return;
         }
-        stallDetected = true;
+        // 二轮窗口也到期、看门狗却没能定性（配置异常）。已静默满 idleTimeoutMs 的按死流
+        // 丢弃；期间一直在收字节的（只吐元数据/保活的活流）保守放行 —— 不扩大本修复的
+        // 语义范围，活流该按时交给路由。
+        if (Date.now() - lastDataAt >= idleWaitMs) stallDetected = true;
       }
       finish();
     };
@@ -272,6 +290,7 @@ export async function probeUpstream(raw: Readable, opts: ProbeOptions = {}): Pro
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       head.push(buf);
       consumedBytes += buf.length;
+      lastDataAt = Date.now();
       const text = Buffer.concat(head).toString('utf8');
       const res = classifyBuffered(text, scannedLines);
       scannedLines = res.scanned;
@@ -306,31 +325,39 @@ export async function probeUpstream(raw: Readable, opts: ProbeOptions = {}): Pro
     return { rejected: false, stream: reflow(raw, head) };
   }
 
-  // 窗口到期但一个字节都没收到，且看门狗也没能定性：同样是「产出内容前就没数据」，
-  // 客户端一字节未收，丢弃重试是安全的。
+  // 两轮窗口都到期、看门狗也没能定性（配置异常），且已静默满空闲时限：同属「产出内容前
+  // 就没数据」，客户端一字节未收（预读的字节只在本地 head 里），丢弃重试是安全的。
   if (stallDetected) {
     raw.destroy();
     return {
       rejected: true,
       stream: raw,
-      reason: 'first-byte-stall',
-      detail: `no upstream bytes within ${probeTimeoutMs / 1000}s`,
+      reason: 'content-stall',
+      detail: `no content event within ${(probeTimeoutMs + idleWaitMs) / 1000}s`,
     };
   }
 
-  // 传输层中断且尚未产出任何内容：客户端一字节未收，丢弃重试是安全的。
-  if (capturedError && isRetryableProbeFailure(capturedError)) {
-    raw.destroy();
-    // 空闲看门狗注入的错误与传输层中断走同一个入口，但成因不同：前者是「连首字节
-    // 都没吐」，日志与错误文案要能把这两种形态分开，否则排障时又会误判成对端掐流。
+  // 传输层中断 / 空闲看门狗判死，且尚未产出任何内容：客户端一字节未收，丢弃重试是安全的。
+  if (capturedError) {
+    // 空闲看门狗注入的 retryable 是按「上游有没有吐过字节」给的（pipeline 层拿不到事件
+    // 语义，见 wrapUpstreamStream）。而**字节到过、内容没到**恰恰是本路径要覆盖的形态
+    // （start 已到然后静默，2026-10-07 20:36 的 151.3s）：探测层掌握「有没有内容事件」
+    // 这个真判据，在此覆盖它 —— 预读期间的字节全在本地 head 里、从未转发给客户端，
+    // 丢弃不会重复投递。反过来 verdict === 'accept'（内容已产出）时不覆盖，原样放行。
     const idleStall =
       capturedError instanceof UpstreamError && capturedError.code === ErrorCode.STREAM_IDLE_TIMEOUT;
-    return {
-      rejected: true,
-      stream: raw,
-      reason: idleStall ? 'first-byte-stall' : 'stream-error',
-      detail: capturedError?.message,
-    };
+    const retryable = idleStall && state.verdict === 'ignore' ? true : isRetryableProbeFailure(capturedError);
+    if (retryable) {
+      raw.destroy();
+      // 空闲看门狗注入的错误与传输层中断走同一个入口，但成因不同：前者是「没等到内容」，
+      // 日志与错误文案要能把两种形态分开，否则排障时又会误判成对端掐流。
+      return {
+        rejected: true,
+        stream: raw,
+        reason: idleStall ? 'content-stall' : 'stream-error',
+        detail: capturedError?.message,
+      };
+    }
   }
 
   return { rejected: false, stream: reflow(raw, head) };
