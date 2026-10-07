@@ -61,10 +61,26 @@
     9090 全程未重启（uptime 连续、账号正确）。
   - 遗留：限流/modelAccess 双轨配置源 → T213 收口；`providers/commandcode` 建议不搬家只做薄适配（D2 决策）
   - blocked: —
-- [ ] P0-PORT-D2 接缝收尾（`providers/commandcode` 薄适配层决策 + T213 收口项）
+- [x] P0-PORT-D2 接缝收尾（`providers/commandcode` 薄适配层决策 + T213 收口项）
   - deps: P0-PORT-D1
-  - blocked: —
-- [ ] P0-PORT-D 接缝文件改造（历史条目，已拆分为 D1/D2）
+  - 决策：**不搬家、只做薄适配层**（D1 报告结论，本卡落地）。4.22.4 起
+    `src/adapters/commandcode/` 已模块化（adapter / pipeline / request·stream·usage 子模块），
+    整目录 `git mv` 到 `providers/commandcode/` 收益低、回归风险高（要动全部 import 与快照）。
+  - 交付：新增 `src/providers/commandcode/provider.ts`（`CommandCodeProvider implements IProvider`，
+    18 成员全集）—— 把既有翻译引擎（CommandCodeAdapter + sendToCC）、配置/账号层（`utils/config`）、
+    模型注册表（`utils/models`）、用量采集（`adapters/commandcode/usage`）暴露为 Provider 契约，
+    供 T213 统一接线消费；外部依赖全部经 `CommandCodeProviderDeps` 注入（不触网、不读写真实
+    config.json/.env）；边界：不写持久化副作用（审计/落库/限流/modelAccess 留在 routes/，属 T213）。
+  - 测试：`tests/commandcode-provider.test.ts` 19 例（先红后绿）—— 契约面 / 文本增量 / error 事件转
+    ProxyError / 无凭据不发请求 / 用量口径（含 costUsd=null 语义）/ 探活禁止恒真 / 凭据脱敏 / 总闸与热重载。
+  - 门禁：全量 **56 文件 / 732 用例全绿**；typecheck 双工程 0 错误；lint 零输出。
+  - 提交：`1e011a5`
+  - 遗留（T213 收口项，与 D1 登记一致，未在本卡实施）：①限流/modelAccess 双轨配置源
+    （`utils/model-access.ts` / `rate-limit.ts` 直读 env vs `UnifiedConfigStore` 的
+    `ModelAccessConfigSchema` / `RateLimitConfigSchema`）；②legacy 扁平分支 `syncEnvFile` 的
+    `COMMANDCODE_API_KEY` 明文行（unified 分支已在 `stripEnvKeyLine` 摘除）；③`saveConfigFile`
+    旧扁平分支明文回写。
+- [x] P0-PORT-D 接缝文件改造（历史条目，已拆分为 D1/D2；D1 ✅ D2 ✅）
   - deps: P0-PORT-B,P0-PORT-C
   - 范围：`index.ts`（安全链/风险门/凭据钩子/NODE_DEBUG/pino redact）、`routes/{chat,messages,sse-common}.ts`（safeFetch/requestId/provider 字段/风险门顺序）、`routes/dashboard.ts`（`/js/*`、status 字段、`/api/risk/accept`、审计钩子）、`utils/config.ts`（迁移钩子/加密优先/保存分支）、`utils/usage-store.ts`（provider 维度）、`utils/errors.ts`（+6 码）、`adapters/commandcode` → `providers/commandcode`
   - blocked: —
@@ -77,7 +93,7 @@
     ②`spa-a11y` 弹窗计数 3→4（新增风险弹窗同样具 dialog 语义）
   - 新增 `tests/spa-risk-gate.test.ts`（14 例）；全量 **50 文件 / 658 用例全绿**
   - blocked: —
-- [ ] P0-PORT-E 面板移植（历史条目，已完成见上）
+- [x] P0-PORT-E 面板移植（历史条目，已完成见上；与上方 [x] P0-PORT-E 同项）
   - deps: P0-PORT-D
   - 范围：在 4.22.4 的 1816 行面板上重做 JS 外置 + hash 路由 + 明暗主题 + 首启引导 + 风险告知弹窗（**保留 4.18~4.22 新增的面板功能**，如通道健康卡片、运行开关卡片）
   - blocked: —
@@ -103,7 +119,8 @@
 ## 3. P1 任务卡
 
 - [x] T201 Freebuff 核心移植（已实现于 4.17.0，待 PORT-C 移植）
-- [ ] T202 Freebuff Anthropic 桥 + schema 规范化（**在 v4.22.4 上重做**；注意新树已有 `anthropic-response.ts` 与 `pipeline/`，须先评估复用）
+- [x] T202 Freebuff Anthropic 桥 + schema 规范化（2026-10-07 于 v4.22.4 完成：T202a `providers/freebuff/tool-schema.ts` 接入 `buildUpstreamBody`；T202b `providers/core/anthropic-bridge.ts` 681 行 + 17 例）
+  - 未接线：Freebuff 的 `/v1/messages` 端到端接线属 T213；故 DoD「Anthropic SDK 调 /v1/messages 通过」定于 T213 收口
 - [x] T203 Freebuff 账号池与错误处理（2026-10-07 完成）
   - 交付：`errors.ts`(163, isSessionInvalid/isRunInvalid/classifyFreebuffError/softCooldownMs)、
     `account-store.ts`(138, 复用 T103 CredentialStore 落加密库)、`account-pool.ts`(142, FreebuffAccountPool 契约适配)、
@@ -115,7 +132,7 @@
   - 门禁：55 文件 / 709 用例全绿；typecheck 双工程 0 错误；lint 零输出
   - 遗留（T213 接线）：`FreebuffAccountPool` 尚未接入 provider/路由；`preferredAccountId`/`onRetry` 未透传到选号；
     面板账号页未消费 `snapshot()`；`updateConfig` 不热改 Token
-- [ ] T203 Freebuff 账号池与凭据持久化（历史条目，已完成见上）
+- [x] T203 Freebuff 账号池与凭据持久化（历史条目，已完成见上）
 - [ ] T204' WorkBuddy 透传 Provider + Sidecar 管理（联邦，见 `docs/wb-source-diff-report.md` §7）
 - [ ] T205' WorkBuddy 账号管理委托 sidecar（并入 T204'）
 - [ ] T206 WorkBuddy 熔断状态机 —— 已取消（sidecar 内置承接）
@@ -249,3 +266,31 @@
 **运维建议**：Clash 的混合端口已在界面固定为 7900，请不要再改回 7897——本机有四处编码该端口，
 任何一处不同步都会造成"改了不生效"或"静默回退直连"。若要变更，请同时更新
 `watchdog.ps1`（环境变量，需重载看门狗）与 `.env`/`config.json`（需重启服务）。
+
+## 阶段记录 — P0-PORT-D2 完成（2026-10-07）
+
+**决策**：`providers/commandcode` **不搬家、只做薄适配层**（D1 报告结论落地）。依据：4.22.4 起
+`src/adapters/commandcode/` 已模块化（`adapter.ts` + `pipeline/` + request/stream/usage 子模块），
+整目录迁移要动全部 import 与快照，收益低、回归风险高。
+
+**交付**：`src/providers/commandcode/provider.ts`（`CommandCodeProvider implements IProvider`，18 成员）
++ `tests/commandcode-provider.test.ts`（19 例，先红后绿）。提交 `1e011a5`。
+门禁：全量 **56 文件 / 732 用例全绿**、typecheck 双工程 0 错误、lint 零输出。
+
+**信息**：`providers/commandcode` 现为 T213 统一接线的直接前置；Freebuff（T201/T202a/T202b/T203）与
+CommandCode（D2）两个 Provider 均已具备 IProvider 外壳，但**都尚未接入运行时**
+（`providers/*` 仍只被自身与测试引用，未接 `src/index.ts` / `src/routes/`）。
+
+**并发写入告警（本轮实测）**：执行期间检测到**另一活跃会话**正在修改本仓库
+（`CHANGELOG.md` / `HANDOFF.md` / `package.json` 在数分钟内被改动，对应 v5.0.2 idle-timeout 重试修复）。
+按避坑 #9，本卡提交**只显式 `git add` 自制品两个文件**，未使用 `git add -A`；
+`CHANGELOG.md` / `HANDOFF.md` 的 D2 条目因该并发写入者持有未提交改动而**暂缓**（避免卷入他人 WIP）。
+后续接手者应在并发写入者提交后再补这两处文档。
+
+**T213 收口项（D2 登记，未实施）**：
+1. 限流/modelAccess 双轨配置源：`utils/model-access.ts` 与 `utils/rate-limit.ts` 直读 env，
+   而 `UnifiedConfigStore` 已定义 `ModelAccessConfigSchema` / `RateLimitConfigSchema`；T213 统一到一个源。
+2. legacy 扁平分支 `syncEnvFile` 的 `COMMANDCODE_API_KEY` 明文行（unified 分支已由
+   `stripEnvKeyLine` 摘除，仅旧形态残留）。
+3. `saveConfigFile` 旧扁平分支明文回写（unified 分支已走加密库）。
+
