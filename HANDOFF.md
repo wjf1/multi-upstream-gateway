@@ -19,9 +19,20 @@
   - **门禁数据（F）**：`npm run verify` **50 文件 / 658 用例全绿**；覆盖率 65.87%；`npm audit --omit=dev` **0 漏洞**；50 并发 P99 126ms / 468rps / 0 错误。
   - **门禁数据（v5.0.1）**：`npm run verify` **51 文件 / 667 用例全绿**、`npm run lint` 零输出、`npm run typecheck` 双工程通过；新增 1 文件 9 用例锁定「内容产出前中断必重试 / 内容产出后必不重试」。
   - **已部署（2026-10-07）**：看门狗第 5 秒拉起新代码；`config.json` flat→unified 迁移完成、凭据落 `credentials.enc`（`.env` 明文行已摘除）；
-    **风险门经用户在面板确认后放行**；代理端口改 7900（`.env` 已改，`config.json` 侧下次重启生效）。详见 §7 部署检查清单。
+    **风险门经用户在面板确认后放行**。详见 §7 部署检查清单。
+  - **代理端口已收敛（2026-10-07）**：Clash 混合端口经用户在界面固定为 **7900**，四处编码（`.env` / `config.json` 的 `upstream.proxy` /
+    `watchdog.ps1` / `start.cmd`）现已一致；重启后日志 `Outbound HTTP(S) proxy armed: http://127.0.0.1:7900/ (probe: 3ms)`，
+    真实对话经该链路成功。**教训**：该端口在本机有四处副本且**环境变量优先级高于配置文件**，任一处不同步都会
+    「改了不生效」或静默回退直连；端口曾在 7897/7900 间来回变更过，故请保持固定。
   - **基准勘误（保留为教训）**：方案基线事实曾基于过期检出 v4.17.0，真实基准是 v4.22.4；基线事实必须「版本号 + 验证命令」同引。
-  - **多上游尚未完成**：实际可用上游**仅 CommandCode 一个**；Freebuff 模块已入树但**未接入运行时**（接线属 P1/T202+），WorkBuddy 仍在规划。
+  - **多上游进度（2026-10-07）**：实际可用上游**仍是 CommandCode 一个**——Freebuff 已具备
+    Provider/账号池/错误分类/凭据加密/AI 桥/tools 规范化（T201、T202a、T202b、T203 均已完成），
+    但**尚未接入运行时**（`providers/core` 目前只被自身与 freebuff 引用，未接 `src/index.ts` / `src/routes/`，接线属 T213）；
+    WorkBuddy 仍在规划（联邦透传路线，见 `docs/wb-source-diff-report.md` §7）。
+  - **P1 已完成四卡**：T201（Freebuff 核心移植）/ T202a（tools schema 规范化）/ T202b（Anthropic 桥）/ T203（账号池与错误处理）。
+  - **当前门禁与远端**：`npm run verify` **55 文件 / 709 用例全绿**；typecheck 双工程 0 错误；lint 零输出；
+    产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`），远端 `main` 与 `feat/p0-port` 均在 `2d73635`；
+    公开前已核查：无敏感文件被跟踪、无凭据模式命中、历史中亦从未提交过 `.env`/`config.json`/`credentials.enc`。
 - **分支模型**：**`main` = 产品主线**（默认分支，已含 P0 移植与 v5.0.0 发布）；`feat/p0-port` = 移植集成分支（与 `main` 同点）。
   上游基线**不再占用 `main`** —— 需要吸收上游时直接用 `upstream` remote（`git fetch upstream && git merge upstream/main`），合并基点即上游 v4.22.4 `87b1a05`。
   **版本线已定**：自 **v5.0.0** 起另起序列（破坏性变更：风险门默认 403 / 凭据加密启动前置 / 配置形态迁移）；
@@ -36,7 +47,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**51 文件 / 667 用例全绿**（v5.0.0 为 50/658；v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**55 文件 / 709 用例全绿**（v5.0.1 为 51/667；v5.0.0 为 50/658；v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -54,6 +65,26 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **P1 交付（2026-10-07，四卡）**：
+  - **T201 Freebuff 核心移植**：`src/providers/freebuff/` 7 文件 2,388 行（`run-manager` 含 RunManager/TokenPool：
+    lease / inflight / draining / prewarm / 多 Token 轮询；`free-session` 会话缓存与等待室；`models` 远程注册表
+    `free-agents.ts` 6h 刷新 + 硬编码 fallback；`upstream` 出站；`provider` IProvider 外壳）。Go→TS 逐函数对应并注释 `源文件:行号`。
+    实测：预热后首请求 0ms（冷启 421ms）；START/FINISH 计数守恒（新增幂等 `finishRunOnce`；`invalidate` 路径按 Go 原版刻意不发 FINISH）。
+  - **T202a tools schema 规范化**：`tool-schema.ts` 311 行 + 测试 5 例，接入 `buildUpstreamBody`；
+    `$ref` 内联与 `definitions/$defs` 清理、nullable 三形态简化、深拷贝不改调用方对象。
+  - **T202b Anthropic 桥**：`src/providers/core/anthropic-bridge.ts` 681 行 + 测试 17 例；
+    `anthropicToOpenAIRequest` / `openAIResponseToAnthropicMessage` / `AnthropicStreamEncoder`
+    （块生命周期 message_start → content_block_start → delta… → content_block_stop → message_delta → message_stop，
+    thinking 与 tool_use 块各自成对开闭、index 互斥）/ `sseFrame` / `mapFinishReason` / `sanitizeToolId`。
+  - **T203 账号池与错误处理**：`errors.ts`(三类错误分类 isSessionInvalid/isRunInvalid/classifyFreebuffError)、
+    `account-store.ts`(复用 T103 加密库)、`account-pool.ts`(契约适配层)、`run-manager.ts`(+TokenPool 健康分级与选号注入点)；
+    测试 20 例。401→30min 冷却；probe 不信任会话缓存（修掉 T201「缓存 active 但 Token 已吊销」的漏判）。
+  - **执行方式与教训**：本批由 subagent 执行，其间**agent 基础设施连续失败多次**（配额超限 / 进程被终止 / 上游 120s 无数据）；
+    但**两次"失败"实际产物已完整落盘**（把工作区回退到已验证状态并回收产物即可，T202a 即由此交付）。
+    因此派发时要求 subagent **尽早落盘**，接受方在失败后**先查工作区再决定回退或回收**。
+    唯一真半成品是 T202b 首轮（`runChatChunks` 重构未完成、引用未定义函数）：已把 WIP 存档到
+    `F:/AI/Qdor/backup-deploy-20261006-220835/T202b-*.wip`，并改走"只做出口桥、不动 provider 流式重构"的路径交付。
 
 - **v5.0.1 上游流中断重试修复（2026-10-07）**：修复一次线上事故 —— 上游在**产出任何内容之前**把 SSE 流掐断
   （客户端侧 `TypeError: terminated`）时，首事件探测把它判成「放行」，一个**已经死掉的流**被交给路由，
@@ -97,8 +128,12 @@
 
 - **当前队列**（严格按 `PLAN-STATE.md` §1 的顺序与 deps）：
   - ✅ `P0-PORT-A~F` **全部完成**（A 基座 / B 批次 B 语义 / C 新增模块 / D1 接线 / E 面板移植 / F 阶段门），**已部署**。
-  - ⬜ **下一批（P1）**：`T202`（Freebuff Anthropic 桥 + tools schema 规范化）→ `T203` → `T204'`（WorkBuddy 联邦透传，见 `docs/wb-source-diff-report.md` §7）→ `T208~T212`（面板五页）→ `T213`（三源接线）→ `T214`（P1 阶段门）。
-    **注意**：Freebuff 模块（`src/providers/freebuff/`）已入树，但 `providers/core` 当前只被其自身引用、**未接入 `src/index.ts` / `src/routes/`**——T202 首先要做的是接线，而非新写。
+  - ✅ **P1 已完成**：`T201`（Freebuff 核心移植）、`T202a`（tools schema 规范化）、`T202b`（Anthropic 桥）、`T203`（账号池与错误处理）。
+  - ⬜ **下一批**：`P0-PORT-D2`（`providers/commandcode` 薄适配层——D1 报告结论：4.22.4+ 已把适配器模块化，
+    整目录平移收益低、回归风险高，**建议不搬家只做薄包装**；它是 T213 的前置）→ `T204'`（WorkBuddy 联邦透传）
+    → `T208~T212`（面板五页）→ `T213`（三源接线）→ `T214`（P1 阶段门）。
+    **注意**：Freebuff 模块虽已具备完整能力（Provider/账号池/错误分类/凭据/桥/tools 规范化），但**尚未接入运行时**——
+    `providers/core` 目前只被自身与 freebuff 引用，未接 `src/index.ts` / `src/routes/`，这部分统一在 T213 收口。
   - ⬜ 遗留小项：构建产物名仍为 `commandcode-proxy-v4.exe`，产品改名后待重命名（含 `build:win` 脚本与相关测试）。
 - **重启 9090 必须再次征得用户确认**（AGENTS.md 服务启停硬约束）。上线后用户会在面板点确认风险告知——在此之前 `/v1/*` 会 403。
 - **P1 后续**（移植完成后）：T202（Anthropic 桥——注意新树已有 `anthropic-response.ts`/`pipeline/`，须先评估复用而非另写）→ T203 → T204'（WorkBuddy 联邦透传，见 `docs/wb-source-diff-report.md` §7）→ T208~T212 面板五页 → T213 接线 → T214 阶段门。
@@ -120,6 +155,21 @@
    `origin` = 产品仓库 `wjf1/multi-upstream-gateway`（唯一推送目标）；`upstream` = `wjf1/commandcode-proxy`（**只 fetch，禁止 push**，否则污染上游）；
    `ghproxy` = 上游 `gh-proxy.com` 镜像，仅作 fetch 备用。产品 tag 继承上游全部历史 tag，自 **v5.0.0** 起另起产品版本线。
 8. **面板 / CDN**：Phase E 后面板为 `public/index.html`（骨架约 560 行）+ `public/js/*.js`（外置，`/js/*` no-cache 路由），资源已本地化；**勿引入外链**（有测试守卫）。
+9. **⚠️ 有并发写入者时禁止 `git add -A`**（2026-10-07 实际踩坑）：subagent / 并行会话正在往工作区写文件时，
+   `git add -A` 会把它的**在制品**一并纳入并推送，破坏「一个任务一个 commit」纪律。
+   **做法**：提交前 `git status --short` 复核，只 `git add <明确路径>`；若已误提交，**不要 force-push 改写历史**（难以挽回），
+   改为补一个规范提交并在提交信息里写明归属，把选择权交给仓库负责人。
+10. **门禁断言禁止用恒真链**（同一次踩坑）：`npm run lint | tail -1 && echo "零输出"` 里 `tail` 总会成功，`echo` 必然执行，
+    于是**带错误也会打印"通过"**——2026-10-07 就这样把 T202b 的 2 个 lint 错误当成通过推了出去。
+    **做法**：按**错误计数**判定（如 `npm run lint 2>&1 | grep -c "error"` 应为 0；`tsc` 同理数 `error TS`），
+    或直接让命令的非零退出码决定成败。
+11. **`npm test` 的 `pretest` 会重建 `dist/`**（生产产物）：这是本仓库常态（无需紧张），但意味着**测试结束时的 `dist/`
+    来自当前工作区**。若工作区含未完成代码，服务若恰好重启就会加载它——所以结题时应确认工作区状态，
+    必要时从安全网恢复 `dist/`（`F:/AI/Qdor/backup-deploy-20261006-220835/`）。
+    另外 `npm run test:coverage` **不会**触发 `pretest`（npm 的 pre 钩子只对同名脚本生效），已补 `pretest:coverage`。
+12. **subagent 基础设施本环境不稳定**：2026-10-07 连续多次失败（配额超限 / 进程被终止 / 上游 120s 无数据），
+    但**多数"失败"的产物是完整可回收的**（先查工作区再决定）。派发时要求对方**尽早落盘**，
+    接收方在失败后**先评估产物完整性**（编译 + 门禁），再决定回收还是回退。
 
 
 ---
@@ -148,6 +198,6 @@
 
 **已知残留（非阻塞，登记待收口）**
 - `.env` 的 `COMMANDCODE_API_KEY` 明文行仍在（4.22.4 既有通道，`syncEnvFile` 会回写）——加密库之外的兜底通道，建议 T213 一并收口。
-- `.env` 的 `HTTPS_PROXY/HTTP_PROXY` 指向 `127.0.0.1:7897`，而本机 Clash 混合端口已改为 **7900**（见用户级 AGENTS.md）。
-  实测：代理不可达时代码会**自动回退直连**（4.22.4 的 Auto-fallback），因此不阻塞使用，但出站代理实际处于**静默失效**状态。
-  **建议**：把 `.env` 的 `HTTP(S)_PROXY` 改为 `http://127.0.0.1:7900` 以恢复代理链路。
+- ~~`.env` 的代理指向 7897 而 Clash 在 7900~~ —— **已解决（2026-10-07）**：Clash 混合端口经用户固定为 7900，
+  四处配置（`.env` / `config.json` / `watchdog.ps1` / `start.cmd`）已一致，服务重启后实测 `proxy armed … 7900 (probe: 3ms)`。
+  **保持该端口固定**；若必须变更，四处同改且记得看门狗需重载（其环境变量在进程启动时快照）。
