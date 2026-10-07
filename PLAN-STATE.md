@@ -104,7 +104,18 @@
 
 - [x] T201 Freebuff 核心移植（已实现于 4.17.0，待 PORT-C 移植）
 - [ ] T202 Freebuff Anthropic 桥 + schema 规范化（**在 v4.22.4 上重做**；注意新树已有 `anthropic-response.ts` 与 `pipeline/`，须先评估复用）
-- [ ] T203 Freebuff 账号池与凭据持久化
+- [x] T203 Freebuff 账号池与错误处理（2026-10-07 完成）
+  - 交付：`errors.ts`(163, isSessionInvalid/isRunInvalid/classifyFreebuffError/softCooldownMs)、
+    `account-store.ts`(138, 复用 T103 CredentialStore 落加密库)、`account-pool.ts`(142, FreebuffAccountPool 契约适配)、
+    `run-manager.ts`(+59, TokenPool 健康分级 + `RunManager.selectStartIndex` 选号注入点)、`provider.ts`(726)；
+    测试 +2 文件 20 例（account-pool 13 / provider-errors 7）
+  - 三类错误按 Go 语义：session 失效→重建会话重试；run 失效→摘除轮换；401→30min 冷却并抛 INVALID_CREDENTIAL；
+    会话端点恒 401 时 probe 稳定不健康（刻意不信任会话缓存，修掉 T201「缓存 active 但 Token 已吊销」漏判）
+  - 凭据：新增 Token 落 T103 加密库（断言磁盘为 AES-256-GCM 密文、新实例可读回、与 commandcode 账号共库互不干扰）
+  - 门禁：55 文件 / 709 用例全绿；typecheck 双工程 0 错误；lint 零输出
+  - 遗留（T213 接线）：`FreebuffAccountPool` 尚未接入 provider/路由；`preferredAccountId`/`onRetry` 未透传到选号；
+    面板账号页未消费 `snapshot()`；`updateConfig` 不热改 Token
+- [ ] T203 Freebuff 账号池与凭据持久化（历史条目，已完成见上）
 - [ ] T204' WorkBuddy 透传 Provider + Sidecar 管理（联邦，见 `docs/wb-source-diff-report.md` §7）
 - [ ] T205' WorkBuddy 账号管理委托 sidecar（并入 T204'）
 - [ ] T206 WorkBuddy 熔断状态机 —— 已取消（sidecar 内置承接）
