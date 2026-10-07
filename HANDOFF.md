@@ -59,7 +59,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**61 文件 / 777 用例全绿**（T213 阶段 2 后；此前 60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**63 文件 / 793 用例全绿**（T208~T212 后；此前 61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -77,6 +77,15 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T208~T212 面板五页（2026-10-07，`85b0ed9` + `d2611c7`）**：
+  - 「上游」页签（第 6 个 tab）：Provider 卡片（健康/可用/冷却计数、WorkBuddy sidecar 进程行、initError）、
+    启停总闸（热生效）、设为默认（持久化）；总览异常横幅（health 异常出现/恢复消失，**T213 DoD 全项收口**）。
+  - 账号页多上游账号分栏（凭据脱敏/不出 sidecar）；模型目录命名空间徽章；用量页分上游口径表
+    （`GET /api/usage/by-provider`，§3.9 不跨上游混加）。
+  - 取证源清单（dashboard-spa / spa-risk-gate / spa-a11y）声明式扩容 'upstream'（Phase E 先例，断言不改）；
+    新增 spa-upstream 12 例 + multi-source-panel 6 例。
+  - 门禁：`npm run verify` **63 文件 / 793 用例全绿**；typecheck 双工程 / lint 0 错误。
 
 - **T213 阶段 2：数据面切路由 + 默认上游切换（2026-10-07，`af6db03`）**：
   - `routes/provider-dispatch.ts`——非 commandcode 决策的渲染层：chat 出口（OpenAI chunk 序列 +
@@ -206,9 +215,10 @@
 - **当前队列**（严格按 `PLAN-STATE.md` §1 的顺序与 deps）：
   - ✅ `P0-PORT-A~F` **全部完成**（A 基座 / B 批次 B 语义 / C 新增模块 / D1 接线 / D2 薄适配层 / E 面板移植 / F 阶段门），**已部署**。
   - ✅ **P1 已完成七卡**：`T201`、`T202a`、`T202b`、`T203`、`P0-PORT-D2`（`1e011a5`）、`T204'`（`47f8a3a`）、`T205'`（并入）。
-  - ⬜ **下一批**：`T208~T212`（面板五页——消费 `/api/providers` 与三源数据：上游卡片含 sidecar
-    进程视图与异常横幅、账号页消费 pool snapshot、模型目录带命名空间、用量按 provider 分口径）
-    → `T214`（P1 阶段门）。
+  - ⬜ **下一批**：`T214`（P1 阶段门：三源 E2E、面板逐页验收、错误注入降级、5 分钟泄漏监控、
+    `npm audit --omit=dev`、`DECISION` 行）。
+    **登记的独立小卡**（T213 收口尾项）：限流/modelAccess 双轨配置源（bootstrap UnifiedConfigStore
+    后切源）、legacy 扁平分支明文行、Freebuff 账号池接入路由（T203 遗留：preferredAccountId/onRetry 透传）。
     **登记的独立小卡**（T213 收口尾项，避免混入数据面提交）：限流/modelAccess 双轨配置源
     （bootstrap UnifiedConfigStore 后切源）、legacy 扁平分支明文行、Freebuff 账号池接入路由
     （T203 遗留：preferredAccountId/onRetry 透传）。

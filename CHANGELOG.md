@@ -41,6 +41,12 @@
   配套 `tests/provider-dispatch.test.ts` 10 例（真实监听端口 + 假 Provider marker，含混合并发 50
   无跨 Provider 污染与错误注入）。**注意**：缺省部署（无 freebuff/workbuddy 分片）行为与接线前一致。
 
+- **T208~T212：面板五页多源消费面**（`85b0ed9` + `d2611c7`）—— 新增「上游」页签（Provider 卡片、
+  启停总闸热生效、默认上游切换、WorkBuddy sidecar 进程视图）与总览异常横幅（health 异常出现/恢复消失，
+  T213 DoD 收口）；账号页多上游账号分栏（`GET /api/providers/:name/accounts`，凭据脱敏）；模型目录
+  命名空间徽章；用量页分上游口径表（`GET /api/usage/by-provider`，§3.9 不跨上游混加）。
+  配套 `tests/spa-upstream.test.ts` 12 例 + `tests/multi-source-panel.test.ts` 6 例。
+
 ### 变更说明
 
 - 三个 Provider（CommandCode/Freebuff/WorkBuddy）外壳均已就位，但**尚未接入运行时**——
@@ -50,9 +56,9 @@
 
 ### 验证
 
-- 全量 `npx vitest run` **61 文件 / 777 用例全绿**（v5.0.2 基线 713 + D2 19 + workbuddy 22 + T213 阶段 1 13 + 阶段 2 10）；
+- 全量 `npx vitest run` **63 文件 / 793 用例全绿**（v5.0.2 基线 713 + D2 19 + workbuddy 22 + T213 阶段 1 13 + 阶段 2 10 + 面板五页 18 - 合并调整 1）；
   `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
-- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）。
+- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）。
 
 ## [5.0.2] - 2026-10-07
 

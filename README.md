@@ -63,8 +63,10 @@ Freebuff 模块已移植入树但**尚未接入运行时**，详见[项目状态
 | F | 全量回归与阶段门（658 用例 / 覆盖率 65.87% / `npm audit` 0 漏洞 / 50 并发 P99 126ms） | ✅ |
 
 > [!IMPORTANT]
-> **能力边界（务必先读）**：仓库中**已入树但尚未接线**的模块**不可用** —— 包括 Freebuff 上游（`src/providers/freebuff/`）、
-> 账号池与 WorkBuddy 相关规划。**当前实际可用上游只有 CommandCode 一个**，其行为 = 上游 v4.22.4 基线 + 下述 P0 硬化项。
+> **能力边界（v5.0.x 更新，务必先读）**：多上游接线已完成（T213）——Freebuff / WorkBuddy 均实现为
+> IProvider 并接入数据面路由，但**缺省部署（`config.json` 无对应 `providers.*` 分片）行为与单源时期
+> 完全一致**：不初始化、不出网、`/v1/models` 不聚合。要把 Freebuff / WorkBuddy 接入运行时，需分别配置
+> `providers.freebuff` 分片 + `FREEBUFF_TOKENS`、`providers.workbuddy.sidecar.binPath`（联邦 sidecar 二进制）。
 
 ## 🗺 多上游路线图
 <a id="roadmap"></a>
@@ -72,11 +74,12 @@ Freebuff 模块已移植入树但**尚未接入运行时**，详见[项目状态
 | 上游 | 说明 | 状态 |
 |---|---|:---:|
 | **CommandCode** | 现有上游；OpenAI / Anthropic 双协议翻译 | ✅ 可用 |
-| **Freebuff** | 多 Token 轮询、401 冷却、预热首请求（`src/providers/freebuff/`，7 文件） | 🚧 已移植，**未接线**（P1 / T202+） |
-| **腾讯 CodeBuddy（WorkBuddy）** | 联邦透传方案，见 `docs/wb-source-diff-report.md` §7 | 📋 规划中（T204'） |
+| **Freebuff** | 多 Token 轮询、401 冷却、预热首请求、账号池、Anthropic 桥、tools schema 规范化 | ✅ 已接线（配置 `providers.freebuff` + `FREEBUFF_TOKENS` 即用） |
+| **腾讯 CodeBuddy（WorkBuddy）** | 联邦透传 Provider + sidecar 进程管理（§3.11），见 `docs/wb-source-diff-report.md` §7 | ✅ 已接线（需 sidecar Go 二进制） |
 
-Provider 契约位于 `src/providers/core/`（`interface` / `router` / `registry`），已预留三源命名空间与六步路由。
-P1 计划：T202（Freebuff Anthropic 桥 + tools schema 规范化）→ T203 → T204' → T208~T212（面板五页）→ T213（三源接线）→ T214（P1 阶段门）。
+Provider 契约位于 `src/providers/core/`（`interface` / `router` / `registry`），六步路由 + 三源命名空间已接入
+`/v1/chat/completions`、`/v1/messages` 数据面；面板新增「上游」页（启停总闸热生效、默认上游切换、sidecar 进程视图、
+总览异常横幅）。P1 剩余：T214（P1 阶段门）与登记小卡（UnifiedConfigStore 切源、legacy 明文行收口）。
 
 ---
 
@@ -92,6 +95,9 @@ P1 计划：T202（Freebuff Anthropic 桥 + tools schema 规范化）→ T203 �
 - **总览** — 一屏掌握运行状态：引擎启停、端口、运行时长、当前账号、绑定地址、鉴权开关、账号数与可用模型数；顶部一键切换引擎。
 - **模型目录** — 官方定价目录（上下文 / 输入 / 输出 / 缓存读 / 缓存写 / 能力 / Deal）实时刷新；支持关键词搜索、GOAT / GO / FREE / DEAL / 视觉 / 推理标签筛选与多列排序；每张卡片底部的「档位」行固定标注该模型在 **Go** 与 **GOAT** 两个套餐下是否可用（GO 靛蓝、GOAT 金色带皇冠；不可用为灰底 ✗），两个档位都不含的模型另标「更高档位」并附可用档位清单。
 - **账号** — 浏览器 OAuth 登录或粘贴 Key；多账号管理与 5 小时额度轮换（≥90% 自动切换）；密钥一律**脱敏显示**。
+- **上游（多源）** — Provider 卡片（健康/可用/冷却计数、WorkBuddy sidecar 进程状态）、启停总闸（热生效）、
+  默认上游切换（持久化 `routing.defaultProvider`）；概览页顶部在任一上游 health 异常时出现告警横幅，恢复自动消失；
+  账号页含多上游账号分栏，模型目录为命名空间模型打徽章，用量页提供**分上游口径**表（美元 / 免费时长 / 积分，不跨上游加总）。
 
 ---
 
@@ -372,7 +378,7 @@ src/
     └── logger.ts                 # 净化环形缓冲日志 + 文件落盘
 public/
 ├── index.html                    # 仪表盘骨架（约 560 行，中文界面）
-├── js/{core,overview,accounts,usage,models,logs}.js   # ★ 面板脚本（外置）
+├── js/{core,overview,upstream,accounts,usage,models,logs}.js  # ★ 面板脚本（外置）
 └── vendor/                       # 本地化的 tailwind / font-awesome / chart.js
 ```
 
@@ -441,16 +447,24 @@ new modules (provider contract layer, unified config, credential encryption, rat
 dashboard port and a full regression/phase gate (**658 tests green, 65.87% coverage, `npm audit` 0 vulnerabilities, 50-concurrency P99 126 ms**).
 
 > [!IMPORTANT]
-> **Capability boundary (read first)**: modules that are **in-tree but not wired are NOT usable** — Freebuff (`src/providers/freebuff/`),
-> the account pool and the WorkBuddy plans. **Only CommandCode is a working upstream today**, and its behavior is the upstream v4.22.4 baseline plus the P0 hardening items below.
+> **Capability boundary (updated in v5.0.x, read first)**: multi-upstream wiring is done (T213) — Freebuff / WorkBuddy are implemented
+> as IProviders and wired into the data-plane router. However, **a default deployment (no `providers.*` shard in `config.json`) behaves
+> exactly like the single-source era**: no initialization, no outbound calls, no `/v1/models` aggregation. To activate Freebuff /
+> WorkBuddy, configure the `providers.freebuff` shard + `FREEBUFF_TOKENS`, or `providers.workbuddy.sidecar.binPath`
+> (federated sidecar binary) respectively.
 
 ### <a id="roadmap-en"></a>Roadmap
 
 | Upstream | Notes | Status |
 |---|---|:---:|
 | **CommandCode** | Existing upstream; OpenAI / Anthropic translation | ✅ usable |
-| **Freebuff** | Multi-token rotation, 401 cooldown, prewarm (7 files) | 🚧 ported, **not wired** (P1 / T202+) |
-| **Tencent CodeBuddy (WorkBuddy)** | Federated passthrough, see `docs/wb-source-diff-report.md` §7 | 📋 planned (T204') |
+| **Freebuff** | Multi-token rotation, 401 cooldown, prewarm, account pool, Anthropic bridge, tools-schema normalization | ✅ wired (set `providers.freebuff` + `FREEBUFF_TOKENS`) |
+| **Tencent CodeBuddy (WorkBuddy)** | Federated passthrough Provider + sidecar process management (§3.11), see `docs/wb-source-diff-report.md` §7 | ✅ wired (needs the sidecar Go binary) |
+
+The Provider contract lives in `src/providers/core/` (`interface` / `router` / `registry`); six-step routing + three-source
+namespacing now serve `/v1/chat/completions` and `/v1/messages`. The dashboard gained an **Upstreams** tab (hot enable/disable
+toggles, default-provider switching, sidecar process view, overview alert banner). Remaining for P1: T214 (phase gate) and
+registered follow-ups (UnifiedConfigStore switch-over, legacy plaintext-line cleanup).
 
 ### Features
 
@@ -475,6 +489,11 @@ dashboard port and a full regression/phase gate (**658 tests green, 65.87% cover
 
 **Dashboard & usage insight**
 
+- **Upstreams (multi-source, T208~T212)** — provider cards (health/usable/cooldown counters, WorkBuddy sidecar process state),
+  hot enable/disable toggles, default-provider switching (persisted `routing.defaultProvider`); an alert banner appears on the overview
+  while any upstream is unhealthy and disappears on recovery; the accounts page lists multi-source accounts, the model catalog badges
+  namespaced models (`freebuff/<id>` / `workbuddy/<id>`), and the usage page adds a **per-provider breakdown**
+  (USD / free seconds / points — never summed across upstreams)
 - **Per-plan availability on every model card** — the badge row reads the upstream `availability` map instead of a single flattened Go flag, so each card states whether that model is usable on **Go** and on **GOAT** (GO indigo, GOAT gold with a crown; unavailable is a grey ✗). Models on neither plan are tagged *higher tiers* with the list of plans that do include them, and the filter row plus the result counter give Go/GOAT totals
 - Per-request session detail (tokens, cache hits, latency, cost, model, status) with daily trend, model doughnut and today/week/month cards; persisted to `~/.commandcode/usage-history.jsonl` (rotated at 20MB)
 - **Cost reconciled with the official bill** — prefers the authoritative `provider-metadata` amount (peak/off-peak and cache discounts included); local fallback prices cache read/write separately by time-of-day; estimates carry a `~` prefix

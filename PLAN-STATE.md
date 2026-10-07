@@ -150,7 +150,15 @@
     （OAuth 设备授权属 T301，抛可执行提示）。
 - [ ] T206 WorkBuddy 熔断状态机 —— 已取消（sidecar 内置承接）
 - [ ] T207 WorkBuddy 会话粘性 —— 已取消（sidecar 内置承接）
-- [ ] T208~T212 面板五页（总览/上游管理/账号-Token/模型目录/用量统计）
+- [x] T208~T212 面板五页（2026-10-07 完成，提交 `85b0ed9` + `d2611c7`）
+  - T208/T209：新「上游」页签（Provider 卡片：健康/可用/冷却/停用计数、WorkBuddy sidecar 进程行、
+    initError 摘要；启停总闸热生效；设为默认）+ 总览异常横幅（已配置+已初始化+已启用但 health 不健康
+    → 告警出现，恢复消失——**T213 最后一项未勾 DoD 由此收口**）；取证源清单声明式扩容（Phase E 先例）
+  - T210：账号页多上游账号分栏（GET /api/providers/:name/accounts，凭据脱敏/不出 sidecar）
+  - T211：模型目录命名空间徽章（freebuff/<id>、workbuddy/<id>，数据来自 /v1/models 聚合）
+  - T212：用量页分上游口径表（GET /api/usage/by-provider → summarizeByProvider；
+    commandcode 美元 / freebuff 免费时长 / workbuddy 积分，不跨上游混加；表头 scope=col）
+  - 新增测试：spa-upstream 12 例 + multi-source-panel 6 例；门禁 **63 文件 / 793 用例全绿**
 - [ ] T213 统一 API 层三源接线 + P1 手动降级
   - **阶段 1 完成**（2026-10-07，提交 `9b98d9d`）：ProviderRuntime 装配三源 + registry/router 实例 +
     `GET /api/providers` + `POST /api/providers/:name/enable|disable`（总闸热生效）+
@@ -171,9 +179,9 @@
     门禁：`npm run verify` **61 文件 / 777 用例全绿**；typecheck/lint 0 错误。
     DoD 实测：三上游来源正确（prefix/registry/priority/header 四路断言）✅、混合并发 50 无污染 ✅、
     切换立即生效 ✅。
-  - **剩余两项（登记，卡保持未勾选）**：①「上游 health 异常横幅」属面板前端，归 T208~T212 消费
-    `/api/providers`（后端数据源已就绪）；②限流/modelAccess 双轨配置源与 legacy 明文行收口——
+  - **剩余一项（登记，卡保持未勾选）**：限流/modelAccess 双轨配置源与 legacy 明文行收口——
     需先在运行时 bootstrap UnifiedConfigStore 单例，单独立卡避免混入数据面提交。
+    （①异常横幅已随 T208 收口，见 T208~T212 卡。）
 - [ ] T214 P1 阶段门
 - [ ] T301~T310 / T401~T406 / T501~T505（见执行依据方案）
 
