@@ -1,0 +1,17 @@
+{
+  "name": "freebuff-chat-basic-nonstream",
+  "source": "手工构造:由 Go 原版源码路径推导的确定性输出(T201;见 tests/snapshot/README.md 与 T201 报告)。非流式路径下上游返回标准 OpenAI chat.completion JSON。",
+  "request": {
+    "match": {
+      "sentinel": "__SNAPSHOT:freebuff-chat-basic-nonstream__",
+      "model": "z-ai/glm-5.1"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"id\":\"cc-1\",\"object\":\"chat.completion\",\"created\":1759000000,\"model\":\"z-ai/glm-5.1\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello, freebuff snapshot world!\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":5}}"
+  }
+}

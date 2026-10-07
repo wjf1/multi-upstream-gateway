@@ -1,0 +1,1 @@
+{"id":"__CHATCMPL_ID__","object":"chat.completion","created":__CREATED__,"model":"claude-sonnet-5","choices":[{"index":0,"message":{"role":"assistant","content":"Hello, snapshot world!"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":5,"total_tokens":12,"prompt_tokens_details":{"cached_tokens":0}}}

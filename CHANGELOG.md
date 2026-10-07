@@ -52,6 +52,16 @@
   legacy 扁平分支 `syncEnvFile` 在加密库可用时不再写明文 `COMMANDCODE_API_KEY` 并摘除旧行。
   配套 `tests/config-source-closure.test.ts` 8 例。
 
+- **P0 移植测试完整收口与 T214 阶段门自动化取证** —— 补齐旧树未带过来的 13 个配套测试文件与
+  T107 快照基础设施（`tests/snapshot/` 完整用例、scenarios 及 upstream/snapshots fixtures）；
+  修复 `src/utils/config.ts` 的 `COMMANDCODE_ENV_PATH` 兼容别名与隔离测试放行迁移；
+  修复 `src/utils/usage-store.ts` 的 §3.9 多上游 `costUsd` null 与 0 语义分离；
+  修复 `tests/credential-store.test.ts` / `tests/snapshot/snapshot.test.ts` 对生产环境
+  `~/.commandcode/credentials.enc` 的路径隔离。
+  全量 `npm run verify` **78 测试文件 / 984 用例全绿（1 skipped）**，语句覆盖率提升至 **80.97%**
+  （远超 ≥55% 门槛）；5 分钟自动化泄漏监控（`scripts/soak.mjs` 400 请求，RSS 净降 31.9MB）
+  与 CommandCode / Freebuff 快照测试全部通过。
+
 ### 变更说明
 
 - 三个 Provider（CommandCode/Freebuff/WorkBuddy）外壳均已就位，但**尚未接入运行时**——
@@ -61,9 +71,61 @@
 
 ### 验证
 
-- 全量 `npx vitest run` **64 文件 / 801 用例全绿**（v5.0.2 基线 713 + D2 19 + workbuddy 22 + T213 阶段 1 13 + 阶段 2 10 + 面板五页 18 - 合并调整 1 + T213b 8）；
+- 全量 `npm run verify` **78 文件 / 984 用例全绿（1 skipped）**（此前 64 文件 / 801 用例）；
+  覆盖率 **Statements 80.97%**（5003/6179）、Conditionals 68.30%、Methods 82.70%；
+  `npm audit --omit=dev` **0 vulnerabilities**；
   `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
 - 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）。
+
+## [5.0.3] - 2026-10-07
+
+> 修复 v5.0.2 判据取错导致的漏判：CC 的流以 `start` 事件开场，字节第一毫秒就到，于是
+> 「还没收到字节就不放行」这个门槛**永不成立**，「只吐 `start` 就卡死」这条真实故障仍会白等一整轮。
+> 判据从「有没有字节」下沉到**内容事件**。
+
+### 🐛 修复
+
+- **「只吐了 `start` 就卡死」现在会重试**（事故形态：`No data from upstream for 120s` /
+  `STREAM_IDLE_TIMEOUT` / `retryable=false`）。现场（`requestId 17e161fe-f15f-420a-9f1b-47c5a03fbf9f`，
+  2026-10-07 20:36:52，会话 `sess_95d71fac`）：`timingMs=151274`、`in=0/out=0`。时序指纹
+  151.3s ≈ 1s 建连 + **30s 探测放行** + **120s 空闲看门狗**，且全程没有任何
+  `Upstream failure …, retry` 行 —— 即 v5.0.2 的延窗分支一次都没进。
+  - **根因（v5.0.2 的缺口）**：`probeUpstream` 的延窗门槛写成「`consumedBytes === 0`」，而 CC 的流
+    以 `start` 事件开场（`src/adapters/commandcode/stream-encode.ts` 的 `event.type === 'start'`），
+    字节在第一毫秒就到了 —— 门槛**永不成立**，探测 30s 后无条件放行。放行后空闲看门狗在 120s 处注入
+    `UpstreamError(…, 504, receivedBytes === 0 → false, STREAM_IDLE_TIMEOUT)`，而探测层的
+    `isRetryableProbeFailure` 对 `retryable=false` 返回 false → **放行、不重试**，客户端拿到不可重试的 504。
+  - `pipeline/stream.ts` 改动（三处）：
+    - 延窗门槛由「零字节」改为「**还没有内容事件**」（`state.verdict === 'ignore'`）；二轮窗口到期时
+      再按「距最后一次字节是否已满 `idleTimeoutMs`」区分**死流**（丢弃重试）与**只吐元数据但一直在
+      流动的活流**（保守放行，不扩大本修复的语义范围）。
+    - 成因 `first-byte-stall` 更名 **`content-stall`**（只吐 `start`/保活也算），与传输层中断的
+      `stream-error` 分开，排障时能区分「对端掐流」与「上游卡死不吐内容」。
+    - `capturedError` 分支按内容判据**覆盖**注入点的 `retryable`：字节到过、内容没到（`idleStall`
+      且 `verdict === 'ignore'`）时判为可丢弃重试 —— 预读期间的字节全在本地 `head` 缓冲里、从未
+      转发给客户端，丢弃不会重复投递。挂钟超时（`REQUEST_TIMEOUT`）与内容已产出的情况**不改判**。
+  - `upstream.ts` 接住新成因，文案为 `Upstream produced no content before stalling (model …): <原文>`。
+- **推翻 v5.0.2 的一条决定**（旧记录保留在 5.0.2 的「已知限制」段，本条为其失效标记）：v5.0.2 明确写了
+  「已收到过字节但没到内容事件后静默仍不重试」，并解释为「保守取『可能已经转发』」。该保守性与事实不符
+  —— 预读阶段（30s 窗口内）的字节一个都没转发出去，客户端拿到的最多是一段 `start` 元数据；代价则是
+  这条路径**永不重试**、每次故障白等约 150s。v5.0.3 起该限制作废。
+
+### ✅ 验证
+
+- `npm run typecheck`（src + tests 双工程）0 错误；`npm run build`（经由 `pretest`）通过。
+- 仅跟踪文件（CI 视角，`git ls-files 'tests/*.ts'`）：**64 文件 / 804 用例全绿**。
+  > 全量 `npx vitest run` 另有 3 个**未跟踪**文件红（`tests/credential-store.test.ts`、
+  > `tests/usage-provider.test.ts`、`tests/snapshot/`）—— 属并行会话正在写的 WIP（两次跑动红项集合不同：
+  > 5 文件/6 例 → 3 文件/3 例），与本次改动无交集（不触及探测/流路径），未纳入本次门禁。
+- 新增/改写用例：
+  - `tests/upstream-probe.test.ts`（28 例）—— 新增「`start` 已到、之后彻底静默 → 按『没有内容事件』
+    覆盖 `retryable`，丢弃重试」、「只吐 `start` 然后彻底静默 → 判 `content-stall`」、「只吐元数据但
+    一直在流动的活流 → 保守放行」，以及「挂钟超时注入（`retryable=false`）→ 原样放行，探测层不改判」；
+    零字节用例断言成因改为 `content-stall`。
+  - `tests/upstream-stream-retry.test.ts`（4 例）—— 新增端到端剧本 `stall-after-start`：上游第一次
+    请求写 `start` 后既不吐内容也不断连，断言代理打了**两次**上游、客户端拿到完整回答，且第一次的
+    `start` 不被重复投递（出现次数为 1）。运行日志可见
+    `Upstream failure (Upstream produced no content before stalling (model claude-sonnet-5): No data from upstream for 5s), retry 1/2`。
 
 ## [5.0.2] - 2026-10-07
 

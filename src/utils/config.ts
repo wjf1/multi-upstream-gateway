@@ -41,8 +41,13 @@ export const CONFIG_FILE_PATH = process.env.COMMANDCODE_CONFIG_PATH
 // 与 CONFIG_FILE_PATH 同一套隔离约定。缺了它，.env 会无视 COMMANDCODE_CONFIG_PATH
 // 落到项目根 —— 而 .env 里存的是明文上游 key（见 saveEnvFile），测试与从
 // Program Files 运行的打包产物都会把凭据写进各自的工作目录。
-export const ENV_FILE_PATH = process.env.COMMANDCODE_ENV_FILE_PATH
-  ? path.resolve(process.env.COMMANDCODE_ENV_FILE_PATH)
+// 4.22.4 的 config.ts 用 COMMANDCODE_ENV_FILE_PATH；保留 COMMANDCODE_ENV_PATH 作为
+// 兼容别名（与 credential-store.ts 的 resolveEnvFilePath 一致）：移植自 4.17.0 的
+// 调用方/测试用旧名，只认新名会让它们悄悄落到仓库根 .env —— 既读不到隔离的临时
+// 文件，又会把操作者真实的 CREDENTIAL_ENCRYPTION_KEY / 账号带进测试进程。
+const envPathOverride = process.env.COMMANDCODE_ENV_FILE_PATH || process.env.COMMANDCODE_ENV_PATH;
+export const ENV_FILE_PATH = envPathOverride
+  ? path.resolve(envPathOverride)
   : path.join(getProjectRootDir(), '.env');
 
 const DEFAULTS = {
@@ -154,15 +159,19 @@ export function loadConfig(): GatewayConfig {
   // T102：旧形态 config.json → unified providers 结构的一次性迁移（幂等、原子写回；
   // accounts[].apiKey 迁入 .env 的 COMMANDCODE_ACCOUNTS_V1，config.json 不再落明文
   // 凭据，master-plan v1.2 §3.7-2）。
-  // 4.22.4 适配 ①：**测试进程绝不迁移**。CONFIG_FILE_PATH 是模块加载期常量，而部分
+  // 4.22.4 适配 ①：**测试进程默认不迁移**。CONFIG_FILE_PATH 是模块加载期常量，而部分
   // 测试（如 health-check.test.ts 经探活调 loadConfig）不会、也无法再覆盖它，于是
   // 迁移钩子会改写**仓库根的真实 config.json / .env**（实测事故：真实 config.json
   // 被迁成 unified 形态）。测试环境直接跳过，生产（node dist）照常迁移。
+  // 例外：测试显式用 COMMANDCODE_CONFIG_PATH 把路径指到临时目录时（unified-config
+  // 的迁移用例），被改写的只是那份临时文件，迁移安全且正是用例要断言的行为 —— 故此时
+  // 仍执行迁移。判据是"路径被显式接管"，不是"是否为测试进程"。
   // 4.22.4 适配 ②：按路径记忆已检查过，避免每个请求路径都 parse 一次 config.json ——
   // loadConfig 是每请求热路径，4.22.4 专门给 readFileConfig 做了 mtime 缓存，这里
   // 不能把它抵消掉。迁移本身幂等，检查一次即够。
   const isTestEnv = process.env.NODE_ENV === 'test' || !!process.env.VITEST;
-  if (!isTestEnv && migrationCheckedPath !== CONFIG_FILE_PATH) {
+  const configPathOverridden = !!process.env.COMMANDCODE_CONFIG_PATH;
+  if ((!isTestEnv || configPathOverridden) && migrationCheckedPath !== CONFIG_FILE_PATH) {
     migrateLegacyConfigIfNeeded(CONFIG_FILE_PATH, ENV_FILE_PATH);
     migrationCheckedPath = CONFIG_FILE_PATH;
   }

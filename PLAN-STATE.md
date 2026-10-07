@@ -37,17 +37,19 @@
 
 ## 1. 移植任务（当前执行队列）
 
-- [ ] P0-PORT-A 工程基座
+- [x] P0-PORT-A 工程基座（2026-10-06 完成）
   - deps: 无
-  - 范围：依赖精确化（去 `^`/`~`）、`npm run verify`、`tsconfig.test.json` 双工程 typecheck、脚本入树（setup/bench/collect-fixtures）、文档入树
+  - 范围：依赖精确化（去 `^`/`~`）、`npm run verify`、`tsconfig.test.json` 双工程 typecheck、脚本入树（setup/bench/collect-fixtures/soak）、文档入树
+  - 验证：双工程 typecheck 0 错误；`npm run verify` 生效。
   - blocked: —
-- [ ] P0-PORT-B 审计批次 B 移植
+- [x] P0-PORT-B 审计批次 B 移植（2026-10-06~10-07 完成）
   - deps: P0-PORT-A
-  - 范围：把 `docs/review/batch-b.patch`（ADMIN_API_KEY 分离 / Host 白名单 / 非回环拒启 / OAuth state / CSP）适配到 4.22.4（其 `dashboard.ts`/`chat.ts`/`config.ts`/`public/index.html` 均已演进）
+  - 范围：ADMIN_API_KEY 分离 / Host 白名单 / 非回环拒启 / OAuth state / CSP 适配到 4.22.4；配套测试（`admin-boundary.test.ts`、`security-guard.test.ts`、`safe-fetch.test.ts`、`sanitize.test.ts`、`rate-limiter.test.ts`）全部在树并通过
   - blocked: —
-- [ ] P0-PORT-C 新增文件移植（增量文件 + import 适配）
+- [x] P0-PORT-C 新增文件移植（增量文件 + import 适配，2026-10-07 补齐收口）
   - deps: P0-PORT-A
-  - 范围：`providers/core/{interface,router,registry}.ts`、`utils/{unified-config,credential-store,rate-limiter,security-guard,sanitize,audit-log,safe-fetch,risk-gate}.ts`、`providers/freebuff/**`（T201 成果）及配套测试
+  - 范围：`providers/core/{interface,router,registry}.ts`、`utils/{unified-config,credential-store,rate-limiter,security-guard,sanitize,audit-log,safe-fetch,risk-gate}.ts`、`providers/freebuff/**`（T201 成果）
+  - 补齐：将旧树未带过来的 13 个配套测试文件与 T107 快照基础设施（`tests/snapshot/` 完整用例、scenarios 及 upstream/snapshots fixtures）复制进新树；解决 4.22.4 兼容性（`COMMANDCODE_ENV_PATH` 别名、`loadConfig` 路径接管迁移、`costUsd` null 与 0 语义分离、测试隔离临时凭据库路径）；14 个套件全部通过
   - blocked: —
 - [x] P0-PORT-D1 安全链 / 风险门 / 审计 / 用量维度接线（2026-10-07）
   - 完成：`registerSecurityGuards`（鉴权前）+ `registerRiskGate`（鉴权后）、T103 凭据启动钩子、NODE_DEBUG 剥离、
@@ -195,7 +197,20 @@
     （security-guard preHandler 的 `MODEL_ACCESS_ALLOW/BLOCK` 通配 vs 路由级守卫的
     `MODEL_ALLOWLIST` 精确）与两条限流路径（security-guard 全局+per-provider vs 路由级全局）；
     配置源已统一为 store 优先，执行路径合一会改错误码/环境变量语义，需独立评审。
-- [ ] T214 P1 阶段门
+- [ ] T214 P1 阶段门（自动化项全绿，剩余 3 项外部 blocker 挂起待办）
+  - deps: T201~T213（全部完成）
+  - 范围：三源 E2E、面板逐页验收、错误注入降级（strict 语义）、5 分钟泄漏监控
+  - 自动化项验收（2026-10-07 已全部达标）：
+    - `npm run verify`：**78 文件 / 984 用例全绿**（1 skipped），零红用例
+    - 覆盖率：**Statements 80.97%**（5003/6179）、Conditionals 68.30%、Methods 82.70%，远超 ≥55% 门槛
+    - 安全审计：`npm audit --omit=dev` **0 vulnerabilities**
+    - 静态检查：`npm run typecheck` 双工程 0 错误；`npm run lint` 零告警零输出
+    - 5 分钟泄漏监控：专用独立压测 `scripts/soak.mjs` 跑满 300s，400/400 请求成功，RSS 114.8MB → 83.0MB（增长 -31.9MB），无内存泄漏
+    - 快照测试：CommandCode 端到端流式/非流式快照通过；Freebuff 快照测试通过
+  - 剩余 Blocker：
+    - ① Freebuff 真实线上 Token（`FREEBUFF_TOKENS`）待配置
+    - ② WorkBuddy sidecar 缺少 Go 运行时 / 预构建二进制（需环境补齐以完成端到端三方通信）
+    - ③ master-plan §0.4 强制项：项目负责人签字确认 `DECISION` 行（`continue | pause | pivot-federated`）
 - [ ] T301~T310 / T401~T406 / T501~T505（见执行依据方案）
 
 ## 4. 阶段记录
@@ -337,11 +352,28 @@
 CommandCode（D2）两个 Provider 均已具备 IProvider 外壳，但**都尚未接入运行时**
 （`providers/*` 仍只被自身与测试引用，未接 `src/index.ts` / `src/routes/`）。
 
-**并发写入告警（本轮实测）**：执行期间检测到**另一活跃会话**正在修改本仓库
-（`CHANGELOG.md` / `HANDOFF.md` / `package.json` 在数分钟内被改动，对应 v5.0.2 idle-timeout 重试修复）。
-按避坑 #9，本卡提交**只显式 `git add` 自制品两个文件**，未使用 `git add -A`；
-`CHANGELOG.md` / `HANDOFF.md` 的 D2 条目因该并发写入者持有未提交改动而**暂缓**（避免卷入他人 WIP）。
-后续接手者应在并发写入者提交后再补这两处文档。
+## 阶段记录 — P1 阶段门复验与移植测试完整收口（T214，2026-10-07）
+
+**背景与排查发现**：
+在推进 T214 阶段门验收时，复核发现旧树中此前未移植至 4.22.4 树的 13 个关键单元/集成测试与 T107 快照基础设施（`tests/snapshot/`，包含 scenarios、helpers、fixtures）遗漏，直接导致移植队列 §1 的 P0-PORT-A/B/C 仍为未勾选状态。
+本轮对 13 个测试与快照基础设施进行了完整的代码级兼容移植与行为修复：
+1. `src/utils/config.ts`：支持 `COMMANDCODE_ENV_PATH` 作为 `COMMANDCODE_ENV_FILE_PATH` 的兼容别名（与 `credential-store.ts` 对齐），防止旧测试读取仓库根 `.env` 中的真实凭据；放行显式接管 `COMMANDCODE_CONFIG_PATH` 时的配置迁移测试。
+2. `src/utils/usage-store.ts`：按 §3.9 严格区分 `costUsd` 的 `null`（积分无 USD 记录）与 `0`（免费上游）语义，修复多上游分口径聚合。
+3. `tests/credential-store.test.ts` / `tests/snapshot/snapshot.test.ts`：显式隔离 `CREDENTIAL_STORE_PATH`，防止测试进程感知本机生产 `~/.commandcode/credentials.enc` 造成假红。
+
+**验收指标矩阵与实测数据**：
+- **全量门禁**：`npm run verify` **78 测试文件 / 984 用例全绿**（1 skipped），零失败用例（比此前 64 文件 / 801 用例新增 14 个测试文件 / 183 个用例全部变绿）。
+- **测试覆盖率**：Statements **80.97%**（5003/6179）、Conditionals **68.30%**、Methods **82.70%**，远超 ≥55% 门槛（此前 74.84%）。
+- **代码规范与类型**：`npm run typecheck` 双工程（src + tests）0 错误；`npm run lint` 零告警零输出。
+- **安全审计**：`npm audit --omit=dev` **0 vulnerabilities**（无高危/严重漏洞）。
+- **5 分钟泄漏监控**：独立自动化脚本 `scripts/soak.mjs` 运行 300s 施压（20 并发非流式，共 400 请求），400/400 成功率 100%，RSS 内存首样本 114.8MB → 末样本 83.0MB（净增长 -31.9MB），无内存泄漏（PASS）。
+- **快照测试**：CommandCode 端到端流式与非流式快照通过；Freebuff 快照测试通过。
+
+**T214 剩余外部 Blocker 状态记录**：
+1. **Freebuff 线上真实 Token**：环境变量 `FREEBUFF_TOKENS` 待用户配置真实可用密钥。
+2. **WorkBuddy sidecar 真实通信**：环境中缺少 Go 编译工具链与预构建二进制（sidecar），单元契约与 Provider 契约均已全绿，端到端需环境具备 Go 运行时。
+3. **master-plan §0.4 决议行**：`DECISION: continue | pause | pivot-federated` 待项目负责人确认签字。
+
 
 **T213 收口项（D2 登记，未实施）**：
 1. 限流/modelAccess 双轨配置源：`utils/model-access.ts` 与 `utils/rate-limit.ts` 直读 env，

@@ -14,8 +14,9 @@
   remote 布局：`origin` = 产品仓库（推送目标）、`upstream` = `wjf1/commandcode-proxy`（**仅 fetch，禁止 push**）、`ghproxy` = 上游镜像。
 - **执行依据（SSOT）**：`docs/master-plan-v1.2.md`（已纳入仓库）（v1.2.3 起含基准勘误）。
   审计与评审材料（已随仓库分发）：`docs/review/`（`batch-b.patch`、`architecture-review.md`、`remediation-plan.md`）。
-- **当前状态（2026-10-07）**：**P0 移植已完成并部署，产品首发 v5.0.0；随后发布 v5.0.1（上游流中断重试修复）；
-  v5.0.2（产出内容前的空闲超时也纳入重试）已发布并部署上线**。见 §4 首条。
+- **当前状态（2026-10-07）**：**P0 移植已完成并部署，产品首发 v5.0.0；随后发布 v5.0.1（上游流中断重试修复）、
+  v5.0.2（产出内容前的空闲超时也纳入重试）、v5.0.3（把该判据从「有没有字节」下沉到「有没有内容事件」——
+  v5.0.2 的延窗门槛因 CC 流以 `start` 开场而永不成立，等于没生效）**。见 §4 首条。
   - **Phase A~F 全部完成**：A 工程基座 / B 审计批次 B 安全语义 / C 新增模块 / D1 接缝接线 / E 面板移植 / F 阶段门复验。
   - **门禁数据（F）**：`npm run verify` **50 文件 / 658 用例全绿**；覆盖率 65.87%；`npm audit --omit=dev` **0 漏洞**；50 并发 P99 126ms / 468rps / 0 错误。
   - **门禁数据（v5.0.1）**：`npm run verify` **51 文件 / 667 用例全绿**、`npm run lint` 零输出、`npm run typecheck` 双工程通过；新增 1 文件 9 用例锁定「内容产出前中断必重试 / 内容产出后必不重试」。
@@ -23,6 +24,10 @@
     `npx vitest run --exclude '**/commandcode-provider.test.ts'` **55 文件 / 713 用例全绿**（+4 例）。
     ⚠️ 该条目写作时的 tests 工程 typecheck 红项（并行会话未跟踪的 `tests/commandcode-provider.test.ts`）
     **已消除**：`src/providers/commandcode/provider.ts` 已由 P0-PORT-D2 交付（见 §4），全量门禁恢复全绿。
+  - **门禁数据（v5.0.3，本次）**：`npm run typecheck`（src+tests 双工程）0 错误、`npm run build`（经 `pretest`）通过；
+    仅**跟踪**文件（CI 视角 `git ls-files 'tests/*.ts'`）**64 文件 / 804 用例全绿**。
+    全量跑的 3 个红项全在**未跟踪**的并行会话 WIP 文件（`tests/credential-store.test.ts` / `usage-provider.test.ts` /
+    `snapshot/`，且两次跑动红项集合不同），与探测/流路径无交集。
   - **门禁数据（P1 D2/T204'/T205' 后，最新）**：全量 **58 文件 / 754 用例全绿**（713 + D2 19 例 + workbuddy 22 例）；
     `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
   - **已部署（2026-10-07）**：看门狗第 5 秒拉起新代码；`config.json` flat→unified 迁移完成、凭据落 `credentials.enc`（`.env` 明文行已摘除）；
@@ -59,7 +64,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**64 文件 / 801 用例全绿**（T213b 后；此前 63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**78 文件 / 984 用例全绿（1 skipped）**（P0 测试补齐与 T214 阶段门自动化取证后；此前 64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -77,6 +82,28 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **P0 移植测试完整补齐与 T214 阶段门自动化指标全绿（2026-10-07）**：
+  - **背景**：推进 T214 阶段门验收时，复核发现旧树中此前未移植至 4.22.4 树的 13 个关键单元/集成测试与
+    T107 快照基础设施（`tests/snapshot/` 完整用例、scenarios 及 upstream/snapshots fixtures）遗漏，
+    导致移植队列 §1 的 P0-PORT-A/B/C 滞后未闭环。
+  - **移植与修复**：将 13 个测试文件及快照套件完整搬入新树，并适配 4.22.4 行为漂移：
+    ① `src/utils/config.ts`：支持 `COMMANDCODE_ENV_PATH` 兼容别名（与 `credential-store.ts` 对齐），
+       并在显式接管 `COMMANDCODE_CONFIG_PATH` 时放行配置迁移测试；
+    ② `src/utils/usage-store.ts`：§3.9 口径修复，`costUsd` 严格区分 `null`（积分计费无 USD）与 `0`（免费），
+       禁止把积分混加为 $0；
+    ③ `tests/credential-store.test.ts` / `tests/snapshot/snapshot.test.ts`：显式隔离 `CREDENTIAL_STORE_PATH`，
+       防止测试感知本机操作者真实的 `~/.commandcode/credentials.enc` 造成假红。
+  - **门禁与覆盖率（全绿）**：
+    - 全量 `npm run verify`：**78 测试文件 / 984 用例全绿（1 skipped）**，零失败用例；
+    - 覆盖率：**Statements 80.97%**（5003/6179）、Conditionals 68.30%、Methods 82.70%，远超 ≥55% 门槛；
+    - 静态门禁：`npm run typecheck` 双工程 0 错误；`npm run lint` 零告警零输出；
+    - 安全审计：`npm audit --omit=dev` 0 vulnerabilities；
+    - 5 分钟泄漏监控：独立脚本 `scripts/soak.mjs` 跑满 300s，400/400 请求成功（0 失败），
+      RSS 114.8MB → 83.0MB（净增长 -31.9MB），无内存泄漏；
+    - 快照测试：CommandCode 端到端流式/非流式快照通过；Freebuff 快照通过。
+  - **队列状态更新**：`PLAN-STATE.md` §1 移植队列中 P0-PORT-A/B/C 全部勾选标记完成；
+    T214 阶段门完成自动化指标取证，登记剩余外部 Blocker（Freebuff Token / WB sidecar Go 二进制 / 负责人签字）。
 
 - **T213b 配置源收口（2026-10-07，`5658065`）**：`utils/config-store-runtime.ts` —— UnifiedConfigStore
   进程单例（chokidar 热重载），非空 `rateLimit` 分片注入限流器、`modelAccess` 分片驱动模型访问守卫
@@ -138,6 +165,25 @@
   - **纪律记录**：本轮执行期间检测到**活跃并发写入者**（v5.0.2 修复会话正改 CHANGELOG/HANDOFF/package.json），
     按避坑 #9 只显式 `git add` 自制品提交，本文件与 CHANGELOG 的条目在该会话提交后补齐（即本条与 [Unreleased] 段）。
   - 两卡合计 +41 用例；全量 **58 文件 / 754 用例全绿**，typecheck 双工程 0 错误，lint 零输出。
+
+- **v5.0.3 内容事件判据修正（2026-10-07，v5.0.2 的补正 —— 上次的修复其实没生效）**：用户再报
+  `No data from upstream for 120s` / `STREAM_IDLE_TIMEOUT` / `retryable=false`
+  （`requestId 17e161fe-f15f-420a-9f1b-47c5a03fbf9f`，20:36:52，会话 `sess_95d71fac`，`timingMs=151274`、`in=0/out=0`）。
+  **为什么 v5.0.2 没拦住（本条最值得记）**：`probeUpstream` 的延窗门槛写成「`consumedBytes === 0`」，
+  而 **CC 的流以 `start` 事件开场**（`stream-encode.ts` 的 `event.type === 'start'`）——字节在第一毫秒就到，
+  门槛**永不成立**，探测 30s 后照旧无条件放行；放行后看门狗在 120s 处注入 `retryable=false`
+  （按「有没有字节」给，字节到过 → false），探测层 `isRetryableProbeFailure` 据此放行 → 客户端拿到不可重试的 504。
+  **时序指纹**：151.3s ≈ 1s 建连 + 30s 探测 + 120s 看门狗，且日志里**没有任何** `Upstream failure …, retry` 行
+  （延窗分支从未进入）——排障时这条「无重试日志 + 精确 150s」组合可直接定位到本缺口。
+  改动（`src/adapters/commandcode/pipeline/stream.ts` 九处 + `upstream.ts` 三处）：
+  延窗门槛改为 `state.verdict === 'ignore'`（还没有**内容事件**）；二轮窗口到期时按
+  `Date.now() - lastDataAt >= idleWaitMs` 区分死流（丢弃）与仍流动的活流（保守放行）；
+  成因 `first-byte-stall` → **`content-stall`**；`capturedError` 分支对 `idleStall && verdict === 'ignore'`
+  覆盖 `retryable=true`（预读字节只在本地 `head`、从未转发，丢弃安全；挂钟超时与内容已产出不改判）。
+  验证：**跟踪文件 64 文件 / 804 用例全绿**（含新增 `stall-after-start` 端到端剧本与 3 条探测判定用例）；
+  运行日志可见 `Upstream failure (Upstream produced no content before stalling (model claude-sonnet-5): No data from upstream for 5s), retry 1/2`。
+  **推翻**：v5.0.2「已知限制」写的「已收到过字节但没到内容事件后静默不重试」作废（该保守与事实不符，代价是每次故障白等 150s）。
+  **仍未做**：`start`-后静默这类请求的客户端等待上限仍是 `idleTimeoutMs`（放行也无内容可发）；要缩短须把 SSE 握手提前到取流之前。
 
 - **v5.0.2 空闲超时重试修复（2026-10-07，接 v5.0.1 同族第二形态）**：用户报
   `No data from upstream for 120s` / `STREAM_IDLE_TIMEOUT`（`requestId 8eaae6bb-34ec-481c-b500-408f3c0b9788`，10:03）。

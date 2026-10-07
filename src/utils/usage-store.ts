@@ -432,8 +432,9 @@ export interface ProviderUsageSummary {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
-  /** 该上游的美元成本之和（当前 commandcode 记录恒为 number）。 */
-  costUsd: number;
+  /** 该上游的美元成本之和；**null = 组内无任何 USD 口径记录**（如 WorkBuddy 走积分），
+   *  0 = 确定免费（如 Freebuff）。两者语义分离，禁止把 null 混加为 0（§3.9）。 */
+  costUsd: number | null;
   /** 原生计量汇总（仅当组内出现 native 字段时携带）。 */
   native?: { points?: number; freeSessionSec?: number };
 }
@@ -445,18 +446,23 @@ export interface ProviderUsageSummary {
 export function summarizeByProvider(records: UsageRecord[]): ProviderUsageSummary[] {
   const buckets = new Map<NonNullable<UsageRecord['provider']>, {
     runs: number; inputTokens: number; outputTokens: number; cacheReadTokens: number;
-    cost: number; native: { points?: number; freeSessionSec?: number };
+    cost: number; hasUsd: boolean; native: { points?: number; freeSessionSec?: number };
   }>();
   for (const r of records) {
     const provider = r.provider ?? 'commandcode';
     const b = buckets.get(provider) || {
-      runs: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cost: 0, native: {},
+      runs: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cost: 0, hasUsd: false, native: {},
     };
     b.runs += 1;
     b.inputTokens += r.inputTokens || 0;
     b.outputTokens += r.outputTokens || 0;
     b.cacheReadTokens += r.cacheReadTokens || 0;
-    b.cost += r.costUsd || 0;
+    // §3.9：只有"带 USD 口径"的记录参与美元求和；全组都是 null（积分计费）时
+    // 结果保持 null，而不是塌成 0（0 专指"确定免费"，语义不可混）。
+    if (typeof r.costUsd === 'number') {
+      b.cost += r.costUsd;
+      b.hasUsd = true;
+    }
     if (r.native?.points) b.native.points = (b.native.points ?? 0) + r.native.points;
     if (r.native?.freeSessionSec) b.native.freeSessionSec = (b.native.freeSessionSec ?? 0) + r.native.freeSessionSec;
     buckets.set(provider, b);
@@ -470,7 +476,7 @@ export function summarizeByProvider(records: UsageRecord[]): ProviderUsageSummar
       inputTokens: b.inputTokens,
       outputTokens: b.outputTokens,
       cacheReadTokens: b.cacheReadTokens,
-      costUsd: b.cost,
+      costUsd: b.hasUsd ? b.cost : null,
       ...(Object.keys(b.native).length > 0 ? { native: b.native } : {}),
     }));
 }

@@ -1,0 +1,17 @@
+{
+  "name": "commandcode-chat-basic",
+  "source": "scripts/collect-fixtures.mjs 采集(--target 见 README;demo 模式为内置场景渲染)",
+  "request": {
+    "match": {
+      "sentinel": "__SNAPSHOT:commandcode-chat-basic__",
+      "model": "claude-sonnet-5"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream"
+    },
+    "body": "data: {\"type\":\"start\"}\n\ndata: {\"type\":\"text-delta\",\"text\":\"Hello, \"}\n\ndata: {\"type\":\"text-delta\",\"text\":\"snapshot world!\"}\n\ndata: {\"type\":\"finish\",\"finishReason\":\"stop\",\"data\":{\"usage\":{\"inputTokens\":7,\"outputTokens\":5}}}\n\ndata: [DONE]\n\n"
+  }
+}

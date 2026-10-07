@@ -1,0 +1,17 @@
+{
+  "name": "freebuff-chat-basic",
+  "source": "手工构造:由 Go 原版源码路径推导的确定性输出(T201;见 tests/snapshot/README.md 与 T201 报告)。Freebuff2API 对 /api/v1/chat/completions 是字节透传(upstream.go:139 / server.go:351),故此处记录上游 OpenAI 兼容 SSE 原文。",
+  "request": {
+    "match": {
+      "sentinel": "__SNAPSHOT:freebuff-chat-basic__",
+      "model": "z-ai/glm-5.1"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream"
+    },
+    "body": "data: {\"id\":\"cc-1\",\"object\":\"chat.completion.chunk\",\"created\":1759000000,\"model\":\"z-ai/glm-5.1\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\ndata: {\"id\":\"cc-1\",\"object\":\"chat.completion.chunk\",\"created\":1759000000,\"model\":\"z-ai/glm-5.1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello, \"}}]}\n\ndata: {\"id\":\"cc-1\",\"object\":\"chat.completion.chunk\",\"created\":1759000000,\"model\":\"z-ai/glm-5.1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"freebuff snapshot world!\"}}]}\n\ndata: {\"id\":\"cc-1\",\"object\":\"chat.completion.chunk\",\"created\":1759000000,\"model\":\"z-ai/glm-5.1\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":5}}\n\ndata: [DONE]\n\n"
+  }
+}
