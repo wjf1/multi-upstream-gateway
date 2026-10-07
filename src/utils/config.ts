@@ -121,6 +121,15 @@ let configFileCache: { mtimeMs: number; size: number; data: Partial<GatewayConfi
 /** T102 迁移钩子的去重标记：同一配置文件只检查一次，避免每请求都 parse 一遍。 */
 let migrationCheckedPath: string | null = null;
 
+/**
+ * T213 阶段 1：读取 config.json 的原始对象（含 `providers.{freebuff,workbuddy}`
+ * 分片 —— 旧视图投影只承接 commandcode，Provider 运行时需要的是全量原始分片）。
+ * 只读，复用 readFileConfig 的 mtime 缓存，不产生额外解析开销。
+ */
+export function readRawConfigFile(): Record<string, unknown> {
+  return readFileConfig() as unknown as Record<string, unknown>;
+}
+
 function readFileConfig(): Partial<GatewayConfigFile> {
   try {
     if (!fs.existsSync(CONFIG_FILE_PATH)) {

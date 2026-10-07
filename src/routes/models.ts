@@ -41,6 +41,13 @@ export async function modelsRoutes(fastify: FastifyInstance) {
     }
 
     const tier = planTier(planId);
+
+    // T213 阶段 1：多上游命名空间聚合（`freebuff/<id>`、`workbuddy/<id>`）。
+    // runtime 内部只含「分片存在且 enabled !== false 且总闸开启」的 Provider；
+    // 读的是启动/刷新时的注册表缓存——本端点是客户端连接热路径，不打 sidecar。
+    // 未装配 runtime（部分测试/旧构建）时为空数组，行为与接线前一致。
+    const namespaced = fastify.providerRuntime?.namespacedModels() ?? [];
+
     return {
       object: 'list',
       ...(planId
@@ -56,26 +63,40 @@ export async function modelsRoutes(fastify: FastifyInstance) {
             },
           }
         : {}),
-      data: models.map(m => ({
-        id: m.id,
-        object: 'model',
-        created: m.created,
-        owned_by: m.owned_by,
-        name: m.name,
-        context_length: m.context_length,
-        reasoning_efforts: m.reasoning_efforts,
-        supports_vision: m.supports_vision,
-        context_window: m.context_window,
-        category: m.category,
-        caps: m.caps,
-        pricing: m.pricing,
-        deal: m.deal,
-        onGoPlan: m.onGoPlan,
-        availability: m.availability,
-        available_on_plan: planId ? isModelAvailableForPlan(m.availability, planId) : undefined,
-        plan_tier: planLabelForModel(m.availability),
-        tip: m.tip,
-      })),
+      data: [
+        ...models.map(m => ({
+          id: m.id,
+          object: 'model',
+          created: m.created,
+          owned_by: m.owned_by,
+          name: m.name,
+          context_length: m.context_length,
+          reasoning_efforts: m.reasoning_efforts,
+          supports_vision: m.supports_vision,
+          context_window: m.context_window,
+          category: m.category,
+          caps: m.caps,
+          pricing: m.pricing,
+          deal: m.deal,
+          onGoPlan: m.onGoPlan,
+          availability: m.availability,
+          available_on_plan: planId ? isModelAvailableForPlan(m.availability, planId) : undefined,
+          plan_tier: planLabelForModel(m.availability),
+          tip: m.tip,
+        })),
+        ...namespaced.map(m => ({
+          id: m.id,
+          object: 'model',
+          created: m.created,
+          owned_by: m.owned_by,
+          name: m.name,
+          context_length: m.context_length,
+          reasoning_efforts: m.reasoning_efforts,
+          supports_vision: m.supports_vision,
+          context_window: m.context_window,
+          category: m.category,
+        })),
+      ],
     };
   });
 

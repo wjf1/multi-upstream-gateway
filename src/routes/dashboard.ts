@@ -44,6 +44,7 @@ import { getChannelHealth } from '../utils/health-check.js';
 import { webhookEnabled } from '../utils/webhook-alerts.js';
 import { resolvePromptsDir } from '../utils/prompt-versions.js';
 import type { AccountInfo } from '../types/index.js';
+import type { ProviderName } from '../providers/core/interface.js';
 
 const startTimestamp = Date.now();
 
@@ -380,6 +381,50 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     logger.clearLogs();
     logger.info('[DASHBOARD] Log console cleared.');
     return { status: 'success' };
+  });
+
+  // ── 多上游 Provider（T213 阶段 1）──────────────────────────────────────────
+  // 未装配运行时（如部分测试只挂 dashboardRoutes）时端点优雅降级，而不是 500。
+
+  fastify.get('/api/providers', async () => {
+    const runtime = fastify.providerRuntime;
+    if (!runtime) return { providers: [], runtime: false };
+    return { runtime: true, providers: await runtime.status() };
+  });
+
+  const PROVIDER_NAMES: readonly string[] = ['commandcode', 'freebuff', 'workbuddy'];
+
+  fastify.post('/api/providers/:name/enable', async (req: any, reply) => {
+    const runtime = fastify.providerRuntime;
+    if (!runtime) return reply.status(404).send({ error: 'Provider runtime is not wired in this build' });
+    const name = String(req.params?.name ?? '');
+    if (!PROVIDER_NAMES.includes(name)) {
+      return reply.status(404).send({ error: `Unknown provider "${name}"` });
+    }
+    runtime.enable(name as ProviderName);
+    logger.info(`[DASHBOARD] Provider ${name} enabled (hot)`);
+    return { status: 'success', name, enabled: true };
+  });
+
+  fastify.post('/api/providers/:name/disable', async (req: any, reply) => {
+    const runtime = fastify.providerRuntime;
+    if (!runtime) return reply.status(404).send({ error: 'Provider runtime is not wired in this build' });
+    const name = String(req.params?.name ?? '');
+    if (!PROVIDER_NAMES.includes(name)) {
+      return reply.status(404).send({ error: `Unknown provider "${name}"` });
+    }
+    runtime.disable(name as ProviderName);
+    logger.info(`[DASHBOARD] Provider ${name} disabled (hot)`);
+    return { status: 'success', name, enabled: false };
+  });
+
+  fastify.post('/api/providers/registry/refresh', async (_req, reply) => {
+    const runtime = fastify.providerRuntime;
+    if (!runtime) return reply.status(404).send({ error: 'Provider runtime is not wired in this build' });
+    await runtime.refreshRegistry();
+    const count = runtime.namespacedModels().length;
+    logger.info(`[DASHBOARD] Provider model registry refreshed (${count} namespaced models)`);
+    return { status: 'success', namespacedModels: count };
   });
 
   fastify.get('/api/accounts', async () => {

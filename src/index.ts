@@ -33,6 +33,7 @@ import { notify, ensureAumidRegistered, isGlobalToastEnabled } from './utils/not
 import { startHealthChecks } from './utils/health-check.js';
 import { startWebhookAlerts } from './utils/webhook-alerts.js';
 import { initOutboundProxy } from './utils/proxy-agent.js';
+import { ProviderRuntime } from './providers/runtime.js';
 
 // 未捕获异常/拒绝：单次只记日志（代理要尽量活着）。
 // 但短时间连续出现说明进程已进入不可信状态（可能挂着僵死的上游连接、
@@ -189,6 +190,22 @@ const start = async () => {
     // "你确认过风险了吗"（403）。顺序反了会看到 403 而非 401，把鉴权失败
     // 伪装成合规拦截。未确认时（默认）所有 /v1 请求 403。
     registerRiskGate(fastify);
+
+    // T213 阶段 1：三源 Provider 运行时接线（注册表 + 路由器 + /api/providers +
+    // /v1/models 命名空间聚合）。按需初始化：未配置的 Provider 不做任何 IO，
+    // 缺省部署的启动路径与接线前一致。数据面（chat/messages）仍走 CommandCode
+    // 既有通路，切路由属阶段 2。
+    const providerRuntime = new ProviderRuntime();
+    try {
+      await providerRuntime.initialize();
+      logger.info('[BOOT] Provider runtime initialized (registry + router + 3 sources).');
+    } catch (err: any) {
+      logger.warn(`[BOOT] Provider runtime init warning: ${err?.message || err}`);
+    }
+    fastify.decorate('providerRuntime', providerRuntime);
+    fastify.addHook('onClose', async () => {
+      await providerRuntime.destroy();
+    });
 
     await fastify.register(dashboardRoutes);
     await fastify.register(chatRoutes);
