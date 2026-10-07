@@ -17,7 +17,8 @@ import path from 'node:path';
 
 const root = path.resolve(__dirname, '..');
 const html = readFileSync(path.join(root, 'public', 'index.html'), 'utf-8');
-const PANEL_JS_FILES = ['core', 'overview', 'accounts', 'usage', 'models', 'logs'];
+// T209（2026-10-07）：新增 upstream.js（上游管理页），取证源清单随之声明式扩容。
+const PANEL_JS_FILES = ['core', 'overview', 'upstream', 'accounts', 'usage', 'models', 'logs'];
 const panelJs: Record<string, string> = {};
 for (const f of PANEL_JS_FILES) panelJs[f] = readFileSync(path.join(root, 'public', 'js', f + '.js'), 'utf-8');
 const core = panelJs.core;
@@ -28,14 +29,14 @@ describe('index.html 只留骨架 + 外置脚本引用', () => {
     expect(html.split('\n').length).toBeLessThanOrEqual(1000);
   });
 
-  it('五个既有分区齐备且带 data-route（hash 路由的落点）', () => {
-    for (const t of ['overview', 'accounts', 'usage', 'models', 'logs']) {
+  it('六个既有分区齐备且带 data-route（hash 路由的落点；T209 增 upstream）', () => {
+    for (const t of ['overview', 'upstream', 'accounts', 'usage', 'models', 'logs']) {
       expect(html).toMatch(new RegExp(`id="content-${t}"[^>]*data-route="${t}"`));
       expect(html).toContain(`id="tab-${t}"`);
     }
   });
 
-  it('六个页面脚本按序 defer 外链，且没有内联业务脚本', () => {
+  it('全部页面脚本按序 defer 外链，且没有内联业务脚本', () => {
     for (const f of PANEL_JS_FILES) {
       expect(html).toContain(`<script src="/js/${f}.js" defer></script>`);
     }

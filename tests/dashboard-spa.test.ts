@@ -4,10 +4,11 @@ import path from 'node:path';
 
 const root = path.resolve(__dirname, '..');
 const html = readFileSync(path.join(root, 'public', 'index.html'), 'utf-8');
-// T110：面板脚本已从 index.html 外置到 public/js/*.js（页面只留骨架 + 6 个 defer
-// 外链）。凡是从"页面源码"取函数/元素 id 的断言，取证源改为 index.html 与 6 个
+// T110：面板脚本已从 index.html 外置到 public/js/*.js（页面只留骨架 + defer
+// 外链）。凡是从"页面源码"取函数/元素 id 的断言，取证源改为 index.html 与全部
 // 页面脚本的合并源码；针对标记本身的断言仍读 index.html。断言条件与正则逐字不变。
-const PANEL_JS_FILES = ['core', 'overview', 'accounts', 'usage', 'models', 'logs'];
+// T209（2026-10-07）：新增 upstream.js（上游管理页），取证源清单随之声明式扩容。
+const PANEL_JS_FILES = ['core', 'overview', 'upstream', 'accounts', 'usage', 'models', 'logs'];
 const panelJsSources = PANEL_JS_FILES.map(f => readFileSync(path.join(root, 'public', 'js', f + '.js'), 'utf-8'));
 const src = html + '\n' + panelJsSources.join('\n');
 

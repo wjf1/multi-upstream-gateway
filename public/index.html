@@ -147,6 +147,7 @@ html.light .mfilter-chip.on{color:#fff}
 
 <nav class="border-b border-slate-800 bg-slate-900/40 px-6 flex space-x-8 text-sm text-slate-400" role="tablist" aria-label="面板分区">
   <button onclick="switchTab('overview')" id="tab-overview" role="tab" aria-selected="true" aria-controls="content-overview" class="tab-btn active py-3 flex items-center gap-2"><i aria-hidden="true" class="fa-solid fa-gauge-high"></i> 概览</button>
+  <button onclick="switchTab('upstream')" id="tab-upstream" role="tab" aria-selected="false" aria-controls="content-upstream" tabindex="-1" class="tab-btn py-3 flex items-center gap-2"><i aria-hidden="true" class="fa-solid fa-server"></i> 上游</button>
   <button onclick="switchTab('accounts')" id="tab-accounts" role="tab" aria-selected="false" aria-controls="content-accounts" tabindex="-1" class="tab-btn py-3 flex items-center gap-2"><i aria-hidden="true" class="fa-solid fa-users-gear"></i> 账号与鉴权</button>
   <button onclick="switchTab('usage')" id="tab-usage" role="tab" aria-selected="false" aria-controls="content-usage" tabindex="-1" class="tab-btn py-3 flex items-center gap-2"><i aria-hidden="true" class="fa-solid fa-chart-pie"></i> 用量与额度</button>
   <button onclick="switchTab('models')" id="tab-models" role="tab" aria-selected="false" aria-controls="content-models" tabindex="-1" class="tab-btn py-3 flex items-center gap-2"><i aria-hidden="true" class="fa-solid fa-cubes"></i> 模型</button>
@@ -159,6 +160,8 @@ html.light .mfilter-chip.on{color:#fff}
   <!-- 首启引导卡片（T110）：渲染逻辑在 overview.js 的 renderOnboardCard，
        仅用 /api/status 现有字段判断；账号与凭据就绪时自动隐藏。 -->
   <div id="onboardCard" data-state="idle" class="hidden card border-indigo-500/40 rounded-xl p-5 space-y-1"></div>
+  <!-- 多上游异常横幅（T208）：renderProviderBanner 渲染（upstream.js），健康时隐藏 -->
+  <div id="providerBanner" role="alert" class="hidden card border-rose-500/40 rounded-xl p-4 space-y-1"></div>
   <div class="flex items-center justify-between flex-wrap gap-3">
     <div>
       <h2 class="text-lg font-bold text-white">面板概览</h2>
@@ -194,6 +197,21 @@ html.light .mfilter-chip.on{color:#fff}
       <p class="text-xs text-slate-400 mb-4">默认关闭/旁路的运行能力当前状态（只读，参数经环境变量配置）</p>
       <div id="featuresCardBody"></div>
     </div>
+  </div>
+</section>
+
+<section id="content-upstream" role="tabpanel" tabindex="0" aria-labelledby="tab-upstream" class="space-y-6 hidden" data-route="upstream">
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h2 class="text-lg font-bold text-white">上游管理</h2>
+      <p class="text-xs text-slate-400">多上游 Provider 状态、启停总闸与默认上游切换（热生效）</p>
+    </div>
+    <button onclick="refreshUpstream()" id="upstreamRefreshBtn" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg flex items-center gap-1.5 border border-slate-700 transition"><i aria-hidden="true" class="fa-solid fa-rotate"></i> 刷新上游</button>
+  </div>
+  <div id="providerCards" class="grid grid-cols-1 lg:grid-cols-3 gap-4"></div>
+  <div class="card rounded-xl p-6 text-xs text-slate-400 space-y-1">
+    <p class="flex items-center gap-2"><i aria-hidden="true" class="fa-solid fa-circle-info text-indigo-400"></i> 启停总闸对新请求立即生效（热，无需重启）；「设为默认」写入 config.json 的 routing 分片并在重启后保留。</p>
+    <p class="flex items-center gap-2"><i aria-hidden="true" class="fa-solid fa-circle-info text-indigo-400"></i> WorkBuddy 为联邦 Sidecar 架构：卡片展示 sidecar 进程状态；账号管理由 sidecar 原生面板承接。</p>
   </div>
 </section>
 
@@ -552,6 +570,7 @@ html.light .mfilter-chip.on{color:#fff}
      DOM 就绪后再跑；核心层先于各页脚本。 -->
 <script src="/js/core.js" defer></script>
 <script src="/js/overview.js" defer></script>
+<script src="/js/upstream.js" defer></script>
 <script src="/js/accounts.js" defer></script>
 <script src="/js/usage.js" defer></script>
 <script src="/js/models.js" defer></script>
