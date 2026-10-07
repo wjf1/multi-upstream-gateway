@@ -211,7 +211,15 @@
     - ① Freebuff 真实线上 Token（`FREEBUFF_TOKENS`）待配置
     - ② WorkBuddy sidecar 缺少 Go 运行时 / 预构建二进制（需环境补齐以完成端到端三方通信）
     - ③ master-plan §0.4 强制项：项目负责人签字确认 `DECISION` 行（`continue | pause | pivot-federated`）
-- [ ] T301~T310 / T401~T406 / T501~T505（见执行依据方案）
+- [x] T306 面板运行日志页（2026-10-07 完成）
+  - deps: T105, T108
+  - 范围：独立日志页、三维筛选（级别/上游/关键词）、RequestId 交互识别与请求全链路关联详情
+  - 交付：
+    - 后端：增强 `GET /api/logs` 支持参数化过滤（level/provider/q/limit）；新增 `GET /api/logs/request/:id` 关联用量记录与生命周期日志
+    - 前端：`public/index.html` 增强工具条（级别下拉、上游下拉、关键词搜索框）与 RequestId 关联详情卡片（模型/上游/状态/耗时/token与成本/相关日志）；`public/js/logs.js` 实现三筛选、ID 交互高亮、详情拉取、5s 自动轮询刷新与智能滚动跟随
+  - 测试：新增 `tests/spa-logs.test.ts` 13 例（先红后绿），验证 HTML 骨架、a11y 4 弹窗守卫不破坏、三筛选逻辑、5s 轮询与后端参数化 API
+  - 门禁：全量 **79 文件 / 997 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [ ] T301~T305 / T307~T310 / T401~T406 / T501~T505（见执行依据方案）
 
 ## 4. 阶段记录
 

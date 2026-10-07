@@ -64,7 +64,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**78 文件 / 984 用例全绿（1 skipped）**（P0 测试补齐与 T214 阶段门自动化取证后；此前 64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**79 文件 / 997 用例全绿（1 skipped）**（T306 面板运行日志页交付后；此前 78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -82,6 +82,18 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T306 面板运行日志页（2026-10-07）**：
+  - **范围**：独立实时日志页、多维三筛选（级别/上游 Provider/关键词）、RequestId 全链路追踪与详情卡片。
+  - **后端**：`src/routes/dashboard.ts` 增强 `GET /api/logs` 支持参数化过滤（`level`、`provider`、`q`/`keyword`、`limit`）；
+    新增 `GET /api/logs/request/:id`，支持按 requestId / traceId 深度关联用量历史 `UsageRecord`（模型、上游、状态、耗时、tokens与成本）
+    以及内存中该请求的全生命周期事件日志（未落库时自动从日志文本推断基础属性）。
+  - **前端**：`public/index.html` 增强工具条（级别下拉、上游下拉、关键词搜索框）与请求详情展示卡片
+    （RequestId、模型、上游、状态、耗时、Tokens/成本、关联日志）；`public/js/logs.js` 重构升级，支持三筛选过滤、
+    RequestId/TraceId 词法交互高亮点击、详情拉取渲染、5s 自动轮询刷新与智能滚动跟随。
+  - **无障碍兼容**：详情卡片采用非 dialog 容器，严格保持 `spa-a11y` 4 模态弹窗断言不被破坏。
+  - **测试与门禁**：新增 `tests/spa-logs.test.ts` 13 例（先红后绿）；全量 `npm run verify` **79 测试文件 / 997 用例全绿（1 skipped）**；
+    双工程 typecheck 0 错误；lint 零输出；audit 0 漏洞。
 
 - **P0 移植测试完整补齐与 T214 阶段门自动化指标全绿（2026-10-07）**：
   - **背景**：推进 T214 阶段门验收时，复核发现旧树中此前未移植至 4.22.4 树的 13 个关键单元/集成测试与

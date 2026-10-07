@@ -358,7 +358,119 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     return { status: 'success', running: getGatewayRunning() };
   });
 
-  fastify.get('/api/logs', async () => ({ logs: logger.getLogs() }));
+  fastify.get('/api/logs', async (req: any) => {
+    let list = logger.getLogs();
+    const query = req?.query || {};
+    const level = typeof query.level === 'string' ? query.level.toLowerCase().trim() : '';
+    const provider = typeof query.provider === 'string' ? query.provider.toLowerCase().trim() : '';
+    const kw = typeof (query.q || query.keyword) === 'string' ? String(query.q || query.keyword).toLowerCase().trim() : '';
+
+    if (level && level !== 'all') {
+      list = list.filter(l => (l.level || '').toLowerCase() === level);
+    }
+    if (provider && provider !== 'all') {
+      list = list.filter(l => {
+        const msg = (l.message || '').toLowerCase();
+        if (provider === 'freebuff') return msg.includes('freebuff') || msg.includes('pvd:freebuff');
+        if (provider === 'workbuddy') return msg.includes('workbuddy') || msg.includes('pvd:workbuddy') || msg.includes('codebuddy');
+        if (provider === 'commandcode') return msg.includes('commandcode') || msg.includes('cc') || (!msg.includes('freebuff') && !msg.includes('workbuddy'));
+        return msg.includes(provider);
+      });
+    }
+    if (kw) {
+      list = list.filter(l => (l.message || '').toLowerCase().includes(kw));
+    }
+    const limit = Number(query.limit);
+    if (Number.isFinite(limit) && limit > 0) {
+      list = list.slice(-limit);
+    }
+    return { logs: list, total: list.length };
+  });
+
+  /**
+   * T306：按 requestId / traceId 查询请求关联详情（包含模型、账号、状态、耗时、用量与关联日志行）。
+   */
+  fastify.get('/api/logs/request/:id', async (req: any, reply) => {
+    const rawId = String(req.params?.id || '').trim();
+    if (!rawId) return reply.status(400).send({ error: 'Request id is required' });
+
+    const records = getUsageHistory();
+    // 逆序查找最新匹配项
+    const matchedRecord = records.slice().reverse().find(r =>
+      r.requestId === rawId ||
+      r.traceId === rawId ||
+      (r.requestId && (r.requestId === rawId || r.requestId.includes(rawId))) ||
+      (r.traceId && (r.traceId === rawId || r.traceId.includes(rawId)))
+    );
+
+    const relatedLogs = logger.getLogs().filter(l =>
+      l.message.includes(rawId) ||
+      (matchedRecord?.traceId && l.message.includes(matchedRecord.traceId)) ||
+      (matchedRecord?.requestId && l.message.includes(matchedRecord.requestId))
+    );
+
+    if (matchedRecord) {
+      return {
+        found: true,
+        record: {
+          requestId: matchedRecord.requestId || rawId,
+          traceId: matchedRecord.traceId || null,
+          timestamp: matchedRecord.timestamp,
+          model: matchedRecord.model,
+          provider: matchedRecord.provider || 'commandcode',
+          status: matchedRecord.status,
+          timingMs: matchedRecord.timingMs,
+          inputTokens: matchedRecord.inputTokens,
+          outputTokens: matchedRecord.outputTokens,
+          cacheReadTokens: matchedRecord.cacheReadTokens || 0,
+          costUsd: matchedRecord.costUsd,
+          native: matchedRecord.native || null,
+          errorCode: matchedRecord.errorCode || null,
+          mode: matchedRecord.mode,
+          sessionId: matchedRecord.sessionId || null,
+          project: matchedRecord.project || null,
+        },
+        relatedLogs,
+      };
+    }
+
+    if (relatedLogs.length > 0) {
+      // 从日志文本尽力解析字段
+      let model = '未知';
+      let status: 'COMPLETED' | 'FAILED' = 'COMPLETED';
+      let timingMs = 0;
+      for (const l of relatedLogs) {
+        const mMatch = l.message.match(/Model[:\s]+([\w.-]+)/i);
+        if (mMatch) model = mMatch[1];
+        const tMatch = l.message.match(/Timing[:\s]+([\d.]+)(s|ms)/i);
+        if (tMatch) {
+          timingMs = tMatch[2].toLowerCase() === 's' ? Math.round(parseFloat(tMatch[1]) * 1000) : parseInt(tMatch[1], 10);
+        }
+        if (l.level === 'error' || /error|failed|429|500|502|504/i.test(l.message)) {
+          status = 'FAILED';
+        }
+      }
+      return {
+        found: true,
+        record: {
+          requestId: rawId,
+          traceId: null,
+          timestamp: relatedLogs[0].timestamp,
+          model,
+          provider: 'commandcode',
+          status,
+          timingMs,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: null,
+          errorCode: null,
+        },
+        relatedLogs,
+      };
+    }
+
+    return { found: false, requestId: rawId, message: '未找到该请求的用量或日志记录', relatedLogs: [] };
+  });
 
   /**
    * T106（§3.7-7）：确认合规风险告知。

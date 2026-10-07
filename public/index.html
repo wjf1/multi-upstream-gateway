@@ -500,14 +500,109 @@ html.light .mfilter-chip.on{color:#fff}
 </section>
 
 <section id="content-logs" role="tabpanel" tabindex="0" aria-labelledby="tab-logs" class="space-y-4 hidden" data-route="logs">
-  <div class="flex items-center justify-between">
-    <h2 class="text-lg font-bold text-white">网关事件控制台</h2>
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+    <div>
+      <h2 class="text-lg font-bold text-white flex items-center gap-2">
+        <i aria-hidden="true" class="fa-solid fa-terminal text-indigo-400"></i> 网关事件控制台
+      </h2>
+      <p class="text-xs text-slate-400 mt-0.5">实时流式日志、多维频道/上游筛选与 RequestId 请求全链路关联详情</p>
+    </div>
     <div class="flex items-center space-x-2">
+      <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> 5s 轮询
+      </span>
       <button onclick="clearLogs()" class="px-3 py-1.5 bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-rose-200 text-xs rounded-lg flex items-center gap-1.5 border border-slate-700 transition"><i aria-hidden="true" class="fa-solid fa-trash-can"></i> 清空日志</button>
       <button onclick="loadLogs()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg flex items-center gap-1.5 border border-slate-700 transition"><i aria-hidden="true" class="fa-solid fa-rotate"></i> 刷新日志</button>
     </div>
   </div>
-  <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-300 h-[500px] overflow-y-auto space-y-1" id="logsBox"><p class="text-slate-500">正在初始化日志控制台...</p></div>
+
+  <!-- T306 三筛选工具栏：级别/频道、上游、关键词 -->
+  <div class="card rounded-xl p-3 border border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-900/40">
+    <div class="flex flex-wrap items-center gap-3">
+      <div class="flex items-center gap-1.5 text-xs text-slate-400">
+        <label for="logLevelFilter"><i aria-hidden="true" class="fa-solid fa-filter text-slate-500"></i> 级别:</label>
+        <select id="logLevelFilter" onchange="applyLogFilters()" class="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 outline-none focus:border-indigo-500">
+          <option value="all">全部级别</option>
+          <option value="info">INFO</option>
+          <option value="warn">WARN</option>
+          <option value="error">ERROR</option>
+        </select>
+      </div>
+
+      <div class="flex items-center gap-1.5 text-xs text-slate-400">
+        <label for="logProviderFilter"><i aria-hidden="true" class="fa-solid fa-server text-slate-500"></i> 上游:</label>
+        <select id="logProviderFilter" onchange="applyLogFilters()" class="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 outline-none focus:border-indigo-500">
+          <option value="all">全部上游</option>
+          <option value="commandcode">CommandCode</option>
+          <option value="freebuff">Freebuff</option>
+          <option value="workbuddy">WorkBuddy</option>
+        </select>
+      </div>
+
+      <div class="flex items-center gap-1.5 text-xs text-slate-400">
+        <label for="logKeywordFilter"><i aria-hidden="true" class="fa-solid fa-magnifying-glass text-slate-500"></i> 搜索:</label>
+        <div class="relative">
+          <input type="text" id="logKeywordFilter" oninput="applyLogFilters()" placeholder="关键词 / RequestId / 模型..." class="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-lg pl-3 pr-7 py-1.5 w-44 md:w-60 outline-none focus:border-indigo-500 font-mono">
+          <button onclick="clearKeywordFilter()" id="clearLogKwBtn" class="absolute right-2 top-2 text-slate-500 hover:text-slate-300 text-[10px] hidden"><i aria-hidden="true" class="fa-solid fa-xmark"></i></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="text-[11px] font-mono text-slate-500" id="logFilterStats">
+      共 0 条
+    </div>
+  </div>
+
+  <!-- T306 RequestId 关联详情卡片（点击日志内 ID 或详情按钮展开） -->
+  <div id="logDetailCard" class="card rounded-xl p-4 border border-indigo-500/30 bg-slate-900/90 shadow-xl space-y-3 hidden">
+    <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-indigo-400"></span>
+        <h3 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+          <i aria-hidden="true" class="fa-solid fa-circle-nodes text-indigo-400"></i> 请求全链路关联详情
+        </h3>
+        <span id="detailTraceBadge" class="text-[10px] px-2 py-0.5 rounded font-mono bg-slate-800 text-slate-300"></span>
+      </div>
+      <button onclick="hideRequestDetail()" class="text-slate-400 hover:text-white text-xs px-2 py-1 rounded hover:bg-slate-800 transition"><i aria-hidden="true" class="fa-solid fa-xmark"></i> 关闭详情</button>
+    </div>
+
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 font-mono text-xs" id="detailGrid">
+      <div class="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+        <div class="text-[10px] text-slate-500 mb-0.5">RequestId</div>
+        <div id="detailRequestId" class="font-bold text-indigo-300 truncate" title="">--</div>
+      </div>
+      <div class="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+        <div class="text-[10px] text-slate-500 mb-0.5">模型</div>
+        <div id="detailModel" class="font-bold text-slate-200 truncate">--</div>
+      </div>
+      <div class="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+        <div class="text-[10px] text-slate-500 mb-0.5">上游来源</div>
+        <div id="detailProvider" class="font-bold text-sky-400">--</div>
+      </div>
+      <div class="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+        <div class="text-[10px] text-slate-500 mb-0.5">请求状态</div>
+        <div id="detailStatus" class="font-bold text-slate-200">--</div>
+      </div>
+      <div class="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+        <div class="text-[10px] text-slate-500 mb-0.5">耗时</div>
+        <div id="detailTiming" class="font-bold text-emerald-400">--</div>
+      </div>
+      <div class="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+        <div class="text-[10px] text-slate-500 mb-0.5">Tokens / 成本</div>
+        <div id="detailTokens" class="font-bold text-amber-300 truncate">--</div>
+      </div>
+    </div>
+
+    <div class="mt-2 space-y-1">
+      <div class="text-[11px] text-slate-400 font-semibold flex items-center gap-1">
+        <i aria-hidden="true" class="fa-solid fa-list-ul text-slate-500"></i> 本次请求相关的日志事件
+      </div>
+      <div id="detailRelatedLogs" class="bg-slate-950 border border-slate-800/80 rounded-lg p-2.5 font-mono text-[11px] max-h-36 overflow-y-auto space-y-1 text-slate-300">
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-300 h-[520px] overflow-y-auto space-y-1" id="logsBox"><p class="text-slate-500">正在初始化日志控制台...</p></div>
 </section>
 
 </main>
