@@ -25,6 +25,8 @@ import { ErrorCode, ProxyError, toProxyError } from '../utils/errors.js';
 import { auditRequestStart, auditRequestEnd, accountTail } from '../utils/audit-log.js';
 import { guardRateLimit, recordRequestOutput } from '../utils/rate-limit.js';
 import { guardModelAccess } from '../utils/model-access.js';
+import { respondViaProvider } from './provider-dispatch.js';
+import type { RouteDecision } from '../providers/core/router.js';
 
 function fmtNum(n: number): string {
   return n.toLocaleString('en-US');
@@ -110,6 +112,27 @@ export async function chatRoutes(fastify: FastifyInstance) {
     // 面向长会话（多分钟推理）的 socket 加固；客户端断开则取消上游。
     hardenConnectionForLongStream(req, reply, abortController);
 
+    // T213 阶段 2：六步路由决策（必须在 translate 之前——决策会剥除命名空间
+    // 前缀并回写 body.model，翻译器拿到的永远是裸模型名）。无 runtime（存量
+    // 测试/旧装配）时行为与接线前逐字节一致。
+    let routedDecision: RouteDecision | null = null;
+    {
+      const runtime = fastify.providerRuntime;
+      if (runtime) {
+        routedDecision = runtime.router.route({
+          headers: req.headers as Record<string, string | undefined>,
+          body: { model: body.model, extra_body: (body as { extra_body?: { upstream_provider?: string } }).extra_body },
+          requestId: resolveRequestId(req.headers as never),
+        });
+        reply.header('x-actual-upstream', routedDecision.provider);
+        // raw.setHeader 双保险：流式出口经 raw.flushHeaders/writeHead 直接刷头，
+        // fastify 延迟应用的 reply.header 会赶不上（实测丢头）；send() 路径
+        // Node 会合并 raw 预设头，不冲突。
+        reply.raw.setHeader('x-actual-upstream', routedDecision.provider);
+        body.model = routedDecision.model;
+      }
+    }
+
     const translated = adapter.translateOpenAIRequest(body);
     const modelName = translated.params.model;
     // 只数真正进上下文的字段：原先 JSON.stringify 整个上行体会把 config 元数据和
@@ -149,6 +172,31 @@ export async function chatRoutes(fastify: FastifyInstance) {
       recordRequestOutput(req, usageAcc.outputTokens);
       persistCompletion(modelName, usageAcc, requestContext, startTime, status, traceOverride ?? traceId, 'chat', errorCode, requestId);
     };
+
+    // T213 阶段 2：非 commandcode 决策走 IProvider 文本增量契约（provider-dispatch）。
+    // 决策本身在 translate 之前完成（routedDecision），此处只做分流出口。
+    if (routedDecision && routedDecision.provider !== 'commandcode') {
+      return await respondViaProvider({
+        runtime: fastify.providerRuntime!,
+        decision: routedDecision,
+        openaiReq: body,
+        requestId,
+        abortSignal: abortController.signal,
+        reply,
+        mode: 'chat',
+        startTime,
+        finalize: (info) => {
+          const acc = createUsageAccumulator();
+          acc.inputTokens = info.inputTokens;
+          acc.outputTokens = info.outputTokens;
+          acc.sawUsage = true;
+          auditRequestEnd(audit, { model: modelName, inputTokens: info.inputTokens, outputTokens: info.outputTokens, status: info.status, accountId: accountTail(apiKey) });
+          recordRequestOutput(req, info.outputTokens);
+          persistCompletion(modelName, acc, requestContext, startTime, info.status, info.traceId, 'chat', info.errorCode, requestId, routedDecision!.provider);
+          logCompletion(info.inputTokens, info.outputTokens, startTime, modelName, info.status);
+        },
+      });
+    }
 
     try {
       let upstreamStream: any;

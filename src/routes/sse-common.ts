@@ -9,6 +9,7 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { CCEvent } from '../types/index.js';
 import { UsageAccumulator } from '../adapters/commandcode/usage.js';
 import { RequestContext } from '../utils/request-context.js';
+import type { UsageRecord } from '../utils/usage-store.js';
 import { estimateCostUsd, recordCompletion } from '../utils/usage-store.js';
 
 /**
@@ -103,6 +104,8 @@ export function persistCompletion(
   mode: 'chat' | 'messages' = 'chat',
   errorCode?: string,
   requestId?: string,
+  /** T213 阶段 2：数据面经 router 分发后，按真实来源落 provider 维度（缺省 commandcode 同旧）。 */
+  provider: UsageRecord['provider'] = 'commandcode',
 ): void {
   const estimated = estimateCostUsd(model, usage.inputTokens || 0, usage.outputTokens || 0, {
     cacheReadTokens: usage.cacheReadTokens,
@@ -112,9 +115,9 @@ export function persistCompletion(
   const hasUpstreamCost = usage.upstreamCostUsd !== undefined;
   recordCompletion({
     timestamp: new Date().toISOString(),
-    // T108/T109：本路由的请求都来自 CommandCode 上游，显式落 provider 字段，
-    // 供面板按上游维度分口径聚合（历史缺字段的记录读取时归一为 commandcode）。
-    provider: 'commandcode',
+    // T108/T109：显式落 provider 字段，供面板按上游维度分口径聚合
+    // （历史缺字段的记录读取时归一为 commandcode；T213 阶段 2 起按路由决策的真实来源落）。
+    provider,
     model,
     inputTokens: usage.inputTokens || 0,
     outputTokens: usage.outputTokens || 0,

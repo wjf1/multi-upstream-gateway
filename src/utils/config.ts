@@ -294,6 +294,7 @@ export function saveConfigFile(updates: Partial<GatewayConfigFile>): boolean {
       const next = deepMergeKeepUnknown(current as unknown as Record<string, unknown>, {
         port: updated.port,
         host: updated.host,
+        ...(updates.routing !== undefined ? { routing: updates.routing } : {}),
         providers: {
           commandcode: {
             rotationMode: updated.rotationMode,
@@ -345,6 +346,7 @@ export function saveConfigFile(updates: Partial<GatewayConfigFile>): boolean {
       return true;
     }
 
+    if (updates.routing !== undefined) (updated as Record<string, unknown>).routing = updates.routing;
     fs.writeFileSync(tmp, JSON.stringify(updated, null, 2), 'utf-8');
     fs.renameSync(tmp, CONFIG_FILE_PATH);
 

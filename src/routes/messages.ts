@@ -24,6 +24,9 @@ import { ErrorCode, ProxyError, toProxyError } from '../utils/errors.js';
 import { auditRequestStart, auditRequestEnd, accountTail } from '../utils/audit-log.js';
 import { guardRateLimit, recordRequestOutput } from '../utils/rate-limit.js';
 import { guardModelAccess } from '../utils/model-access.js';
+import { respondViaProvider } from './provider-dispatch.js';
+import { anthropicToOpenAIRequest } from '../providers/core/anthropic-bridge.js';
+import type { RouteDecision } from '../providers/core/router.js';
 
 function sse(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -95,6 +98,26 @@ export async function messagesRoutes(fastify: FastifyInstance) {
     hardenConnectionForLongStream(req, reply, abortController);
 
     const startTime = Date.now();
+    // T213 阶段 2：六步路由决策（translate 之前——剥前缀并回写 body.model）。
+    // 无 runtime（存量测试/旧装配）时行为与接线前逐字节一致。
+    let routedDecision: RouteDecision | null = null;
+    {
+      const runtime = fastify.providerRuntime;
+      if (runtime) {
+        routedDecision = runtime.router.route({
+          headers: req.headers as Record<string, string | undefined>,
+          body: { model: body.model, extra_body: (body as { extra_body?: { upstream_provider?: string } }).extra_body },
+          requestId: resolveRequestId(req.headers as never),
+        });
+        reply.header('x-actual-upstream', routedDecision.provider);
+        // raw.setHeader 双保险：流式出口经 raw.flushHeaders/writeHead 直接刷头，
+        // fastify 延迟应用的 reply.header 会赶不上（实测丢头）；send() 路径
+        // Node 会合并 raw 预设头，不冲突。
+        reply.raw.setHeader('x-actual-upstream', routedDecision.provider);
+        body.model = routedDecision.model;
+      }
+    }
+
     const translated = adapter.translateAnthropicRequest(body);
     const modelName = translated.params.model;
     const msgId = `msg_${crypto.randomUUID().slice(0, 8)}`;
@@ -119,6 +142,33 @@ export async function messagesRoutes(fastify: FastifyInstance) {
       recordRequestOutput(req, usageAcc.outputTokens);
       persistCompletion(modelName, usageAcc, requestContext, startTime, status, msgId, 'messages', errorCode, requestId);
     };
+
+    // T213 阶段 2：非 commandcode 决策走 Anthropic 桥 + IProvider 文本增量契约
+    // （provider-dispatch）。openaiReq 由桥转换（system 前置 / tool_use→tool_calls /
+    // thinking→reasoning_effort 等），stream 旗标由桥按 Anthropic 请求原样透传。
+    if (routedDecision && routedDecision.provider !== 'commandcode') {
+      const openaiReq = anthropicToOpenAIRequest(body);
+      openaiReq.model = routedDecision.model;
+      return await respondViaProvider({
+        runtime: fastify.providerRuntime!,
+        decision: routedDecision,
+        openaiReq,
+        requestId,
+        abortSignal: abortController.signal,
+        reply,
+        mode: 'messages',
+        startTime,
+        finalize: (info) => {
+          const acc = createUsageAccumulator();
+          acc.inputTokens = info.inputTokens;
+          acc.outputTokens = info.outputTokens;
+          acc.sawUsage = true;
+          auditRequestEnd(audit, { model: modelName, inputTokens: info.inputTokens, outputTokens: info.outputTokens, status: info.status, accountId: accountTail(apiKey) });
+          recordRequestOutput(req, info.outputTokens);
+          persistCompletion(modelName, acc, requestContext, startTime, info.status, info.traceId ?? msgId, 'messages', info.errorCode, requestId, routedDecision!.provider);
+        },
+      });
+    }
 
     // 上游把「模型不可用 / 区域限制 / 无可用 provider / 网关请求失败」这类失败以 error
     // **事件**的形式发在一个 200 流里，而不是用 HTTP 错误码。这种请求过去会被记成

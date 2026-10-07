@@ -14,7 +14,7 @@ import path from 'path';
 import { FastifyInstance } from 'fastify';
 import { logger, LOG_FILE_PATH } from '../utils/logger.js';
 import { getUpdateState } from '../utils/update-check.js';
-import { getProjectRootDir } from '../utils/config.js';
+import { getProjectRootDir, readRawConfigFile, saveConfigFile } from '../utils/config.js';
 import { isSameOriginIfPresent } from './sse-common.js';
 import { ADMIN_CSP, adminTokenOk, injectAdminTokenMeta, isLoopbackHostHeader } from '../utils/admin-guard.js';
 import { registerAuditLog } from '../utils/audit-log.js';
@@ -388,8 +388,8 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
 
   fastify.get('/api/providers', async () => {
     const runtime = fastify.providerRuntime;
-    if (!runtime) return { providers: [], runtime: false };
-    return { runtime: true, providers: await runtime.status() };
+    if (!runtime) return { providers: [], runtime: false, defaultProvider: undefined };
+    return { runtime: true, defaultProvider: runtime.defaultProvider, providers: await runtime.status() };
   });
 
   const PROVIDER_NAMES: readonly string[] = ['commandcode', 'freebuff', 'workbuddy'];
@@ -416,6 +416,23 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     runtime.disable(name as ProviderName);
     logger.info(`[DASHBOARD] Provider ${name} disabled (hot)`);
     return { status: 'success', name, enabled: false };
+  });
+
+  fastify.post('/api/providers/default', async (req: any, reply) => {
+    const runtime = fastify.providerRuntime;
+    if (!runtime) return reply.status(404).send({ error: 'Provider runtime is not wired in this build' });
+    const name = String(req.body?.name ?? '').trim();
+    if (!runtime.setDefaultProvider(name as never)) {
+      return reply.status(400).send({ error: `Unknown provider "${name}"` });
+    }
+    // 持久化到 config.json 的 routing 分片（deepMergeKeepUnknown 保留其余键），
+    // 重启后由 ProviderRuntime.initialize 读回；当前进程即时热生效。
+    const currentRouting = (readRawConfigFile().routing ?? {}) as Record<string, unknown>;
+    const persisted = saveConfigFile({
+      routing: { ...currentRouting, defaultProvider: name },
+    } as never);
+    logger.info(`[DASHBOARD] Default provider switched to ${name} (hot; persisted=${persisted})`);
+    return { status: 'success', defaultProvider: name, persisted };
   });
 
   fastify.post('/api/providers/registry/refresh', async (_req, reply) => {

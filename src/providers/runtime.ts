@@ -126,7 +126,13 @@ export class ProviderRuntime {
       const valid = routing.upstreamPriority.filter(
         (n): n is ProviderName => (ALL_PROVIDERS as readonly string[]).includes(String(n)),
       );
-      if (valid.length > 0) this.upstreamPriority = valid;
+      // 就地替换：router 持有同一数组引用，重赋值会让路由器读到旧序（T213 阶段 2 修）。
+      if (valid.length > 0) this.upstreamPriority.splice(0, this.upstreamPriority.length, ...valid);
+    }
+    // routing.defaultProvider：priority 兜底序的第一位（§3.3 步骤 6）。
+    if (typeof routing.defaultProvider === 'string' && (ALL_PROVIDERS as readonly string[]).includes(routing.defaultProvider)) {
+      const first = routing.defaultProvider as ProviderName;
+      this.upstreamPriority.splice(0, this.upstreamPriority.length, first, ...this.upstreamPriority.filter((n) => n !== first));
     }
 
     if (this.buildProvidersFn) {
@@ -201,6 +207,21 @@ export class ProviderRuntime {
     const p = this.providers.get(name);
     if (!p) return false;
     p.disable();
+    return true;
+  }
+
+  /** 当前兜底序的第一位（= 面板「默认上游」）。 */
+  get defaultProvider(): ProviderName {
+    return this.upstreamPriority[0];
+  }
+
+  /**
+   * 面板手动切换默认上游（T213 DoD：2s 内对新请求生效——本方法即时生效，
+   * router 共享同一数组引用）。持久化由调用方经 saveConfigFile 落 `routing`。
+   */
+  setDefaultProvider(name: ProviderName): boolean {
+    if (!(ALL_PROVIDERS as readonly string[]).includes(name)) return false;
+    this.upstreamPriority.splice(0, this.upstreamPriority.length, name, ...this.upstreamPriority.filter((n) => n !== name));
     return true;
   }
 

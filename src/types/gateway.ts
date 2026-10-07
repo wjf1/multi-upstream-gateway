@@ -31,7 +31,8 @@ export interface GatewayConfigFile {
   activeAccountId?: string;
   rotationMode?: 'manual' | 'auto-quota';
   accounts?: AccountInfo[];
-  upstream?: UpstreamConfig;
+  upstream?: UpstreamConfig;  /** T213：路由分片（defaultProvider / upstreamPriority 等），透传保存。 */
+  routing?: Record<string, unknown>;
 }
 
 export interface GatewayConfig {
