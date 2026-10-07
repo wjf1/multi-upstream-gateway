@@ -34,11 +34,14 @@
   - **基准勘误（保留为教训）**：方案基线事实曾基于过期检出 v4.17.0，真实基准是 v4.22.4；基线事实必须「版本号 + 验证命令」同引。
   - **多上游进度（2026-10-07）**：实际可用上游**仍是 CommandCode 一个**。三源 Provider 外壳均已就位：
     CommandCode（P0-PORT-D2 薄适配层）/ Freebuff（T201、T202a、T202b、T203）/ WorkBuddy（T204' 联邦透传 + T205' 账号委托）。
-    **T213 阶段 1（运行时接线）已完成**（`9b98d9d`）：ProviderRuntime 装配三源 + registry/router、
-    `/api/providers` 状态与总闸（热生效）、`/v1/models` 命名空间聚合（分片门控，缺省行为不变）。
-    **数据面（chat/messages 切路由）为 T213 阶段 2，尚未开工**。
-  - **P1 已完成七卡 + T213 阶段 1**：T201 / T202a / T202b / T203 / P0-PORT-D2（`1e011a5`）/
-    T204'（`47f8a3a`）/ T205'（并入）/ T213·阶段 1（`9b98d9d`）。
+    **T213 阶段 1（运行时接线，`9b98d9d`）与阶段 2（数据面切路由，`af6db03`）均已完成**：
+    ProviderRuntime 装配三源 + registry/router、`/api/providers` 状态/总闸/默认上游切换（热生效 +
+    routing 分片持久化）、`/v1/models` 命名空间聚合（分片门控，缺省行为不变）；chat/messages 经
+    六步路由分发三 Provider，commandcode 走既有通路（零回归），freebuff/workbuddy 走文本增量契约
+    双出口（OpenAI chunk / Anthropic 桥）。**实际可用上游仍是 CommandCode 一个**——Freebuff 需配置
+    `providers.freebuff` 分片 + FREEBUFF_TOKENS，WorkBuddy 需 sidecar 二进制（联邦）。
+  - **P1 已完成七卡 + T213 两阶段**：T201 / T202a / T202b / T203 / P0-PORT-D2（`1e011a5`）/
+    T204'（`47f8a3a`）/ T205'（并入）/ T213·阶段 1+2（`9b98d9d`/`af6db03`）。
   - **当前门禁与远端**：v5.0.2 施工后为 **55 文件 / 713 用例全绿**（typecheck 见上文测试工程的既有红项）；
     产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`），远端 `main` 与 `feat/p0-port` 均在 `2d73635`；
     公开前已核查：无敏感文件被跟踪、无凭据模式命中、历史中亦从未提交过 `.env`/`config.json`/`credentials.enc`。
@@ -56,7 +59,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**60 文件 / 767 用例全绿**（T213 阶段 1 后；此前 58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**61 文件 / 777 用例全绿**（T213 阶段 2 后；此前 60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -74,6 +77,21 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T213 阶段 2：数据面切路由 + 默认上游切换（2026-10-07，`af6db03`）**：
+  - `routes/provider-dispatch.ts`——非 commandcode 决策的渲染层：chat 出口（OpenAI chunk 序列 +
+    非流式聚合）与 messages 出口（AnthropicStreamEncoder 块生命周期）；错误语义对齐既有路由
+    （未产出字节回 HTTP 信封 / 流中并入内容 / 客户端中止不落用量）；15s 空闲防断。
+  - chat.ts / messages.ts 在 translate **之前**做六步路由决策（剥前缀回写 body.model）；
+    commandcode 走既有通路零回归；`x-actual-upstream` 响应头双保险
+    （**教训**：流式出口 raw.flushHeaders 直接刷头，fastify 延迟应用的 reply.header 赶不上，
+    必须 raw.setHeader）。
+  - `persistCompletion` 增可选 provider 维度（缺省 commandcode 同旧），用量按真实来源落库；
+    分发路径用量为本地估算（文本增量流无上游 usage 事件）——面板分口径聚合的输入已就绪。
+  - 默认上游切换：`POST /api/providers/default` 热生效（runtime.setDefaultProvider 就地改
+    priority 序，修掉 initialize 重赋值导致 router 读旧序的隐患）+ `routing.defaultProvider`
+    经 saveConfigFile 持久化（deepMergeKeepUnknown 保住其余键）+ initialize 读回（重启等价）。
+  - 门禁：`npm run verify` **61 文件 / 777 用例全绿**；typecheck 双工程 / lint 0 错误。
 
 - **T213 阶段 1：三源 Provider 运行时接线（2026-10-07，`9b98d9d`）**：
   - `src/providers/runtime.ts`——ProviderRuntime：装配 IProvider 三源 + T104 的 ProviderRegistry/RequestRouter
@@ -188,11 +206,14 @@
 - **当前队列**（严格按 `PLAN-STATE.md` §1 的顺序与 deps）：
   - ✅ `P0-PORT-A~F` **全部完成**（A 基座 / B 批次 B 语义 / C 新增模块 / D1 接线 / D2 薄适配层 / E 面板移植 / F 阶段门），**已部署**。
   - ✅ **P1 已完成七卡**：`T201`、`T202a`、`T202b`、`T203`、`P0-PORT-D2`（`1e011a5`）、`T204'`（`47f8a3a`）、`T205'`（并入）。
-  - ⬜ **下一批**：`T213 阶段 2`（chat/messages 数据面切路由 + 手动降级/异常横幅 + 面板切换持久化
-    + 限流/modelAccess 双轨配置源与明文行收口）→ `T208~T212`（面板五页，消费 /api/providers 与三源数据）
+  - ⬜ **下一批**：`T208~T212`（面板五页——消费 `/api/providers` 与三源数据：上游卡片含 sidecar
+    进程视图与异常横幅、账号页消费 pool snapshot、模型目录带命名空间、用量按 provider 分口径）
     → `T214`（P1 阶段门）。
-    **注意**：T213 阶段 1（运行时装配/管理面/模型聚合）已完成；T202 卡的 DoD「Anthropic SDK 调
-    /v1/messages 通过」定于阶段 2 收口。
+    **登记的独立小卡**（T213 收口尾项，避免混入数据面提交）：限流/modelAccess 双轨配置源
+    （bootstrap UnifiedConfigStore 后切源）、legacy 扁平分支明文行、Freebuff 账号池接入路由
+    （T203 遗留：preferredAccountId/onRetry 透传）。
+    **注意**：T202 卡 DoD「Anthropic SDK 调 /v1/messages 通过」的协议层已由阶段 2 锁定
+    （假 Provider 端到端），真上游联调待 Freebuff Token/sidecar 配置后补验。
   - ⬜ 遗留小项：构建产物名仍为 `commandcode-proxy-v4.exe`，产品改名后待重命名（含 `build:win` 脚本与相关测试）。
 - **重启 9090 必须再次征得用户确认**（AGENTS.md 服务启停硬约束）。上线后用户会在面板点确认风险告知——在此之前 `/v1/*` 会 403。
 - **P1 后续**（移植完成后）：T202（Anthropic 桥——注意新树已有 `anthropic-response.ts`/`pipeline/`，须先评估复用而非另写）→ T203 → T204'（WorkBuddy 联邦透传，见 `docs/wb-source-diff-report.md` §7）→ T208~T212 面板五页 → T213 接线 → T214 阶段门。

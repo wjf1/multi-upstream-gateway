@@ -163,7 +163,17 @@
     X-Actual-Upstream 响应头）；面板手动切换默认上游（持久化）+ 上游异常横幅；
     T202 DoD「Anthropic SDK 调 /v1/messages 通过」在此收口；限流/modelAccess 双轨配置源、
     legacy 扁平分支明文行收口。
-  - 卡保持未勾选：DoD「三上游专属模型分别请求来源正确」「混合并发 50 无跨 Provider 污染」属阶段 2。
+  - **阶段 2 完成**（2026-10-07，提交 `af6db03`）：chat/messages 在 translate 前做六步路由决策
+    （剥前缀回写 body.model）；commandcode 走既有通路（零回归），freebuff/workbuddy 经
+    `routes/provider-dispatch.ts` 渲染双出口（chat=OpenAI chunk、messages=AnthropicStreamEncoder）；
+    `x-actual-upstream` 响应头（reply.header + raw.setHeader 双保险）；persistCompletion 增 provider 维度；
+    面板切换默认上游 `POST /api/providers/default`（热生效 + routing 分片持久化 + 重启等价读回）。
+    门禁：`npm run verify` **61 文件 / 777 用例全绿**；typecheck/lint 0 错误。
+    DoD 实测：三上游来源正确（prefix/registry/priority/header 四路断言）✅、混合并发 50 无污染 ✅、
+    切换立即生效 ✅。
+  - **剩余两项（登记，卡保持未勾选）**：①「上游 health 异常横幅」属面板前端，归 T208~T212 消费
+    `/api/providers`（后端数据源已就绪）；②限流/modelAccess 双轨配置源与 legacy 明文行收口——
+    需先在运行时 bootstrap UnifiedConfigStore 单例，单独立卡避免混入数据面提交。
 - [ ] T214 P1 阶段门
 - [ ] T301~T310 / T401~T406 / T501~T505（见执行依据方案）
 

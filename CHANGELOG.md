@@ -32,6 +32,15 @@
   `sidecarStatus()` 供面板上游卡片显示进程状态。sidecar 端点为 Go 源码实测口径。
   配套 `tests/workbuddy-{sidecar,provider}.test.ts` 22 例（先红后绿）。
 
+- **T213 阶段 2：数据面经六步路由分发三 Provider + 默认上游切换**（`af6db03`）——
+  chat/messages 路由接入 T104 路由器：前缀/注册表/显式指定/priority 四路决策，commandcode 走
+  既有通路（零回归），freebuff/workbuddy 经 `routes/provider-dispatch.ts` 渲染双出口
+  （OpenAI chunk / Anthropic 桥块生命周期）；`x-actual-upstream` 响应头；用量按真实来源落库
+  （persistCompletion 增 provider 维度，分发路径为本地估算）；
+  `POST /api/providers/default` 面板切换默认上游（热生效 + routing 分片持久化 + 重启等价读回）。
+  配套 `tests/provider-dispatch.test.ts` 10 例（真实监听端口 + 假 Provider marker，含混合并发 50
+  无跨 Provider 污染与错误注入）。**注意**：缺省部署（无 freebuff/workbuddy 分片）行为与接线前一致。
+
 ### 变更说明
 
 - 三个 Provider（CommandCode/Freebuff/WorkBuddy）外壳均已就位，但**尚未接入运行时**——
@@ -41,9 +50,9 @@
 
 ### 验证
 
-- 全量 `npx vitest run` **60 文件 / 767 用例全绿**（v5.0.2 基线 713 + D2 19 + workbuddy 22 + T213 阶段 1 13）；
+- 全量 `npx vitest run` **61 文件 / 777 用例全绿**（v5.0.2 基线 713 + D2 19 + workbuddy 22 + T213 阶段 1 13 + 阶段 2 10）；
   `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
-- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）。
+- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）。
 
 ## [5.0.2] - 2026-10-07
 
