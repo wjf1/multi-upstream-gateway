@@ -49,7 +49,8 @@
     T204'（`47f8a3a`）/ T205'（并入）/ T213·阶段 1+2（`9b98d9d`/`af6db03`）/ T213b（`5658065`）/
     T306 面板运行日志页（`504d70d`）/ T307 面板系统设置页（`307d751`）/ T308 WorkBuddy Anthropic 桥（`b5b3b1e`）/
     T305 Freebuff 等待室与队列（`bd27fe0`）/ T303 健康探测 + 自动降级 + 级联防护（`49c4f65`）/
-    T304 路由策略高级配置（strict / auto / same-model + 强制账号 + 规则热生效，本次）。
+    T304 路由策略高级配置（strict / auto / same-model + 强制账号 + 规则热生效）/
+    T301 WorkBuddy OAuth 设备授权与令牌看护（本次）。
   - **当前门禁与远端**：v5.0.2 施工后为 **55 文件 / 713 用例全绿**（typecheck 见上文测试工程的既有红项）；
     产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`），远端 `main` 与 `feat/p0-port` 均在 `2d73635`；
     公开前已核查：无敏感文件被跟踪、无凭据模式命中、历史中亦从未提交过 `.env`/`config.json`/`credentials.enc`。
@@ -67,7 +68,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**84 文件 / 1034 用例全绿（1 skipped）**（T304 路由策略高级配置交付后；此前 83/1027、82/1022、81/1017、80/1010、79/997、78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**86 文件 / 1061 用例全绿（1 skipped）**（T301 WorkBuddy OAuth 设备授权与令牌看护交付后；此前 84/1034、83/1027、82/1022、81/1017、80/1010、79/997、78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -85,6 +86,30 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T301 WorkBuddy OAuth 设备授权与令牌看护（2026-10-08）**：
+  - **范围**：面板内完成 OAuth 加号（授权编排）、令牌提前刷新与失败重试退避、待刷新态标记与告警、令牌只读视图（DoD 闭环）。
+  - **授权客户端**：新增 `src/providers/workbuddy/oauth.ts`（`WorkBuddyOAuthClient`）—— `startLogin(realm)` 打 sidecar
+    `POST /panel/api/login/start`（返回 `{url,state,realm}`；url/state 缺失即报错）、`pollLogin(state)` 打
+    `GET /panel/api/login/poll?state=`（404 → 会话「unknown or expired」，`done !== true` 即待授权）、
+    `waitForLogin(state,{timeoutMs,intervalMs,signal?})` 轮询至完成或超时（默认 15 分钟 / 3s）。
+    **腾讯自建 state 两段式，非 RFC 8628**；响应**只取 uid/nickname/realm/credits，显式丢弃 accessToken/refreshToken**
+    —— 网关侧永不持有 OAuth token（类型层面杜绝）。
+  - **令牌看护（Go 侧的严格超集）**：`WorkBuddyTokenWatch` —— 预刷窗口 **1 小时**（Go 侧硬编码 10 分钟）、
+    失败重试 **首次 + 3 次指数退避**（1s/2s/4s，Go 侧无退避）、**「待刷新」显式状态 + Webhook 告警（每 uid 一次）**
+    （Go 侧为静默失效）；`sync(accounts)` 保状态与待刷新标记并在账号消失时清理其告警标记；
+    `due(now)` / `pendingRefreshIds()` / `snapshot()` 供只读视图。
+  - **Provider 接线**：`mapPoolSnapshot` 经 `parseTokenExpiry` 识别 `expiresAt`/`tokenExpiresAt`/`expires_at`
+    （<1e12 视为 Unix 秒 → ×1000）与 `expiresIn`/`expires_in`（相对秒），**全缺失即 `undefined`（未知 ≠ 已过期）**；
+    `refreshPool()` 把账号同步进看护；预刷随 T303 既有 30s `probe()` **顺带** `runTick()`（不新增常驻定时器，
+    符合 Bash 硬约束），tick 失败仅 `logger.warn`、不影响探活结论。
+  - **路由**：`POST /api/upstreams/workbuddy/login/start`（realm 白名单校验 400 / 未装配 404 / sidecar 不可用 503）、
+    `GET /api/upstreams/workbuddy/login/poll?state=`（缺 state 400、会话过期 404）、
+    `GET /api/upstreams/workbuddy/tokens`（只读令牌视图，**响应无 token 字段**）。
+  - **面板**：`public/js/accounts.js` 的 WorkBuddy 卡片增 realm 下拉（`#wbLoginRealm`）+「添加账号（授权）」入口
+    （面板内 start → `window.open` → 3s 轮询至 done，404 视为会话过期）；账号行按 `/tokens` 渲染「待刷新」徽章。
+  - **测试与门禁**：新增 `tests/workbuddy-t301.test.ts` 19 例 + `tests/workbuddy-t301-routes.test.ts` 8 例全绿；
+    全量 `npm run verify` **86 测试文件 / 1061 用例全绿（1 skipped）**；双工程 typecheck 0 错误；lint 零输出；audit 0 漏洞。
 
 - **T304 路由策略高级配置（2026-10-08）**：
   - **范围**：strict / auto / same-model 三模式降级、`X-Upstream-Account` 强制账号（写审计）、
@@ -342,11 +367,15 @@
 - **当前队列**（严格按 `PLAN-STATE.md` §1 的顺序与 deps）：
   - ✅ `P0-PORT-A~F` **全部完成**（A 基座 / B 批次 B 语义 / C 新增模块 / D1 接线 / D2 薄适配层 / E 面板移植 / F 阶段门），**已部署**。
   - ✅ **P1 已完成七卡**：`T201`、`T202a`、`T202b`、`T203`、`P0-PORT-D2`（`1e011a5`）、`T204'`（`47f8a3a`）、`T205'`（并入）。
-  - ⬜ **下一批**：`T214`（P1 阶段门：三源 E2E、面板逐页验收、错误注入降级、5 分钟泄漏监控、
-    `npm audit --omit=dev`、`DECISION` 行）。
-    **T214 前置（需用户/外部提供）**：三源 E2E 需要 **Freebuff Token（`FREEBUFF_TOKENS`）** 与
-    **WorkBuddy sidecar Go 二进制**（从 `F:/AI/Qdor/review/workbuddy2api-panel` 构建）；
-    CommandCode 源 E2E 无前置。
+  - ✅ **P2/P3 已完成八卡**：`T213`（阶段 1 `9b98d9d` + 阶段 2 `af6db03`）、`T213b`（`5658065`）、`T303`（`49c4f65`）、
+    `T304`（`4e8e2ee`）、`T305`（`bd27fe0`）、`T306`（`504d70d`）、`T307`（`307d751`）、`T308`（`b5b3b1e`）、
+    `T301` WorkBuddy OAuth 设备授权与令牌看护（本次，见 §4 首条）。
+  - ⬜ **下一张卡**：`T302` 余额刷新与池状态持久化（依赖 T301）—— 5min 积分余额刷新；`state.json` 原子写 + 锁 +
+    损坏文件重建（DoD：积分按期刷新、`kill -9` 后重启状态一致、损坏文件可恢复）。之后是 `T310` P2 阶段门
+    （依赖 T301~T308；DoD：第 6 章 A-F 组 P2 部分全绿、覆盖率 ≥60%）。
+  - ⬜ **P1 阶段门 `T214`（仍卡外部 blocker）**：三源 E2E 需 **Freebuff Token（`FREEBUFF_TOKENS`）** 与
+    **WorkBuddy sidecar Go 二进制**（从 `F:/AI/Qdor/review/workbuddy2api-panel` 构建），另需负责人签字确认 `DECISION` 行；
+    自动化项已全绿。CommandCode 源 E2E 无前置。
     **登记的遗留**：判定路径合一（modelAccess/限流的两套执行路径，见 T213b 卡）；
     Freebuff 账号池接入路由（T203 遗留：preferredAccountId/onRetry 透传）。
     **登记的独立小卡**（T213 收口尾项，避免混入数据面提交）：限流/modelAccess 双轨配置源
@@ -390,6 +419,14 @@
 12. **subagent 基础设施本环境不稳定**：2026-10-07 连续多次失败（配额超限 / 进程被终止 / 上游 120s 无数据），
     但**多数"失败"的产物是完整可回收的**（先查工作区再决定）。派发时要求对方**尽早落盘**，
     接收方在失败后**先评估产物完整性**（编译 + 门禁），再决定回收还是回退。
+13. **改面板标记会被两条正则型回归测试卡住**（2026-10-08 实际踩坑，T301）：
+    - `tests/spa-a11y.test.ts` 按 `<label for="` 计数：**`for` 必须紧跟在 `<label ` 之后**，
+      写成 `<label class="sr-only" for="...">` 会被判成「漏了 for」（`class` 挡在前面）。
+    - `tests/dashboard-spa.test.ts` 要求**所有 `getElementById('x')` 的 id 在 `index.html` 里静态存在**。
+      动态 `innerHTML` 渲染出来的控件（如面板里生成的 `#wbLoginRealm` 下拉）不能再用 `getElementById` 回读，
+      改用事件委托（`change` 事件同步回模块级状态）或 `querySelector`。
+    - 另：`tests/spa-a11y.test.ts` 的取证源只含 `['core','overview','accounts','usage','models','logs']`
+      （不含 `upstream`/`settings`），`dashboard-spa.test.ts` 则含全部八个；新增/删除 `public/js/*.js` 文件时两处清单都要同步。
 
 
 ---

@@ -70,6 +70,25 @@
   面板：设置页新增降级策略下拉、会话粘性与前缀路由开关；
   配套 `tests/routing-advanced.test.ts` 7 例全绿（三模式行为、强制账号生效并写审计、规则热生效）。
 
+- **T301：WorkBuddy OAuth 设备授权与令牌看护** —— 面板内完成授权加号，并把 Go sidecar
+  「静默失效」补成显式的待刷新态与告警（作 Go 侧严格超集）：
+  授权客户端：新增 `src/providers/workbuddy/oauth.ts`（`WorkBuddyOAuthClient`），`startLogin(realm)` 打 sidecar
+  `POST /panel/api/login/start`（返回 `{url,state,realm}`）、`pollLogin(state)` 打 `GET /panel/api/login/poll?state=`
+  （404 → 「unknown or expired」，`done !== true` 即待授权）、`waitForLogin()` 轮询至完成或超时（默认 15 分钟 / 3s）；
+  腾讯自建 state 两段式（非 RFC 8628），**响应只取 uid/nickname/realm/credits，显式丢弃 accessToken/refreshToken**，
+  网关侧永不持有 OAuth token；
+  令牌看护：`WorkBuddyTokenWatch` 预刷窗口 **1 小时**（Go 侧硬编码 10 分钟）、失败重试 **首次 + 3 次指数退避**
+  （1s/2s/4s，Go 侧无退避）、**「待刷新」显式状态 + Webhook 告警（每 uid 一次）**；`sync(accounts)`
+  保状态与标记并在账号消失时清理；
+  Provider 接线：`mapPoolSnapshot` 经 `parseTokenExpiry` 识别 `expiresAt`/`tokenExpiresAt`/`expires_at`
+  （秒/毫秒自适应）与 `expiresIn`/`expires_in`（相对秒），缺失即 `undefined`（未知 ≠ 已过期，不误判已失效）；
+  `refreshPool()` 同步账号进看护，预刷随 T303 既有 30s `probe()` 顺带推进（不新增常驻定时器）；
+  路由：`POST /api/upstreams/workbuddy/login/start`（realm 白名单 400 / 未装配 404 / sidecar 不可用 503）、
+  `GET /api/upstreams/workbuddy/login/poll?state=`、`GET /api/upstreams/workbuddy/tokens`（只读视图，响应无 token 字段）；
+  面板：账号页 WorkBuddy 卡片增 realm 下拉与「添加账号（授权）」入口（面板内 start → 开窗 → 3s 轮询至 done），
+  账号行渲染「待刷新」徽章；
+  配套 `tests/workbuddy-t301.test.ts` 19 例 + `tests/workbuddy-t301-routes.test.ts` 8 例全绿。
+
 - **T305：Freebuff 等待室与队列** —— 高负载等待室排队与位置推进机制：
   等待室轮询机：`free-session.ts` 实现 `pollWaitingRoomUntilActive`，按上游 `pollAt` 延迟周期轮询并更新宿主会话，
   捕获排队位置推进直至 active 获得实例；超限抛出 `WaitingRoomTimeoutError`；支持 AbortSignal 客户端主动打断；
@@ -125,7 +144,7 @@
   覆盖率 **Statements 81%+**；
   `npm audit --omit=dev` **0 vulnerabilities**；
   `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
-- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（P0-PORT 补齐 + T214 取证）→ `504d70d`（T306 面板运行日志页）→ `307d751`（T307 面板系统设置页）→ `b5b3b1e`（T308 WorkBuddy Anthropic 桥）→ `bd27fe0`（T305 Freebuff 等待室与队列）→ `49c4f65`（T303 健康探测 + 自动降级 + 级联防护）→ T304（路由策略高级配置）。
+- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（P0-PORT 补齐 + T214 取证）→ `504d70d`（T306 面板运行日志页）→ `307d751`（T307 面板系统设置页）→ `b5b3b1e`（T308 WorkBuddy Anthropic 桥）→ `bd27fe0`（T305 Freebuff 等待室与队列）→ `49c4f65`（T303 健康探测 + 自动降级 + 级联防护）→ `4e8e2ee`（T304 路由策略高级配置）→ `b8b0c37`（T301 WorkBuddy OAuth 设备授权与令牌看护）。
 
 ## [5.0.3] - 2026-10-07
 

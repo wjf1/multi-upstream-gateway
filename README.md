@@ -79,7 +79,7 @@ Freebuff 模块已移植入树但**尚未接入运行时**，详见[项目状态
 
 Provider 契约位于 `src/providers/core/`（`interface` / `router` / `registry`），六步路由 + 三源命名空间已接入
 `/v1/chat/completions`、`/v1/messages` 数据面；面板新增「上游」页（启停总闸热生效、默认上游切换、sidecar 进程视图、
-总览异常横幅）与「日志」「设置」页。**自动降级与级联防护（T303）、三模式路由策略与强制账号（T304）已交付**。
+总览异常横幅）与「日志」「设置」页。**自动降级与级联防护（T303）、三模式路由策略与强制账号（T304）、WorkBuddy OAuth 授权与令牌看护（T301）已交付**。
 P1 剩余：T214（P1 阶段门，自动化项已全绿，剩 3 项外部 blocker：Freebuff 真实 Token、WorkBuddy sidecar 二进制、负责人签字）。
 
 ---
@@ -155,6 +155,8 @@ P1 剩余：T214（P1 阶段门，自动化项已全绿，剩 3 项外部 blocke
 - **面板外置化** — `public/index.html` 骨架化（约 560 行）+ `public/js/*.js`，新增 `/js/*` 静态路由（no-cache）；hash 路由、明暗主题、首启引导卡。**仍为零外链依赖（离线可用）。**
 - **自动降级与级联防护（T303）** — 30s 周期探活将不可用上游标记 `degraded`（状态接口与面板可见）；30s 滑动窗口内 429 达 2 次自动摘除并跳过该候选；全局在途队列深度上限（`queueMaxDepth`，默认 128）超限返回 `503` + `Retry-After`，防止上游雪崩时把网关自身拖垮；切换流量按「第 1 分钟 10%、此后每分钟 +10%」渐进承接，避免瞬时尖峰。
 - **三模式路由策略与强制账号（T304）** — `strict`（不降级，失败即失败）/ `auto`（首字节前自动切换到优先级列表中的下一个启用上游）/ `same-model`（仅当备选支持同名模型才降级）；**流式响应一旦首字节流出即严格禁止跨上游切换**，保证协议流纯净。请求头 `x-upstream-account` 可强制指定账号池中的具体账号，取值链（路由决策 > 请求头 > 凭据尾号）全部写入审计日志；第六步会话粘性与第三步前缀路由可分别关闭。规则经 `GET/POST /api/routing/rules` 热生效并持久化至 `config.json` 的 `routing` 分片。
+- **WorkBuddy OAuth 授权与令牌看护（T301）** — 账号页 WorkBuddy 卡片可直接完成 **OAuth 授权加号**（选国内版 / 国际版 → 面板内开窗授权 → 自动轮询至完成），无需离开网关面板。授权走腾讯自建 state 两段式（非 RFC 8628），由 sidecar 原生面板 API 承接；**网关侧只取 `uid/nickname/realm/credits`，永不持有 OAuth token**（响应类型层面无 token 字段）。
+  令牌**提前 1 小时**进入预刷（Go sidecar 原为硬编码 10 分钟），刷新失败按 **1s → 2s → 4s 指数退避重试**，最终仍失败则把账号标为**「待刷新」**并在账号行显示红色徽章、同时推送一次 Webhook 告警——把 sidecar 侧的「静默失效」变成显式可见状态。只读视图与授权编排暴露为 `GET /api/upstreams/workbuddy/tokens`、`POST /api/upstreams/workbuddy/login/start`、`GET /api/upstreams/workbuddy/login/poll?state=`。
 
 ---
 
@@ -489,7 +491,7 @@ dashboard port and a full regression/phase gate (**658 tests green, 65.87% cover
 The Provider contract lives in `src/providers/core/` (`interface` / `router` / `registry`); six-step routing + three-source
 namespacing now serve `/v1/chat/completions` and `/v1/messages`. The dashboard gained an **Upstreams** tab (hot enable/disable
 toggles, default-provider switching, sidecar process view, overview alert banner) plus **Logs** and **Settings** tabs.
-**Automatic degradation & cascade protection (T303)** and **three-mode routing strategy with forced accounts (T304)** have shipped.
+**Automatic degradation & cascade protection (T303)**, **three-mode routing strategy with forced accounts (T304)**, and **WorkBuddy OAuth authorization & token watch (T301)** have shipped.
 Remaining for P1: T214 (phase gate — automated checks all green; three external blockers remain: a real Freebuff token, the WorkBuddy
 sidecar binary, and owner sign-off).
 
@@ -515,6 +517,8 @@ sidecar binary, and owner sign-off).
 - Windows toast notifications for quota exhaustion / account switch / engine pause — native, zero dependencies, 30-min dedupe, with **self-diagnosis** of the system-wide notification switch; disable via `COMMANDCODE_NOTIFY=0`
 - **Automatic degradation & cascade protection (T303)** — a 30s probe loop flags unusable upstreams as `degraded` (visible in the status API and dashboard); two 429s inside a 30s sliding window pull the provider out of rotation and skip that candidate; a global in-flight queue cap (`queueMaxDepth`, default 128) returns `503` + `Retry-After` so an upstream avalanche cannot take the gateway down with it; switched traffic is ramped in gradually (10% in minute 1, +10%/min thereafter) instead of slamming the new provider
 - **Three-mode routing strategy & forced accounts (T304)** — `strict` (never degrade; a failure is a failure) / `auto` (switch to the next enabled upstream in the priority list before the first byte) / `same-model` (degrade only if the candidate serves a model of the same name); **once the first byte of a streaming response has been sent, cross-upstream switching is strictly forbidden** to keep the protocol stream clean. The `x-upstream-account` header forces a specific account from the pool, and the resolution chain (route decision > header > credential tail) is written to the audit log. Step-6 session stickiness and step-3 prefix routing can each be disabled. Rules hot-apply via `GET/POST /api/routing/rules` and persist into the `routing` shard of `config.json`.
+- **WorkBuddy OAuth authorization & token watch (T301)** — the WorkBuddy card on the accounts page now performs **OAuth account onboarding** in place (pick the China / global realm → the panel opens the authorization window → polls until complete), so you never leave the gateway dashboard. Authorization uses Tencent's own two-step `state` flow (not RFC 8628) served by the sidecar's native panel API; **the gateway keeps only `uid/nickname/realm/credits` and never holds an OAuth token** (no token field exists in the response type).
+  Tokens enter **pre-refresh 1 hour ahead** of expiry (the Go sidecar hard-coded 10 minutes), failures retry with **exponential backoff 1s → 2s → 4s**, and an account that still fails is flagged **"pending refresh"** with a red badge on its row plus a single Webhook alert — turning what used to be a silent failure on the sidecar side into an explicit, visible state. The read-only view and the authorization flow are exposed as `GET /api/upstreams/workbuddy/tokens`, `POST /api/upstreams/workbuddy/login/start`, and `GET /api/upstreams/workbuddy/login/poll?state=`.
 
 **Dashboard & usage insight**
 
