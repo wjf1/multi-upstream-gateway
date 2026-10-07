@@ -45,7 +45,6 @@ import crypto from 'node:crypto';
 import type {
   AnthropicContentBlock,
   AnthropicImageBlock,
-  AnthropicMessage,
   AnthropicRequest,
   AnthropicToolResultBlock,
   OpenAIChatRequest,
@@ -166,15 +165,6 @@ function toolResultContent(
   return parts;
 }
 
-/** 消息内容（字符串或多个文本块）拼接为纯文本。 */
-function messageText(content: string | AnthropicContentBlock[] | undefined): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter((b): b is Extract<AnthropicContentBlock, { type: 'text' }> => b.type === 'text')
-    .map((b) => b.text)
-    .join('\n');
-}
 
 /** thinking 配置 → reasoning_effort（anthropic.go:508/:540）。 */
 export function thinkingToReasoningEffort(req: AnthropicRequest): string | undefined {
