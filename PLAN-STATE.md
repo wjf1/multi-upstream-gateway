@@ -264,7 +264,19 @@
     - 面板：设置页新增降级策略下拉、会话粘性开关、模型前缀路由开关（`public/js/settings.js` 同步提交与回填）
   - 测试：新增 `tests/routing-advanced.test.ts` 7 例全绿（三模式行为断言、强制账号生效并写审计留痕、规则 GET/POST 热生效）；修复 `tests/spa-a11y.test.ts` 暴露的设置页两个 `<label>` 缺 `for` 属性
   - 门禁：全量 **84 文件 / 1034 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
-- [ ] T301~T302 / T309~T310 / T401~T406 / T501~T505（见执行依据方案）
+- [x] T301 WorkBuddy OAuth 设备授权与令牌看护（2026-10-08 完成）
+  - deps: T204'（联邦透传 Provider + sidecar 管理）
+  - 范围：面板内完成 OAuth 加号（授权编排）、令牌提前刷新与失败重试退避、待刷新态标记与告警、令牌只读视图
+  - 交付：
+    - 授权客户端：新增 `src/providers/workbuddy/oauth.ts`（`WorkBuddyOAuthClient`）—— `startLogin(realm)` 打 sidecar `POST /panel/api/login/start`（返回 `{url,state,realm}`，url/state 缺失即抛错）、`pollLogin(state)` 打 `GET /panel/api/login/poll?state=`（404 → 「unknown or expired」，`done !== true` 即待授权）、`waitForLogin(state,{timeoutMs,intervalMs,signal?})` 轮询至完成或超时（默认 15 分钟 / 3s）；**响应只取 uid/nickname/realm/credits，显式丢弃 accessToken/refreshToken**（腾讯自建 state 两段式，非 RFC 8628）
+    - 令牌看护：`WorkBuddyTokenWatch` 作 Go 侧的**严格超集**——预刷窗口 **1 小时**（Go 侧硬编码 10 分钟）、失败重试 **首次 + 3 次指数退避**（1s/2s/4s，Go 侧无退避）、**「待刷新」显式状态 + Webhook 告警（每 uid 一次）**（Go 侧静默失效）；`sync(accounts)` 保状态与待刷新标记并在账号消失时清理、`due(now)`、`pendingRefreshIds()`、`snapshot()` 供只读视图
+    - Provider 接线：`mapPoolSnapshot` 经 `parseTokenExpiry` 识别 `expiresAt`/`tokenExpiresAt`/`expires_at`（秒/毫秒自适应）与 `expiresIn`/`expires_in`（相对秒），**缺失即 `undefined`（未知 ≠ 已过期）**；`refreshPool()` 把账号同步进看护；预刷随 T303 既有 30s `probe()` 顺带 `runTick()`（不新增常驻定时器），失败仅 warn、不影响探活结论
+    - 凭据边界：网关侧**永不持有任何 OAuth token**（pollLogin 返回类型层面无 token 字段）
+    - 路由（`src/routes/dashboard.ts`）：`POST /api/upstreams/workbuddy/login/start`（realm 白名单校验 400 / 未装配 404 / sidecar 不可用 503）、`GET /api/upstreams/workbuddy/login/poll?state=`（缺 state 400、会话过期 404）、`GET /api/upstreams/workbuddy/tokens`（只读令牌视图，响应无 token 字段）
+    - 面板（`public/js/accounts.js`）：WorkBuddy 卡片增 realm 下拉 + 「添加账号（授权）」入口（面板内完成 start → 开窗 → 3s 轮询至 done，404 视为会话过期），账号行按 `/tokens` 渲染「待刷新」徽章
+  - 测试：新增 `tests/workbuddy-t301.test.ts` 19 例 + `tests/workbuddy-t301-routes.test.ts` 8 例全绿（授权编排含 404/500/缺 url-state、4 次尝试与 1s/2s/4s 退避、待刷新不重复告警、中途成功清标记、runTick 只打窗口内、sync 保标记与账号消失清理、notify 抛错不外泄、parseTokenExpiry 各口径、Provider 接线与响应无凭据泄漏、三条路由 401/400/404/503、面板端点接线）
+  - 门禁：全量 **86 文件 / 1061 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [ ] T302 / T309~T310 / T401~T406 / T501~T505（见执行依据方案）
 
 ## 4. 阶段记录
 
