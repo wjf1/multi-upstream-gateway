@@ -52,6 +52,14 @@
   legacy 扁平分支 `syncEnvFile` 在加密库可用时不再写明文 `COMMANDCODE_API_KEY` 并摘除旧行。
   配套 `tests/config-source-closure.test.ts` 8 例。
 
+- **T308：WorkBuddy Anthropic 通用桥接入与快照** —— 补齐协议能力矩阵：
+  复用 `core/anthropic-bridge`，打通 WorkBuddy 模型在 `/v1/messages` 出口下的双向映射；
+  支持 `codebuddy/` 与 `workbuddy/` 前缀及 Header 显式路由，剥离前缀后回传 `x-actual-upstream: workbuddy`；
+  流式 SSE 输出严格的 Anthropic 块生命周期事件序列（`message_start` → `content_block_start` → `content_block_delta`… → `content_block_stop` → `message_delta` → `message_stop`）；
+  非流式聚合为标准 Anthropic Message JSON 响应（包含 role、content、stop_reason、usage 估算）；
+  保证 system prompt 前置、多轮历史上下文完整转换；WorkBuddy 异常时返回标准 Anthropic 错误信封；
+  配套 `tests/workbuddy-anthropic.test.ts` 7 例全绿与快照保真度锁。
+
 - **T307：面板系统设置页** —— 独立系统设置管理页升级：
   后端实现 `GET /api/settings` 与 `POST /api/settings`，支持五大区块（网络/安全/告警/存储与危险操作/面板偏好）细粒度校验，
   返回字段级错误字典供前端精准标红提示；支持 2s 热生效反馈；增强 `POST /api/usage/clear` 记录管理面审计日志与事件；
@@ -87,11 +95,11 @@
 
 ### 验证
 
-- 全量 `npm run verify` **80 文件 / 1010 用例全绿（1 skipped）**（此前 79 文件 / 997 用例）；
+- 全量 `npm run verify` **81 文件 / 1017 用例全绿（1 skipped）**（此前 80 文件 / 1010 用例）；
   覆盖率 **Statements 81%+**；
   `npm audit --omit=dev` **0 vulnerabilities**；
   `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
-- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（P0-PORT 补齐 + T214 取证）→ `504d70d`（T306 面板运行日志页）。
+- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（P0-PORT 补齐 + T214 取证）→ `504d70d`（T306 面板运行日志页）→ `307d751`（T307 面板系统设置页）。
 
 ## [5.0.3] - 2026-10-07
 

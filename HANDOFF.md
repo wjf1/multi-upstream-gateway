@@ -64,7 +64,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**80 文件 / 1010 用例全绿（1 skipped）**（T307 面板系统设置页交付后；此前 79/997、78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**81 文件 / 1017 用例全绿（1 skipped）**（T308 WorkBuddy Anthropic 桥与快照交付后；此前 80/1010、79/997、78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -82,6 +82,16 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T308 WorkBuddy Anthropic 通用桥接入与快照（2026-10-07）**：
+  - **范围**：复用 `core/anthropic-bridge`，补齐协议矩阵中 WorkBuddy 模型的 `/v1/messages` 能力与快照保真度锁（DoD 闭环）。
+  - **数据面**：端到端验证 `messages.ts` 经 `anthropicToOpenAIRequest` 与 `respondViaProvider` 的 WorkBuddy 路由分发；
+    支持 `codebuddy/` 与 `workbuddy/` 前缀及 Header `x-upstream-provider: workbuddy` 显式路由，剥离前缀后回传 `x-actual-upstream: workbuddy`。
+  - **协议出口与块生命周期**：流式 SSE 输出严格的 Anthropic 块生命周期序列（`message_start` → `content_block_start` → `content_block_delta`… → `content_block_stop` → `message_delta` → `message_stop`）；
+    非流式聚合为标准 Anthropic Message JSON 响应（包含 role、content、stop_reason、usage 估算）；
+    保证 system prompt 前置、多轮历史上下文完整转换；WorkBuddy 异常时返回标准 Anthropic 错误信封。
+  - **测试与门禁**：新增 `tests/workbuddy-anthropic.test.ts` 7 例全绿，涵盖路由、流式、非流式、上下文透传、错误信封与流/非流 Snapshot 快照保真度锁；
+    全量 `npm run verify` **81 测试文件 / 1017 用例全绿（1 skipped）**；双工程 typecheck 0 错误；lint 零输出；audit 0 漏洞。
 
 - **T307 面板系统设置页（2026-10-07）**：
   - **范围**：独立系统设置页、五大区块（网络/安全/告警/存储与危险操作/面板偏好）、热生效、需重启项标红、校验错误字段级标红、清空用量二次确认与审计留痕。

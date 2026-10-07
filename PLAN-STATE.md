@@ -227,7 +227,16 @@
     - 前端：`public/index.html` 增加第 7 个导航 Tab 与独立 `#content-settings` 分区；五大区块网格卡片排列；需重启项（端口/主机/代理）明确红标徽章；`public/js/settings.js` 负责表单加载、提交防重、字段级标红、2s 热生效 Feedback、清空用量二次确认弹窗与审计留痕
   - 测试：新增 `tests/spa-settings.test.ts` 13 例全绿；更新 `tests/dashboard-spa.test.ts` 与 `tests/spa-a11y.test.ts` 声明式扩容 settings 语义；严格保持 4 模态弹窗 a11y 守卫
   - 门禁：全量 **80 文件 / 1010 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
-- [ ] T301~T305 / T308~T310 / T401~T406 / T501~T505（见执行依据方案）
+- [x] T308 WorkBuddy Anthropic 通用桥接入（2026-10-07 完成）
+  - deps: T202, T204
+  - 范围：复用 `core/anthropic-bridge`，补齐协议矩阵 WorkBuddy `/v1/messages` 能力与快照保真度锁
+  - 交付：
+    - 数据面：确认与验证 `messages.ts` 经 `anthropicToOpenAIRequest` 与 `respondViaProvider` 的 WorkBuddy 路由链路；支持 `codebuddy/` 与 `workbuddy/` 前缀及 Header 显式路由；
+    - 协议出口：流式 SSE 输出严格的 Anthropic 块生命周期序列（`message_start` → `content_block_start` → `content_block_delta` → `content_block_stop` → `message_delta` → `message_stop`）；非流式输出标准 Anthropic Message JSON（包含 role、content、stop_reason、usage）；
+    - 语义保真：验证 system prompt 前置、多轮历史上下文完整转换、异常时返回标准 Anthropic 错误信封
+  - 测试：新增 `tests/workbuddy-anthropic.test.ts` 7 例全绿，涵盖路由、流式、非流式、上下文透传、错误信封与流/非流 Snapshot 快照保真度锁
+  - 门禁：全量 **81 文件 / 1017 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [ ] T301~T305 / T309~T310 / T401~T406 / T501~T505（见执行依据方案）
 
 ## 4. 阶段记录
 
