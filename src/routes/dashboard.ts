@@ -566,6 +566,82 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     return { status: 'success', defaultProvider: name, persisted };
   });
 
+  // ── T304：路由策略高级配置（strict / auto / same-model / 粘性 / 优先级）───────
+
+  fastify.get('/api/routing/rules', async () => {
+    const runtime = fastify.providerRuntime;
+    if (runtime) {
+      return { ok: true, rules: runtime.getRoutingRules() };
+    }
+    const routing = (readRawConfigFile().routing ?? {}) as Record<string, unknown>;
+    return {
+      ok: true,
+      rules: {
+        defaultProvider: (routing.defaultProvider as any) || 'commandcode',
+        fallbackStrategy: (routing.fallbackStrategy as any) || 'strict',
+        upstreamPriority: Array.isArray(routing.upstreamPriority) ? routing.upstreamPriority : ['commandcode', 'freebuff', 'workbuddy'],
+        sessionStickyEnabled: routing.sessionStickyEnabled !== false,
+        modelPrefixRouting: routing.modelPrefixRouting !== false,
+      },
+    };
+  });
+
+  fastify.post('/api/routing/rules', async (req: any, reply) => {
+    const runtime = fastify.providerRuntime;
+    const body = req.body || {};
+    const errors: Record<string, string> = {};
+
+    let fallbackStrategy: 'strict' | 'auto' | 'same-model' | undefined;
+    if (body.fallbackStrategy !== undefined) {
+      const s = String(body.fallbackStrategy).trim().toLowerCase();
+      if (!['strict', 'auto', 'same-model'].includes(s)) {
+        errors.fallbackStrategy = '无效的降级策略，可选值：strict, auto, same-model';
+      } else {
+        fallbackStrategy = s as any;
+      }
+    }
+
+    let defaultProvider: ProviderName | undefined;
+    if (body.defaultProvider !== undefined) {
+      const p = String(body.defaultProvider).trim().toLowerCase();
+      if (!['commandcode', 'freebuff', 'workbuddy'].includes(p)) {
+        errors.defaultProvider = '无效的默认上游提供商';
+      } else {
+        defaultProvider = p as any;
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      return reply.status(400).send({ ok: false, error: '路由规则参数校验失败', errors });
+    }
+
+    const currentRouting = (readRawConfigFile().routing ?? {}) as Record<string, unknown>;
+    const updates: Record<string, unknown> = {};
+    if (fallbackStrategy) updates.fallbackStrategy = fallbackStrategy;
+    if (defaultProvider) updates.defaultProvider = defaultProvider;
+    if (body.sessionStickyEnabled !== undefined) updates.sessionStickyEnabled = Boolean(body.sessionStickyEnabled);
+    if (body.modelPrefixRouting !== undefined) updates.modelPrefixRouting = Boolean(body.modelPrefixRouting);
+    if (Array.isArray(body.upstreamPriority)) updates.upstreamPriority = body.upstreamPriority;
+
+    // 内存即时热生效
+    if (runtime) {
+      runtime.setRoutingRules(updates as any);
+    }
+
+    // 持久化到 config.json
+    const persisted = saveConfigFile({
+      routing: { ...currentRouting, ...updates },
+    } as never);
+
+    logger.info(`[ROUTING] Rules updated via dashboard (persisted=${persisted})`);
+    return {
+      ok: true,
+      message: '路由规则已热生效并持久化保存',
+      persisted,
+      rules: runtime ? runtime.getRoutingRules() : { ...currentRouting, ...updates },
+    };
+  });
+
   fastify.post('/api/providers/registry/refresh', async (_req, reply) => {
     const runtime = fastify.providerRuntime;
     if (!runtime) return reply.status(404).send({ error: 'Provider runtime is not wired in this build' });
@@ -854,6 +930,9 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         },
         preferences: {
           defaultProvider: (routing.defaultProvider as string) || 'commandcode',
+          fallbackStrategy: (routing.fallbackStrategy as string) || 'strict',
+          sessionStickyEnabled: routing.sessionStickyEnabled !== false,
+          modelPrefixRouting: routing.modelPrefixRouting !== false,
           acceptedRiskDisclaimer: isRiskDisclaimerAccepted(),
         },
       },
@@ -947,6 +1026,16 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
       }
     }
 
+    let fallbackStrategy: 'strict' | 'auto' | 'same-model' | undefined;
+    if (pref.fallbackStrategy !== undefined && pref.fallbackStrategy !== null) {
+      const s = String(pref.fallbackStrategy).trim().toLowerCase();
+      if (!['strict', 'auto', 'same-model'].includes(s)) {
+        errors.fallbackStrategy = '无效的降级策略，可选值：strict, auto, same-model';
+      } else {
+        fallbackStrategy = s as any;
+      }
+    }
+
     if (Object.keys(errors).length > 0) {
       return reply.status(400).send({
         ok: false,
@@ -977,10 +1066,17 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
       updates.limits = { ...currentLimits, maxBodyMb };
     }
 
-    if (defaultProvider) {
-      updates.routing = { ...currentRouting, defaultProvider };
+    const routingUpdates: Record<string, unknown> = { ...currentRouting };
+    let routingChanged = false;
+    if (defaultProvider) { routingUpdates.defaultProvider = defaultProvider; routingChanged = true; }
+    if (fallbackStrategy) { routingUpdates.fallbackStrategy = fallbackStrategy; routingChanged = true; }
+    if (pref.sessionStickyEnabled !== undefined) { routingUpdates.sessionStickyEnabled = Boolean(pref.sessionStickyEnabled); routingChanged = true; }
+    if (pref.modelPrefixRouting !== undefined) { routingUpdates.modelPrefixRouting = Boolean(pref.modelPrefixRouting); routingChanged = true; }
+
+    if (routingChanged) {
+      updates.routing = routingUpdates;
       if (fastify.providerRuntime) {
-        fastify.providerRuntime.setDefaultProvider(defaultProvider as never);
+        fastify.providerRuntime.setRoutingRules(routingUpdates as any);
       }
     }
 

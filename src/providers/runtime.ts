@@ -76,6 +76,15 @@ export interface ProviderStatusView {
   initError?: string;
 }
 
+/** T304：高级路由策略视图（master-plan §3.2 & §3.6）。 */
+export interface RoutingRulesView {
+  defaultProvider: ProviderName;
+  fallbackStrategy: 'strict' | 'auto' | 'same-model';
+  upstreamPriority: ProviderName[];
+  sessionStickyEnabled: boolean;
+  modelPrefixRouting: boolean;
+}
+
 export interface ProviderRuntimeDeps {
   env?: NodeJS.ProcessEnv;
   /**
@@ -108,6 +117,9 @@ export class ProviderRuntime {
   /** 各 Provider 最近一次 listModels 的元数据缓存（/v1/models 聚合用，避免热路径打 sidecar）。 */
   private modelCache = new Map<ProviderName, OpenAIModel[]>();
   private upstreamPriority: ProviderName[] = [...DEFAULT_PRIORITY];
+  private fallbackStrategy: 'strict' | 'auto' | 'same-model' = 'strict';
+  private sessionStickyEnabled = true;
+  private modelPrefixRouting = true;
 
   constructor(deps: ProviderRuntimeDeps = {}) {
     this.env = deps.env ?? process.env;
@@ -118,6 +130,8 @@ export class ProviderRuntime {
       upstreamPriority: this.upstreamPriority,
       isProviderEnabled: (name) => this.providers.get(name)?.isEnabled() ?? false,
       registry: this.registry,
+      sessionStickyEnabled: this.sessionStickyEnabled,
+      modelPrefixRouting: this.modelPrefixRouting,
     });
   }
 
@@ -130,6 +144,16 @@ export class ProviderRuntime {
   async initialize(): Promise<void> {
     this.shards = this.loadShards() ?? {};
     const routing = (this.shards.routing ?? {}) as Record<string, unknown>;
+    if (routing.fallbackStrategy === 'auto' || routing.fallbackStrategy === 'same-model' || routing.fallbackStrategy === 'strict') {
+      this.fallbackStrategy = routing.fallbackStrategy;
+    }
+    if (routing.sessionStickyEnabled !== undefined) {
+      this.sessionStickyEnabled = Boolean(routing.sessionStickyEnabled);
+    }
+    if (routing.modelPrefixRouting !== undefined) {
+      this.modelPrefixRouting = Boolean(routing.modelPrefixRouting);
+    }
+
     if (Array.isArray(routing.upstreamPriority)) {
       const valid = routing.upstreamPriority.filter(
         (n): n is ProviderName => (ALL_PROVIDERS as readonly string[]).includes(String(n)),
@@ -234,6 +258,54 @@ export class ProviderRuntime {
     if (!(ALL_PROVIDERS as readonly string[]).includes(name)) return false;
     this.upstreamPriority.splice(0, this.upstreamPriority.length, name, ...this.upstreamPriority.filter((n) => n !== name));
     return true;
+  }
+
+  /** T304：获取当前降级策略（strict / auto / same-model）。 */
+  get fallbackStrategyMode(): 'strict' | 'auto' | 'same-model' {
+    return this.fallbackStrategy;
+  }
+
+  /** 获取当前优先级序只读副本。 */
+  get priorityList(): ProviderName[] {
+    return [...this.upstreamPriority];
+  }
+
+  /** T304：获取当前路由策略全貌。 */
+  getRoutingRules(): RoutingRulesView {
+    return {
+      defaultProvider: this.defaultProvider,
+      fallbackStrategy: this.fallbackStrategy,
+      upstreamPriority: [...this.upstreamPriority],
+      sessionStickyEnabled: this.sessionStickyEnabled,
+      modelPrefixRouting: this.modelPrefixRouting,
+    };
+  }
+
+  /** T304：热更新路由策略（即时生效，无延迟）。 */
+  setRoutingRules(rules: Partial<RoutingRulesView>): void {
+    if (rules.defaultProvider && (ALL_PROVIDERS as readonly string[]).includes(rules.defaultProvider)) {
+      this.setDefaultProvider(rules.defaultProvider);
+    }
+    if (rules.fallbackStrategy && ['strict', 'auto', 'same-model'].includes(rules.fallbackStrategy)) {
+      this.fallbackStrategy = rules.fallbackStrategy;
+    }
+    if (rules.sessionStickyEnabled !== undefined) {
+      this.sessionStickyEnabled = Boolean(rules.sessionStickyEnabled);
+    }
+    if (rules.modelPrefixRouting !== undefined) {
+      this.modelPrefixRouting = Boolean(rules.modelPrefixRouting);
+    }
+    if (Array.isArray(rules.upstreamPriority)) {
+      const valid = rules.upstreamPriority.filter(
+        (n): n is ProviderName => (ALL_PROVIDERS as readonly string[]).includes(String(n)),
+      );
+      if (valid.length > 0) {
+        this.upstreamPriority.splice(0, this.upstreamPriority.length, ...valid);
+      }
+    }
+    logger.info(
+      `[ROUTING] Rules updated hot (fallback=${this.fallbackStrategy}, default=${this.defaultProvider})`,
+    );
   }
 
   // ─── 目录 / 状态 ────────────────────────────────────────────────────────────

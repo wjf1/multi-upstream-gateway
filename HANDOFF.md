@@ -45,8 +45,11 @@
     六步路由分发三 Provider，commandcode 走既有通路（零回归），freebuff/workbuddy 走文本增量契约
     双出口（OpenAI chunk / Anthropic 桥）。**实际可用上游仍是 CommandCode 一个**——Freebuff 需配置
     `providers.freebuff` 分片 + FREEBUFF_TOKENS，WorkBuddy 需 sidecar 二进制（联邦）。
-  - **P1 已完成七卡 + T213 两阶段**：T201 / T202a / T202b / T203 / P0-PORT-D2（`1e011a5`）/
-    T204'（`47f8a3a`）/ T205'（并入）/ T213·阶段 1+2（`9b98d9d`/`af6db03`）。
+  - **P1 已完成七卡 + T213 两阶段 + 面板/降级六卡**：T201 / T202a / T202b / T203 / P0-PORT-D2（`1e011a5`）/
+    T204'（`47f8a3a`）/ T205'（并入）/ T213·阶段 1+2（`9b98d9d`/`af6db03`）/ T213b（`5658065`）/
+    T306 面板运行日志页（`504d70d`）/ T307 面板系统设置页（`307d751`）/ T308 WorkBuddy Anthropic 桥（`b5b3b1e`）/
+    T305 Freebuff 等待室与队列（`bd27fe0`）/ T303 健康探测 + 自动降级 + 级联防护（`49c4f65`）/
+    T304 路由策略高级配置（strict / auto / same-model + 强制账号 + 规则热生效，本次）。
   - **当前门禁与远端**：v5.0.2 施工后为 **55 文件 / 713 用例全绿**（typecheck 见上文测试工程的既有红项）；
     产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`），远端 `main` 与 `feat/p0-port` 均在 `2d73635`；
     公开前已核查：无敏感文件被跟踪、无凭据模式命中、历史中亦从未提交过 `.env`/`config.json`/`credentials.enc`。
@@ -64,7 +67,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**83 文件 / 1027 用例全绿（1 skipped）**（T303 健康探测与级联防护交付后；此前 82/1022、81/1017、80/1010、79/997、78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**84 文件 / 1034 用例全绿（1 skipped）**（T304 路由策略高级配置交付后；此前 83/1027、82/1022、81/1017、80/1010、79/997、78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -82,6 +85,26 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T304 路由策略高级配置（2026-10-08）**：
+  - **范围**：strict / auto / same-model 三模式降级、`X-Upstream-Account` 强制账号（写审计）、
+    会话粘性/前缀路由开关、路由规则配置页与热生效 API（DoD 三项闭环）。
+  - **三模式降级**：`provider-dispatch.ts` 在流式首字节前按 `runtime.fallbackStrategyMode` 决策——
+    `strict` 不降级；`auto` 切换到 `runtime.priorityList` 中的下一个启用上游；
+    `same-model` 仅当备选支持同名模型才降级（`registry.resolve(modelName)` + 模型缓存兜底判定）。
+    chat 非流式/流式未开头、messages 非流式/流式未开头共 5 处错误路径在抛错前尝试切换，
+    命中后回写 `x-actual-upstream`（`reply.header` + `reply.raw.setHeader` 双保险）并复用同一渲染出口；
+    **首字节已产出严格不切换**（沿用 T303 铁律）。
+  - **强制账号**：新增请求头 `x-upstream-account`（常量 `UPSTREAM_ACCOUNT_HEADER`），
+    `RouteDecision` 增 `preferredAccountId`，经 `ChatOptions.preferredAccountId` 透传至 Provider 选号；
+    `chat.ts` / `messages.ts` 审计 `accountId` 取值链 = 路由决策 > 请求头 > 凭据尾号。
+  - **路由开关**：`RouterDeps` 增 `sessionStickyEnabled` / `modelPrefixRouting`，可分别关闭第六步粘性与第三步前缀路由。
+  - **规则热生效**：`GET /api/routing/rules` 读当前规则；`POST /api/routing/rules` 校验
+    `fallbackStrategy`（三枚举）/ `defaultProvider` 后热生效并持久化 `config.json` 的 `routing` 分片；
+    面板设置页新增降级策略下拉、会话粘性开关、模型前缀路由开关（`public/js/settings.js` 同步提交与回填）。
+  - **测试与门禁**：新增 `tests/routing-advanced.test.ts` 7 例全绿（三模式行为断言、强制账号生效并写审计留痕、
+    规则 GET/POST 热生效）；顺带修复 `tests/spa-a11y.test.ts` 暴露的设置页两个 `<label>` 缺 `for` 属性；
+    全量 `npm run verify` **84 测试文件 / 1034 用例全绿（1 skipped）**；双工程 typecheck 0 错误；lint 零输出；audit 0 漏洞。
 
 - **T303 健康探测 + 自动降级 + 级联防护（2026-10-07）**：
   - **范围**：按 §3.6 全量实现（30s 探活调度、degraded 状态管理、429 熔断摘除、ramp 渐进切换流量控制、全局在途队列深度控制、流式首字节铁律保护）（DoD 闭环）。

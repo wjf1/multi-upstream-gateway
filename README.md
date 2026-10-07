@@ -79,7 +79,8 @@ Freebuff 模块已移植入树但**尚未接入运行时**，详见[项目状态
 
 Provider 契约位于 `src/providers/core/`（`interface` / `router` / `registry`），六步路由 + 三源命名空间已接入
 `/v1/chat/completions`、`/v1/messages` 数据面；面板新增「上游」页（启停总闸热生效、默认上游切换、sidecar 进程视图、
-总览异常横幅）。P1 剩余：T214（P1 阶段门）与登记小卡（UnifiedConfigStore 切源、legacy 明文行收口）。
+总览异常横幅）与「日志」「设置」页。**自动降级与级联防护（T303）、三模式路由策略与强制账号（T304）已交付**。
+P1 剩余：T214（P1 阶段门，自动化项已全绿，剩 3 项外部 blocker：Freebuff 真实 Token、WorkBuddy sidecar 二进制、负责人签字）。
 
 ---
 
@@ -152,6 +153,8 @@ Provider 契约位于 `src/providers/core/`（`interface` / `router` / `registry
 - **管理面鉴权与请求 ID 全链路** — `admin-guard` 覆盖管理面写操作；`x-request-id` 贯通路由与上游调用；pino redact 与危险 `NODE_DEBUG` 项剥离。
 - **Provider 契约层与用量维度** — `src/providers/core/`（契约 / 六步路由 / 模型命名空间注册表）；用量记录新增 `provider` / `native` 字段与 `summarizeByProvider`，为多上游分别计量做准备。
 - **面板外置化** — `public/index.html` 骨架化（约 560 行）+ `public/js/*.js`，新增 `/js/*` 静态路由（no-cache）；hash 路由、明暗主题、首启引导卡。**仍为零外链依赖（离线可用）。**
+- **自动降级与级联防护（T303）** — 30s 周期探活将不可用上游标记 `degraded`（状态接口与面板可见）；30s 滑动窗口内 429 达 2 次自动摘除并跳过该候选；全局在途队列深度上限（`queueMaxDepth`，默认 128）超限返回 `503` + `Retry-After`，防止上游雪崩时把网关自身拖垮；切换流量按「第 1 分钟 10%、此后每分钟 +10%」渐进承接，避免瞬时尖峰。
+- **三模式路由策略与强制账号（T304）** — `strict`（不降级，失败即失败）/ `auto`（首字节前自动切换到优先级列表中的下一个启用上游）/ `same-model`（仅当备选支持同名模型才降级）；**流式响应一旦首字节流出即严格禁止跨上游切换**，保证协议流纯净。请求头 `x-upstream-account` 可强制指定账号池中的具体账号，取值链（路由决策 > 请求头 > 凭据尾号）全部写入审计日志；第六步会话粘性与第三步前缀路由可分别关闭。规则经 `GET/POST /api/routing/rules` 热生效并持久化至 `config.json` 的 `routing` 分片。
 
 ---
 
@@ -204,6 +207,28 @@ curl http://127.0.0.1:9090/v1/messages \
 
 ```bash
 curl "http://127.0.0.1:9090/v1/models?plan=individual-go&available=1"
+```
+
+多上游路由的显式指定（可选，缺省走六步路由自动决策）：
+
+```bash
+# 指定上游：x-upstream-provider: commandcode | freebuff | workbuddy（等价于模型名前缀 freebuff/<id>、workbuddy/<id>）
+# 指定账号：x-upstream-account（仅对支持账号池的上游生效，如 Freebuff / WorkBuddy 联邦）
+curl http://127.0.0.1:9090/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "x-upstream-provider: freebuff" \
+  -H "x-upstream-account: <account-id>" \
+  -d '{"model":"glm-5.2","messages":[{"role":"user","content":"hi"}]}'
+```
+
+响应头 `x-actual-upstream` 回报该请求**实际命中的上游**（发生降级切换时也会如实回写）。
+路由规则可在面板设置页调整，或直接读写管理面 API（需 `x-admin-token`）：
+
+```bash
+curl http://127.0.0.1:9090/api/routing/rules -H "x-admin-token: $ADMIN_TOKEN"
+curl -X POST http://127.0.0.1:9090/api/routing/rules -H "x-admin-token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"fallbackStrategy":"auto","defaultProvider":"freebuff"}'
 ```
 
 ## 🚨 错误码与重试语义
@@ -463,8 +488,10 @@ dashboard port and a full regression/phase gate (**658 tests green, 65.87% cover
 
 The Provider contract lives in `src/providers/core/` (`interface` / `router` / `registry`); six-step routing + three-source
 namespacing now serve `/v1/chat/completions` and `/v1/messages`. The dashboard gained an **Upstreams** tab (hot enable/disable
-toggles, default-provider switching, sidecar process view, overview alert banner). Remaining for P1: T214 (phase gate) and
-registered follow-ups (UnifiedConfigStore switch-over, legacy plaintext-line cleanup).
+toggles, default-provider switching, sidecar process view, overview alert banner) plus **Logs** and **Settings** tabs.
+**Automatic degradation & cascade protection (T303)** and **three-mode routing strategy with forced accounts (T304)** have shipped.
+Remaining for P1: T214 (phase gate — automated checks all green; three external blockers remain: a real Freebuff token, the WorkBuddy
+sidecar binary, and owner sign-off).
 
 ### Features
 
@@ -486,6 +513,8 @@ registered follow-ups (UnifiedConfigStore switch-over, legacy plaintext-line cle
 - **SSRF guard, fail-closed** — strict upstream URL allowlist, **redirect blocking** (`redirect: 'manual'` everywhere; opt-in `UPSTREAM_REDIRECT=follow` re-validates every hop, never follows into private/metadata addresses, strips credentials across hosts), **DNS-rebinding guard** (`DNS_REBINDING_GUARD=on` resolves & validates every upstream hostname per request), **log secret redaction** (`LOG_REDACTION=on` masks Bearer/api-key/sk- tokens in logs) — see the bilingual [Upstream URL safety](#security) section
 - **Structured error codes** — 17 stable codes with actionable hints, surfaced as OpenAI `error.type/code` or Anthropic `error.type` (table below)
 - Windows toast notifications for quota exhaustion / account switch / engine pause — native, zero dependencies, 30-min dedupe, with **self-diagnosis** of the system-wide notification switch; disable via `COMMANDCODE_NOTIFY=0`
+- **Automatic degradation & cascade protection (T303)** — a 30s probe loop flags unusable upstreams as `degraded` (visible in the status API and dashboard); two 429s inside a 30s sliding window pull the provider out of rotation and skip that candidate; a global in-flight queue cap (`queueMaxDepth`, default 128) returns `503` + `Retry-After` so an upstream avalanche cannot take the gateway down with it; switched traffic is ramped in gradually (10% in minute 1, +10%/min thereafter) instead of slamming the new provider
+- **Three-mode routing strategy & forced accounts (T304)** — `strict` (never degrade; a failure is a failure) / `auto` (switch to the next enabled upstream in the priority list before the first byte) / `same-model` (degrade only if the candidate serves a model of the same name); **once the first byte of a streaming response has been sent, cross-upstream switching is strictly forbidden** to keep the protocol stream clean. The `x-upstream-account` header forces a specific account from the pool, and the resolution chain (route decision > header > credential tail) is written to the audit log. Step-6 session stickiness and step-3 prefix routing can each be disabled. Rules hot-apply via `GET/POST /api/routing/rules` and persist into the `routing` shard of `config.json`.
 
 **Dashboard & usage insight**
 

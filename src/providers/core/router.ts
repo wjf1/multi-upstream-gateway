@@ -43,6 +43,8 @@ export interface RouteDecision {
   via: RouteVia;
   /** 仅 via='sticky' 时为 true（§3.5 会话粘性命中）。 */
   stickyHit?: boolean;
+  /** T304：强制指定的上游账号 ID（来自 X-Upstream-Account）。 */
+  preferredAccountId?: string;
   /**
    * 重试建议秒数。成功决策恒缺省；NO_PROVIDER_AVAILABLE 走错误路径（抛
    * ProxyError），建议值由 error.context.retryAfterSeconds 承载——本字段为
@@ -84,12 +86,19 @@ export interface RouterDeps {
    * conversationId 后查映射表），注入本回调即可，路由决策本体无需改动。
    */
   stickyResolver?: (conversationId: string) => ProviderName | undefined;
+  /** T304：会话粘性是否启用（默认 true）。设为 false 则跳过粘性决策。 */
+  sessionStickyEnabled?: boolean;
+  /** T304：模型名前缀路由是否启用（默认 true）。设为 false 则跳过前缀剥离。 */
+  modelPrefixRouting?: boolean;
 }
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
 /** 步骤 1 的显式指定 header（比对时大小写不敏感）。 */
 export const UPSTREAM_PROVIDER_HEADER = 'x-upstream-provider';
+
+/** T304：强制指定账号 header（比对时大小写不敏感）。 */
+export const UPSTREAM_ACCOUNT_HEADER = 'x-upstream-account';
 
 /** NO_PROVIDER_AVAILABLE 的 Retry-After 建议值（秒）。 */
 export const DEFAULT_RETRY_AFTER_SECONDS = 30;
@@ -149,29 +158,33 @@ export class RequestRouter {
    */
   route(input: RoutingInput): RouteDecision {
     const { requestId } = input;
+    const preferredAccountId = getHeader(input.headers, UPSTREAM_ACCOUNT_HEADER);
 
     // 步骤 1：X-Upstream-Provider 显式指定（优先级最高）。
     const headerRaw = getHeader(input.headers, UPSTREAM_PROVIDER_HEADER);
     if (headerRaw !== undefined && headerRaw.trim() !== '') {
-      return this.decideExplicit(input, headerRaw, 'header');
+      return this.decideExplicit(input, headerRaw, 'header', preferredAccountId);
     }
 
     // 步骤 2：extra_body.upstream_provider。
     const bodyRaw = input.body?.extra_body?.upstream_provider;
     if (typeof bodyRaw === 'string' && bodyRaw.trim() !== '') {
-      return this.decideExplicit(input, bodyRaw, 'extra_body');
+      return this.decideExplicit(input, bodyRaw, 'extra_body', preferredAccountId);
     }
 
     // 步骤 3：模型名前缀（前缀 = provider name 或其对外别名）。
     const model = input.body?.model ?? '';
-    const prefixed = splitRoutingPrefix(model);
-    if (prefixed) {
-      return {
-        provider: prefixed.provider,
-        model: prefixed.bare,
-        requestId,
-        via: 'prefix',
-      };
+    if (this.deps.modelPrefixRouting !== false) {
+      const prefixed = splitRoutingPrefix(model);
+      if (prefixed) {
+        return {
+          provider: prefixed.provider,
+          model: prefixed.bare,
+          requestId,
+          via: 'prefix',
+          ...(preferredAccountId ? { preferredAccountId } : {}),
+        };
+      }
     }
 
     // 步骤 4：统一模型注册表隐式映射（裸名仅在唯一命中时放行）。
@@ -186,22 +199,41 @@ export class RequestRouter {
         );
       }
       if (hits.length === 1) {
-        return { provider: hits[0], model, requestId, via: 'registry' };
+        return {
+          provider: hits[0],
+          model,
+          requestId,
+          via: 'registry',
+          ...(preferredAccountId ? { preferredAccountId } : {}),
+        };
       }
     }
 
-    // 步骤 5：会话粘性（默认不启用；命中仅作提示，provider disabled 则视为落空）。
-    if (input.conversationId !== undefined && this.deps.stickyResolver) {
+    // 步骤 5：会话粘性（默认启用；命中仅作提示，provider disabled 则视为落空）。
+    if (this.deps.sessionStickyEnabled !== false && input.conversationId !== undefined && this.deps.stickyResolver) {
       const sticky = this.deps.stickyResolver(input.conversationId);
       if (sticky && this.deps.isProviderEnabled(sticky)) {
-        return { provider: sticky, model, requestId, via: 'sticky', stickyHit: true };
+        return {
+          provider: sticky,
+          model,
+          requestId,
+          via: 'sticky',
+          stickyHit: true,
+          ...(preferredAccountId ? { preferredAccountId } : {}),
+        };
       }
     }
 
     // 步骤 6：upstreamPriority 兜底——取第一个 enabled 的 provider。
     for (const name of this.deps.upstreamPriority) {
       if (this.deps.isProviderEnabled(name)) {
-        return { provider: name, model, requestId, via: 'priority' };
+        return {
+          provider: name,
+          model,
+          requestId,
+          via: 'priority',
+          ...(preferredAccountId ? { preferredAccountId } : {}),
+        };
       }
     }
 
@@ -231,6 +263,7 @@ export class RequestRouter {
     input: RoutingInput,
     raw: string,
     via: 'header' | 'extra_body',
+    preferredAccountId?: string,
   ): RouteDecision {
     const provider = normalizeProvider(raw);
     if (!provider) {
@@ -257,6 +290,7 @@ export class RequestRouter {
       model: prefixed ? prefixed.bare : model,
       requestId: input.requestId,
       via,
+      ...(preferredAccountId ? { preferredAccountId } : {}),
     };
   }
 }

@@ -253,7 +253,18 @@
     - 数据面流式铁律守护：`provider-dispatch.ts` 请求入口/出口原子管理队列槽位（`acquireQueueSlot` / `releaseQueueSlot`）；记录 429 错误统计；首字节产出后（`began === true`）严格禁止跨 Provider 切换降级，确保协议纯净度
   - 测试：新增 `tests/degradation.test.ts` 5 例全绿（DoD 1 断网 30s 内 degraded/恢复 healthy、DoD 2 ramp 渐进直方图平滑输出、DoD 3 429×2 摘除并跳过候选、DoD 4 首字节后严禁切换、DoD 5 queueMaxDepth 超限 503）
   - 门禁：全量 **83 文件 / 1027 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
-- [ ] T301~T302 / T304 / T309~T310 / T401~T406 / T501~T505（见执行依据方案）
+- [x] T304 路由策略高级配置（2026-10-08 完成）
+  - deps: T303
+  - 范围：strict / auto / same-model 三模式降级、`X-Upstream-Account` 强制账号（写审计）、会话粘性/前缀路由开关、路由规则配置页与热生效 API
+  - 交付：
+    - 三模式降级：`provider-dispatch.ts` 在流式首字节前按 `fallbackStrategy` 决策——`strict` 不降级；`auto` 切换到 `runtime.priorityList` 中的下一个启用上游；`same-model` 仅当备选支持同名模型才降级（`registry.resolve(modelName)` + `modelCache` 兜底判定）。5 处错误路径（chat 非流式/流式未开头、messages 非流式/流式未开头）在抛错前尝试切换，命中后回写 `x-actual-upstream`（`reply.header` + `reply.raw.setHeader` 双保险）并复用同一渲染出口；首字节已产出（`began`）严格不切换
+    - 强制账号：新增 `x-upstream-account` 请求头（`UPSTREAM_ACCOUNT_HEADER`），`RouteDecision` 增 `preferredAccountId`，经 `ChatOptions.preferredAccountId` 透传至 Provider 选号；`chat.ts` / `messages.ts` 审计 `accountId` 取值链 = 路由决策 > 请求头 > 凭据尾号
+    - 路由开关：`RouterDeps` 增 `sessionStickyEnabled` / `modelPrefixRouting`，可分别关闭第六步粘性与第三步前缀路由
+    - 规则热生效：`GET /api/routing/rules` 读当前规则；`POST /api/routing/rules` 校验 `fallbackStrategy`（三枚举）/ `defaultProvider` 后热生效并持久化 `config.json` 的 `routing` 分片
+    - 面板：设置页新增降级策略下拉、会话粘性开关、模型前缀路由开关（`public/js/settings.js` 同步提交与回填）
+  - 测试：新增 `tests/routing-advanced.test.ts` 7 例全绿（三模式行为断言、强制账号生效并写审计留痕、规则 GET/POST 热生效）；修复 `tests/spa-a11y.test.ts` 暴露的设置页两个 `<label>` 缺 `for` 属性
+  - 门禁：全量 **84 文件 / 1034 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [ ] T301~T302 / T309~T310 / T401~T406 / T501~T505（见执行依据方案）
 
 ## 4. 阶段记录
 

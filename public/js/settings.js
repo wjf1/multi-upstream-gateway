@@ -97,6 +97,15 @@ async function loadSettings() {
   const elDefProv = document.getElementById('set_defaultProvider');
   if (elDefProv) elDefProv.value = pref.defaultProvider || 'commandcode';
 
+  const elFbStrat = document.getElementById('set_fallbackStrategy');
+  if (elFbStrat) elFbStrat.value = pref.fallbackStrategy || 'strict';
+
+  const elSticky = document.getElementById('set_sessionStickyEnabled');
+  if (elSticky) elSticky.checked = pref.sessionStickyEnabled !== false;
+
+  const elPrefix = document.getElementById('set_modelPrefixRouting');
+  if (elPrefix) elPrefix.checked = pref.modelPrefixRouting !== false;
+
   const rStatus = document.getElementById('view_riskStatus');
   if (rStatus) {
     if (pref.acceptedRiskDisclaimer) {
@@ -154,6 +163,15 @@ async function submitSettings() {
 
   const defProv = document.getElementById('set_defaultProvider')?.value;
   if (defProv) payload.preferences.defaultProvider = defProv;
+
+  const fbStratVal = document.getElementById('set_fallbackStrategy')?.value;
+  if (fbStratVal) payload.preferences.fallbackStrategy = fbStratVal;
+
+  const stickyEl = document.getElementById('set_sessionStickyEnabled');
+  if (stickyEl) payload.preferences.sessionStickyEnabled = stickyEl.checked;
+
+  const prefixEl = document.getElementById('set_modelPrefixRouting');
+  if (prefixEl) payload.preferences.modelPrefixRouting = prefixEl.checked;
 
   const { ok, data, error } = await apiJson('/api/settings', {
     method: 'POST',

@@ -164,11 +164,19 @@ export async function chatRoutes(fastify: FastifyInstance) {
     };
 
     let recorded = false;
+    const prefAccHeader = (req.headers['x-upstream-account'] as string | undefined)?.trim();
     const persistOnce = (status: 'COMPLETED' | 'FAILED', errorCode?: string, traceOverride?: string): void => {
       if (recorded) return;
       recorded = true;
       // 审计落盘与 TPM 出账和用量落库同点收敛：recorded 幂等保证一次请求只记一条。
-      auditRequestEnd(audit, { model: modelName, inputTokens: usageAcc.inputTokens, outputTokens: usageAcc.outputTokens, status, accountId: accountTail(apiKey) });
+      // T304：若客户端显式指定 X-Upstream-Account，审计记录优先留痕该账号。
+      auditRequestEnd(audit, {
+        model: modelName,
+        inputTokens: usageAcc.inputTokens,
+        outputTokens: usageAcc.outputTokens,
+        status,
+        accountId: prefAccHeader || accountTail(apiKey),
+      });
       recordRequestOutput(req, usageAcc.outputTokens);
       persistCompletion(modelName, usageAcc, requestContext, startTime, status, traceOverride ?? traceId, 'chat', errorCode, requestId);
     };
@@ -190,7 +198,13 @@ export async function chatRoutes(fastify: FastifyInstance) {
           acc.inputTokens = info.inputTokens;
           acc.outputTokens = info.outputTokens;
           acc.sawUsage = true;
-          auditRequestEnd(audit, { model: modelName, inputTokens: info.inputTokens, outputTokens: info.outputTokens, status: info.status, accountId: accountTail(apiKey) });
+          auditRequestEnd(audit, {
+            model: modelName,
+            inputTokens: info.inputTokens,
+            outputTokens: info.outputTokens,
+            status: info.status,
+            accountId: info.preferredAccountId || prefAccHeader || accountTail(apiKey),
+          });
           recordRequestOutput(req, info.outputTokens);
           persistCompletion(modelName, acc, requestContext, startTime, info.status, info.traceId, 'chat', info.errorCode, requestId, routedDecision!.provider);
           logCompletion(info.inputTokens, info.outputTokens, startTime, modelName, info.status);

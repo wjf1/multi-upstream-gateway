@@ -58,6 +58,18 @@
   数据面流式铁律守护：`provider-dispatch.ts` 请求入口/出口原子管理队列槽位（`acquireQueueSlot` / `releaseQueueSlot`）；记录 429 错误统计；首字节产出后（`began === true`）严格禁止跨 Provider 切换降级，确保协议纯净度；
   配套 `tests/degradation.test.ts` 5 例全绿（DoD 1 断网 30s 内 degraded/恢复 healthy、DoD 2 ramp 渐进直方图平滑输出、DoD 3 429×2 摘除并跳过候选、DoD 4 首字节后严禁切换、DoD 5 queueMaxDepth 超限 503）；修复 `tests/admin-boundary.test.ts` 避免在 Windows 上因原生 Toast 耗时导致的 5s 超时假红。
 
+- **T304：路由策略高级配置（strict / auto / same-model + 强制账号 + 规则热生效）** —— 落地 §3.6/§3.7：
+  三模式降级：`provider-dispatch.ts` 在流式首字节前按 `fallbackStrategy` 决策——`strict` 不降级、
+  `auto` 切换到优先级列表中的下一个启用上游、`same-model` 仅当备选支持同名模型才降级
+  （经 `registry.resolve` + 模型缓存兜底判定）；命中后回写 `x-actual-upstream` 并重新走同一渲染出口；
+  强制账号：新增 `x-upstream-account` 请求头（`UPSTREAM_ACCOUNT_HEADER`），经 `RouteDecision.preferredAccountId`
+  透传至 Provider 选号，并写入审计日志 `accountId`（优先级：路由决策 > 请求头 > 凭据尾号）；
+  路由开关：`RouterDeps` 增 `sessionStickyEnabled` / `modelPrefixRouting`，可分别关闭第六步粘性与
+  第三步前缀路由；新增 `GET /api/routing/rules` 与 `POST /api/routing/rules`（校验 `fallbackStrategy` /
+  `defaultProvider`，热生效并持久化至 `config.json` 的 `routing` 分片）；
+  面板：设置页新增降级策略下拉、会话粘性与前缀路由开关；
+  配套 `tests/routing-advanced.test.ts` 7 例全绿（三模式行为、强制账号生效并写审计、规则热生效）。
+
 - **T305：Freebuff 等待室与队列** —— 高负载等待室排队与位置推进机制：
   等待室轮询机：`free-session.ts` 实现 `pollWaitingRoomUntilActive`，按上游 `pollAt` 延迟周期轮询并更新宿主会话，
   捕获排队位置推进直至 active 获得实例；超限抛出 `WaitingRoomTimeoutError`；支持 AbortSignal 客户端主动打断；
@@ -109,11 +121,11 @@
 
 ### 验证
 
-- 全量 `npm run verify` **83 文件 / 1027 用例全绿（1 skipped）**（此前 82 文件 / 1022 用例）；
+- 全量 `npm run verify` **84 文件 / 1034 用例全绿（1 skipped）**（此前 83 文件 / 1027 用例）；
   覆盖率 **Statements 81%+**；
   `npm audit --omit=dev` **0 vulnerabilities**；
   `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
-- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（P0-PORT 补齐 + T214 取证）→ `504d70d`（T306 面板运行日志页）→ `307d751`（T307 面板系统设置页）→ `b5b3b1e`（T308 WorkBuddy Anthropic 桥）→ `bd27fe0`（T305 Freebuff 等待室与队列）。
+- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（P0-PORT 补齐 + T214 取证）→ `504d70d`（T306 面板运行日志页）→ `307d751`（T307 面板系统设置页）→ `b5b3b1e`（T308 WorkBuddy Anthropic 桥）→ `bd27fe0`（T305 Freebuff 等待室与队列）→ `49c4f65`（T303 健康探测 + 自动降级 + 级联防护）→ T304（路由策略高级配置）。
 
 ## [5.0.3] - 2026-10-07
 

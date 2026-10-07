@@ -780,6 +780,30 @@ html.light .mfilter-chip.on{color:#fff}
           <p id="err_defaultProvider" class="text-rose-400 text-[11px] mt-1 hidden"></p>
         </div>
 
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="set_fallbackStrategy" class="text-xs text-slate-300">路由降级策略 (fallbackStrategy)</label>
+            <span class="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">热生效</span>
+          </div>
+          <select id="set_fallbackStrategy" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500">
+            <option value="strict">严格模式 strict（不可用直接报错，默认）</option>
+            <option value="auto">自动降级 auto（首字节前自动切换优先级备选）</option>
+            <option value="same-model">同名模型 same-model（仅当备选支持同名模型才降级）</option>
+          </select>
+          <p class="text-[10px] text-slate-500 mt-0.5">流式响应一旦首字节流出，严格禁止跨上游切换以防止脏协议流</p>
+        </div>
+
+        <div class="space-y-2 pt-1">
+          <label for="set_sessionStickyEnabled" class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="set_sessionStickyEnabled" class="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0">
+            <span class="text-xs text-slate-300">开启会话账号粘性 (sessionStickyEnabled)</span>
+          </label>
+          <label for="set_modelPrefixRouting" class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="set_modelPrefixRouting" class="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0">
+            <span class="text-xs text-slate-300">开启模型名前缀路由 (modelPrefixRouting，如 codebuddy/glm-5.2)</span>
+          </label>
+        </div>
+
         <div class="p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-xs space-y-2">
           <div class="text-slate-400 font-medium">使用前风险告知确认状态</div>
           <div class="flex items-center justify-between">

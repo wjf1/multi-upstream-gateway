@@ -22,6 +22,7 @@ import { estimateTextTokens, isAbortError } from '../adapters/commandcode/upstre
 import { writeSSEHeaders } from './sse-common.js';
 import { ErrorCode, ProxyError, toProxyError } from '../utils/errors.js';
 import { AnthropicStreamEncoder, sseFrame } from '../providers/core/anthropic-bridge.js';
+import type { ProviderName } from '../providers/core/interface.js';
 import type { ProviderRuntime } from '../providers/runtime.js';
 import type { RouteDecision } from '../providers/core/router.js';
 import { logger } from '../utils/logger.js';
@@ -35,6 +36,8 @@ export interface ProviderFinalizeInfo {
   traceId?: string;
   inputTokens: number;
   outputTokens: number;
+  /** T304：强制指定的账号 ID（留存审计日志）。 */
+  preferredAccountId?: string;
 }
 
 export interface ProviderDispatchArgs {
@@ -87,7 +90,14 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     if (settled) return;
     settled = true;
     releaseSlot();
-    finalize({ status, errorCode, traceId, inputTokens, outputTokens });
+    finalize({
+      status,
+      errorCode,
+      traceId,
+      inputTokens,
+      outputTokens,
+      preferredAccountId: decision.preferredAccountId,
+    });
   };
   /** 客户端中止：与既有路由同语义——直接收尾，不落用量。 */
   const abandon = (): void => {
@@ -123,6 +133,43 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     }
   };
 
+  /** T304：三模式降级挑选（首字节产出前才允许调用）。 */
+  const tryFallback = (failedProvider: ProviderName): ProviderName | null => {
+    const strat = runtime.fallbackStrategyMode;
+    if (strat === 'strict') return null; // 默认严格模式：绝不降级
+
+    const candidate = runtime.degradation.pickFallbackCandidate(
+      failedProvider,
+      runtime.priorityList,
+      (p) => runtime.isEnabled(p),
+    );
+    if (!candidate) return null;
+
+    if (strat === 'same-model') {
+      const hits = runtime.registry.resolve(modelName);
+      let supports = candidate === 'commandcode' || hits.includes(candidate);
+      if (!supports) {
+        const cached = (runtime as any).modelCache?.get(candidate);
+        if (cached && Array.isArray(cached) && cached.some((m: any) => m.id === modelName)) {
+          supports = true;
+        }
+      }
+      if (!supports) {
+        logger.info(
+          `[FALLBACK] Candidate ${candidate} does not serve identical model ${modelName}, shedding`,
+        );
+        return null;
+      }
+    }
+    return candidate;
+  };
+
+  const chatOpts = {
+    requestId,
+    abortSignal,
+    ...(decision.preferredAccountId ? { preferredAccountId: decision.preferredAccountId } : {}),
+  };
+
   if (mode === 'chat') {
     const chunkId = `chatcmpl-${randomUUID().slice(0, 8)}`;
     const created = Math.floor(startTime / 1000);
@@ -140,7 +187,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     if (!stream) {
       let fullText = '';
       try {
-        for await (const delta of provider.chatCompletion(openaiReq, { requestId, abortSignal })) {
+        for await (const delta of provider.chatCompletion(openaiReq, chatOpts)) {
           if (abortSignal.aborted) {
             abandon();
             return reply.status(499).send({ error: 'client aborted' });
@@ -165,6 +212,17 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
           return reply.status(499).send({ error: 'client aborted' });
         }
         logger.error(`[DISPATCH] ${decision.provider} chat error | Model ${modelName} | ${proxyErr.code}: ${proxyErr.message}`);
+        const fb = tryFallback(decision.provider);
+        if (fb) {
+          logger.warn(
+            `[FALLBACK] Auto failing over from ${decision.provider} to ${fb} before first byte for request ${requestId}`,
+          );
+          decision.provider = fb;
+          reply.header('x-actual-upstream', fb);
+          reply.raw.setHeader('x-actual-upstream', fb);
+          releaseSlot();
+          return await respondViaProvider(args);
+        }
         finish('FAILED', proxyErr.code);
         return reply.status(proxyErr.status).send({ error: proxyErr.openAIPayload() });
       }
@@ -172,7 +230,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
 
     // 流式：OpenAI chunk 序列（role 起始 → 内容增量 → finish [+usage]）。
     try {
-      for await (const delta of provider.chatCompletion(openaiReq, { requestId, abortSignal })) {
+      for await (const delta of provider.chatCompletion(openaiReq, chatOpts)) {
         if (abortSignal.aborted) {
           disarmPing();
           abandon();
@@ -215,6 +273,17 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
       }
       logger.error(`[DISPATCH] ${decision.provider} chat stream error | Model ${modelName} | ${proxyErr.code}: ${proxyErr.message}`);
       if (!began) {
+        const fb = tryFallback(decision.provider);
+        if (fb) {
+          logger.warn(
+            `[FALLBACK] Auto failing over from ${decision.provider} to ${fb} before first byte for request ${requestId}`,
+          );
+          decision.provider = fb;
+          reply.header('x-actual-upstream', fb);
+          reply.raw.setHeader('x-actual-upstream', fb);
+          releaseSlot();
+          return await respondViaProvider(args);
+        }
         finish('FAILED', proxyErr.code);
         return sendErrorEnvelope(reply, mode, proxyErr, false, true);
       }
@@ -232,7 +301,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
   if (!stream) {
     let fullText = '';
     try {
-      for await (const delta of provider.chatCompletion(openaiReq, { requestId, abortSignal })) {
+      for await (const delta of provider.chatCompletion(openaiReq, chatOpts)) {
         if (abortSignal.aborted) {
           abandon();
           return reply.status(499).send({ type: 'error', error: { type: 'api_error', message: 'client aborted' } });
@@ -259,6 +328,17 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
         return reply.status(499).send({ type: 'error', error: { type: 'api_error', message: 'client aborted' } });
       }
       logger.error(`[DISPATCH] ${decision.provider} messages error | Model ${modelName} | ${proxyErr.code}: ${proxyErr.message}`);
+      const fb = tryFallback(decision.provider);
+      if (fb) {
+        logger.warn(
+          `[FALLBACK] Auto failing over from ${decision.provider} to ${fb} before first byte for request ${requestId}`,
+        );
+        decision.provider = fb;
+        reply.header('x-actual-upstream', fb);
+        reply.raw.setHeader('x-actual-upstream', fb);
+        releaseSlot();
+        return await respondViaProvider(args);
+      }
       finish('FAILED', proxyErr.code);
       return reply.status(proxyErr.status).send(proxyErr.anthropicPayload());
     }
@@ -273,7 +353,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     armPing();
   };
   try {
-    for await (const delta of provider.chatCompletion(openaiReq, { requestId, abortSignal })) {
+    for await (const delta of provider.chatCompletion(openaiReq, chatOpts)) {
       if (abortSignal.aborted) {
         disarmPing();
         abandon();
@@ -313,13 +393,23 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     }
     logger.error(`[DISPATCH] ${decision.provider} messages stream error | Model ${modelName} | ${proxyErr.code}: ${proxyErr.message}`);
     if (!began) {
+      const fb = tryFallback(decision.provider);
+      if (fb) {
+        logger.warn(
+          `[FALLBACK] Auto failing over from ${decision.provider} to ${fb} before first byte for request ${requestId}`,
+        );
+        decision.provider = fb;
+        reply.header('x-actual-upstream', fb);
+        reply.raw.setHeader('x-actual-upstream', fb);
+        releaseSlot();
+        return await respondViaProvider(args);
+      }
       finish('FAILED', proxyErr.code);
       return sendErrorEnvelope(reply, mode, proxyErr, false, true);
     }
     finish('FAILED', proxyErr.code, encoder.id);
     reply.raw.write(sseFrame('error', { type: 'error', error: { type: 'api_error', message: `${proxyErr.code}: ${proxyErr.message}` } }));
     if (!reply.raw.writableEnded) reply.raw.end();
-    return reply;
     return reply;
   }
 }
