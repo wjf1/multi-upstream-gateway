@@ -21,10 +21,10 @@
   - **门禁数据（v5.0.1）**：`npm run verify` **51 文件 / 667 用例全绿**、`npm run lint` 零输出、`npm run typecheck` 双工程通过；新增 1 文件 9 用例锁定「内容产出前中断必重试 / 内容产出后必不重试」。
   - **门禁数据（v5.0.2，未推送）**：`build` / `lint` 零输出、src 工程 `tsc --noEmit` 通过；
     `npx vitest run --exclude '**/commandcode-provider.test.ts'` **55 文件 / 713 用例全绿**（+4 例）。
-    ⚠️ **`npm run typecheck` 的 tests 工程当前会红**：并行会话留有**未跟踪**的 TDD 文件
-    `tests/commandcode-provider.test.ts`，它 import 尚未实现的 `src/providers/commandcode/provider.ts`
-    （故 `npm run verify` 也随之红）。与本版改动无关，**未删除**（属他人进行中的工作），
-    门禁据此作了上述排除并已在此注明 —— 接手时先确认该文件是否已由对方补齐或移除。
+    ⚠️ 该条目写作时的 tests 工程 typecheck 红项（并行会话未跟踪的 `tests/commandcode-provider.test.ts`）
+    **已消除**：`src/providers/commandcode/provider.ts` 已由 P0-PORT-D2 交付（见 §4），全量门禁恢复全绿。
+  - **门禁数据（P1 D2/T204'/T205' 后，最新）**：全量 **58 文件 / 754 用例全绿**（713 + D2 19 例 + workbuddy 22 例）；
+    `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
   - **已部署（2026-10-07）**：看门狗第 5 秒拉起新代码；`config.json` flat→unified 迁移完成、凭据落 `credentials.enc`（`.env` 明文行已摘除）；
     **风险门经用户在面板确认后放行**。详见 §7 部署检查清单。
   - **代理端口已收敛（2026-10-07）**：Clash 混合端口经用户在界面固定为 **7900**，四处编码（`.env` / `config.json` 的 `upstream.proxy` /
@@ -32,11 +32,11 @@
     真实对话经该链路成功。**教训**：该端口在本机有四处副本且**环境变量优先级高于配置文件**，任一处不同步都会
     「改了不生效」或静默回退直连；端口曾在 7897/7900 间来回变更过，故请保持固定。
   - **基准勘误（保留为教训）**：方案基线事实曾基于过期检出 v4.17.0，真实基准是 v4.22.4；基线事实必须「版本号 + 验证命令」同引。
-  - **多上游进度（2026-10-07）**：实际可用上游**仍是 CommandCode 一个**——Freebuff 已具备
-    Provider/账号池/错误分类/凭据加密/AI 桥/tools 规范化（T201、T202a、T202b、T203 均已完成），
-    但**尚未接入运行时**（`providers/core` 目前只被自身与 freebuff 引用，未接 `src/index.ts` / `src/routes/`，接线属 T213）；
-    WorkBuddy 仍在规划（联邦透传路线，见 `docs/wb-source-diff-report.md` §7）。
-  - **P1 已完成四卡**：T201（Freebuff 核心移植）/ T202a（tools schema 规范化）/ T202b（Anthropic 桥）/ T203（账号池与错误处理）。
+  - **多上游进度（2026-10-07）**：实际可用上游**仍是 CommandCode 一个**。三源 Provider 外壳均已就位：
+    CommandCode（P0-PORT-D2 薄适配层）/ Freebuff（T201、T202a、T202b、T203）/ WorkBuddy（T204' 联邦透传 + T205' 账号委托），
+    但**均尚未接入运行时**（`providers/*` 只被自身与测试引用，未接 `src/index.ts` / `src/routes/`，接线属 T213）。
+  - **P1 已完成七卡**：T201 / T202a / T202b / T203 / P0-PORT-D2（薄适配层，`1e011a5`）/
+    T204'（联邦透传 + sidecar 管理，`47f8a3a`）/ T205'（账号委托，并入 T204'）。
   - **当前门禁与远端**：v5.0.2 施工后为 **55 文件 / 713 用例全绿**（typecheck 见上文测试工程的既有红项）；
     产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`），远端 `main` 与 `feat/p0-port` 均在 `2d73635`；
     公开前已核查：无敏感文件被跟踪、无凭据模式命中、历史中亦从未提交过 `.env`/`config.json`/`credentials.enc`。
@@ -54,7 +54,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**55 文件 / 713 用例全绿**（v5.0.2 为 55/713；v5.0.1 为 51/667；v5.0.0 为 50/658；v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**58 文件 / 754 用例全绿**（P1 D2/T204'/T205' 后；此前 v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -72,6 +72,23 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **P1 交付（2026-10-07 第二轮，D2 + T204'/T205'，三卡）**：
+  - **P0-PORT-D2 CommandCode Provider 薄适配层**（`1e011a5`）：落地 D1 报告决策「**不搬家、只做薄包装**」——
+    4.22.4 起 `src/adapters/commandcode/` 已模块化，整目录迁移收益低、回归风险高。
+    新增 `src/providers/commandcode/provider.ts`（IProvider 18 成员全集），复用既有翻译引擎/配置/模型/用量层；
+    `tests/commandcode-provider.test.ts` 19 例（先红后绿）。T213 收口项已登记（限流/modelAccess 双轨配置源、
+    legacy 扁平分支 `syncEnvFile` 明文行、`saveConfigFile` 旧分支明文回写）。
+  - **T204' WorkBuddy 联邦透传 Provider + Sidecar 管理**（`47f8a3a`）：按 G0-T2 联邦裁决与 §3.11 落地——
+    `providers/workbuddy/sidecar.ts`（子进程拉起 + `/healthz` 就绪轮询 + 崩溃自动重启 5min×3 + 随主进程退出）+
+    `providers/workbuddy/provider.ts`（透传 chatCompletion、conversation_id 原样透传、rewriteMode 总开关、
+    probe 真实 `/healthz`、sidecarStatus 面板数据源）；sidecar 端点按 Go 源码实测口径
+    （`internal/server/handler.go` / `internal/panel/panel.go`）。
+  - **T205' 账号委托**（并入 `47f8a3a`）：listAccounts 读 `/status`、pause/resume/remove 打面板 API、
+    addAccount 明确不支持（OAuth 设备授权属 T301，抛可执行提示）。
+  - **纪律记录**：本轮执行期间检测到**活跃并发写入者**（v5.0.2 修复会话正改 CHANGELOG/HANDOFF/package.json），
+    按避坑 #9 只显式 `git add` 自制品提交，本文件与 CHANGELOG 的条目在该会话提交后补齐（即本条与 [Unreleased] 段）。
+  - 两卡合计 +41 用例；全量 **58 文件 / 754 用例全绿**，typecheck 双工程 0 错误，lint 零输出。
 
 - **v5.0.2 空闲超时重试修复（2026-10-07，接 v5.0.1 同族第二形态）**：用户报
   `No data from upstream for 120s` / `STREAM_IDLE_TIMEOUT`（`requestId 8eaae6bb-34ec-481c-b500-408f3c0b9788`，10:03）。
@@ -155,13 +172,12 @@
 **接手第一步**：读本文 → `PLAN-STATE.md`（含 §0 基准勘误 + §1 移植任务队列）→ 执行依据方案第 0 章（agent 执行协议）。
 
 - **当前队列**（严格按 `PLAN-STATE.md` §1 的顺序与 deps）：
-  - ✅ `P0-PORT-A~F` **全部完成**（A 基座 / B 批次 B 语义 / C 新增模块 / D1 接线 / E 面板移植 / F 阶段门），**已部署**。
-  - ✅ **P1 已完成**：`T201`（Freebuff 核心移植）、`T202a`（tools schema 规范化）、`T202b`（Anthropic 桥）、`T203`（账号池与错误处理）。
-  - ⬜ **下一批**：`P0-PORT-D2`（`providers/commandcode` 薄适配层——D1 报告结论：4.22.4+ 已把适配器模块化，
-    整目录平移收益低、回归风险高，**建议不搬家只做薄包装**；它是 T213 的前置）→ `T204'`（WorkBuddy 联邦透传）
-    → `T208~T212`（面板五页）→ `T213`（三源接线）→ `T214`（P1 阶段门）。
-    **注意**：Freebuff 模块虽已具备完整能力（Provider/账号池/错误分类/凭据/桥/tools 规范化），但**尚未接入运行时**——
-    `providers/core` 目前只被自身与 freebuff 引用，未接 `src/index.ts` / `src/routes/`，这部分统一在 T213 收口。
+  - ✅ `P0-PORT-A~F` **全部完成**（A 基座 / B 批次 B 语义 / C 新增模块 / D1 接线 / D2 薄适配层 / E 面板移植 / F 阶段门），**已部署**。
+  - ✅ **P1 已完成七卡**：`T201`、`T202a`、`T202b`、`T203`、`P0-PORT-D2`（`1e011a5`）、`T204'`（`47f8a3a`）、`T205'`（并入）。
+  - ⬜ **下一批**：`T213`（三源接线 + 手动降级——三源 Provider 外壳均已就位，统一在此接入运行时）
+    → `T208~T212`（面板五页，DoD 依赖 T213 后端）→ `T214`（P1 阶段门）。
+    **注意**：三个 Provider 均尚未接入运行时——`providers/*` 只被自身与测试引用，未接 `src/index.ts` / `src/routes/`；
+    T202 卡的 DoD「Anthropic SDK 调 /v1/messages 通过」也定于 T213 收口。
   - ⬜ 遗留小项：构建产物名仍为 `commandcode-proxy-v4.exe`，产品改名后待重命名（含 `build:win` 脚本与相关测试）。
 - **重启 9090 必须再次征得用户确认**（AGENTS.md 服务启停硬约束）。上线后用户会在面板点确认风险告知——在此之前 `/v1/*` 会 403。
 - **P1 后续**（移植完成后）：T202（Anthropic 桥——注意新树已有 `anthropic-response.ts`/`pipeline/`，须先评估复用而非另写）→ T203 → T204'（WorkBuddy 联邦透传，见 `docs/wb-source-diff-report.md` §7）→ T208~T212 面板五页 → T213 接线 → T214 阶段门。

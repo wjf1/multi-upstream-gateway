@@ -2,6 +2,43 @@
 
 所有主要版本更新都记录在此文件。
 
+## [Unreleased]
+
+### 新增（P1 任务卡）
+
+- **P0-PORT-D2：CommandCode Provider 薄适配层**（`1e011a5`）—— 落地 D1 报告决策「不搬家、只做薄包装」
+  （4.22.4 起 `src/adapters/commandcode/` 已模块化，整目录迁移收益低、回归风险高）。
+  新增 `src/providers/commandcode/provider.ts`（`CommandCodeProvider implements IProvider`，18 成员全集），
+  复用既有翻译引擎（CommandCodeAdapter + sendToCC）、配置/账号层、模型注册表与用量采集；
+  `chatCompletion` 产出文本增量、上游 `error` 事件转稳定错误码 ProxyError、无凭据不发请求；
+  `extractUsage` 复用 CC 事件采集器（缓存明细拆分 + provider-metadata 权威 costUsd，无权威值时为 null）；
+  账号面凭据只露尾 4 位。外部依赖全部经 `CommandCodeProviderDeps` 注入（测试不触网、不读写真实 config/.env）。
+  配套 `tests/commandcode-provider.test.ts` 19 例（先红后绿）。
+- **T204'/T205'：WorkBuddy 联邦透传 Provider + Sidecar 管理**（`47f8a3a`）—— 按 G0-T2 联邦裁决
+  （`docs/wb-source-diff-report.md` §7）与 master-plan §3.11 落地：选号/熔断/payload 管线由 Go sidecar 承接，
+  网关只做拉起/看护/透传/账号委托。`src/providers/workbuddy/sidecar.ts`：子进程拉起二进制 + `/healthz`
+  就绪轮询 + 崩溃自动重启（5min 内 3 次，超限置 crashed 面板可见）+ 有意停止 + 随主进程退出；
+  `src/providers/workbuddy/provider.ts`：`chatCompletion` 透传 `/v1/chat/completions`（流式 SSE → 文本增量）、
+  `conversation_id` 原样透传（T207' 网关侧唯一职责）、`rewriteMode` 总开关（full/passthrough 一键回退）、
+  `listModels` 读 sidecar 目录、账号委托（list 读 `/status`，pause/resume/remove 打 `/panel/api/accounts/{uid}/*`，
+  add 明确不支持并提示 OAuth 设备授权属 T301）、`probe` 真实 `/healthz` 并刷新池快照、
+  `extractUsage` 为 `costUsd=null` + `native.points`（§3.9 积分制不参与美元聚合）、
+  `sidecarStatus()` 供面板上游卡片显示进程状态。sidecar 端点为 Go 源码实测口径。
+  配套 `tests/workbuddy-{sidecar,provider}.test.ts` 22 例（先红后绿）。
+
+### 变更说明
+
+- 三个 Provider（CommandCode/Freebuff/WorkBuddy）外壳均已就位，但**尚未接入运行时**——
+  接入 `src/index.ts` / `src/routes/` 统一属 T213；T202 卡 DoD「Anthropic SDK 调 /v1/messages 通过」同步定于 T213 收口。
+- 遗留（T213 收口，登记于 PLAN-STATE）：限流/modelAccess 双轨配置源、legacy 扁平分支 `syncEnvFile`
+  的 `COMMANDCODE_API_KEY` 明文行、`saveConfigFile` 旧扁平分支明文回写。
+
+### 验证
+
+- 全量 `npx vitest run` **58 文件 / 754 用例全绿**（v5.0.2 基线 713 + D2 19 例 + workbuddy 22 例）；
+  `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
+- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）。
+
 ## [5.0.2] - 2026-10-07
 
 > 修复 v5.0.1 同一族的第二种形态：上游**起了流却一个字节都不吐**时，首事件探测按窗口放行，
