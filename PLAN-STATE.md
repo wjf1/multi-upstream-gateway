@@ -159,7 +159,7 @@
   - T212：用量页分上游口径表（GET /api/usage/by-provider → summarizeByProvider；
     commandcode 美元 / freebuff 免费时长 / workbuddy 积分，不跨上游混加；表头 scope=col）
   - 新增测试：spa-upstream 12 例 + multi-source-panel 6 例；门禁 **63 文件 / 793 用例全绿**
-- [ ] T213 统一 API 层三源接线 + P1 手动降级
+- [x] T213 统一 API 层三源接线 + P1 手动降级（2026-10-07；阶段 1 `9b98d9d` + 阶段 2 `af6db03`，横幅随 T208 `85b0ed9` 收口）
   - **阶段 1 完成**（2026-10-07，提交 `9b98d9d`）：ProviderRuntime 装配三源 + registry/router 实例 +
     `GET /api/providers` + `POST /api/providers/:name/enable|disable`（总闸热生效）+
     `POST /api/providers/registry/refresh` + `/v1/models` 命名空间聚合
@@ -167,10 +167,11 @@
     行为与接线前一致）。按需初始化：无配置的 Provider 不执行 initialize（启动零变化）。
     门禁：`npm run verify` **60 文件 / 767 用例全绿**；typecheck 双工程 0 错误；lint 零输出。
     CommandCode 目录刻意不入注册表（兜底上游经 priority 命中，入表徒增歧义面）。
-  - **阶段 2 待做（数据面）**：chat/messages 路由经 router 分发三 Provider（X-Upstream-Provider 全链路、
-    X-Actual-Upstream 响应头）；面板手动切换默认上游（持久化）+ 上游异常横幅；
-    T202 DoD「Anthropic SDK 调 /v1/messages 通过」在此收口；限流/modelAccess 双轨配置源、
-    legacy 扁平分支明文行收口。
+  - DoD 实测（对照 master-plan）：①三上游专属模型分别请求来源正确（prefix/registry/priority/header
+    四路断言）✅；②混合并发 50 无跨 Provider 污染 ✅（tests/provider-dispatch.test.ts）；③面板切换
+    默认上游对新请求立即生效（热 + routing 分片持久化 + 重启等价读回）✅；④上游 health 异常横幅
+    出现/恢复消失 ✅（overview 横幅，spa-upstream 锁定条件）。**真上游端到端联调（Freebuff Token /
+    WorkBuddy sidecar 二进制）归 T214 三源 E2E** —— 协议层已由假 Provider 端到端锁定。
   - **阶段 2 完成**（2026-10-07，提交 `af6db03`）：chat/messages 在 translate 前做六步路由决策
     （剥前缀回写 body.model）；commandcode 走既有通路（零回归），freebuff/workbuddy 经
     `routes/provider-dispatch.ts` 渲染双出口（chat=OpenAI chunk、messages=AnthropicStreamEncoder）；
@@ -179,9 +180,16 @@
     门禁：`npm run verify` **61 文件 / 777 用例全绿**；typecheck/lint 0 错误。
     DoD 实测：三上游来源正确（prefix/registry/priority/header 四路断言）✅、混合并发 50 无污染 ✅、
     切换立即生效 ✅。
-  - **剩余一项（登记，卡保持未勾选）**：限流/modelAccess 双轨配置源与 legacy 明文行收口——
-    需先在运行时 bootstrap UnifiedConfigStore 单例，单独立卡避免混入数据面提交。
-    （①异常横幅已随 T208 收口，见 T208~T212 卡。）
+  - 剩余一项改立独立卡「T213b 配置源收口」（见下）。
+
+- [ ] T213b 配置源收口（自 T213 拆出的登记项）
+  - deps: T213
+  - 范围：①运行时 bootstrap `UnifiedConfigStore` 单例（index.ts 装配 + chokidar 热重载），
+    `utils/model-access.ts` 与 `utils/rate-limit.ts` 由直读 env 切为「store 优先、env 回退」；
+    收敛 `utils/rate-limiter.ts`（T105 移植件，当前无消费方）与 `security-guard.ts` 的
+    `resolveModelAccessConfigFromEnv` 双轨；②legacy 扁平分支 `syncEnvFile` 的
+    `COMMANDCODE_API_KEY` 明文行（unified 分支已由 stripEnvKeyLine 摘除）。
+  - blocked: —
 - [ ] T214 P1 阶段门
 - [ ] T301~T310 / T401~T406 / T501~T505（见执行依据方案）
 
