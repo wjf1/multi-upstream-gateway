@@ -6,6 +6,12 @@
 
 ### 新增（P1 任务卡）
 
+- **T213 阶段 1：三源 Provider 运行时接线**（`9b98d9d`）—— `src/providers/runtime.ts`（ProviderRuntime：
+  三源装配 + T104 registry/router 实例 + 按需初始化 + 总闸/状态/registry 刷新）；
+  `GET /api/providers`、`POST /api/providers/:name/enable|disable`、`POST /api/providers/registry/refresh`；
+  `/v1/models` 追加 `freebuff/<id>`、`workbuddy/<id>` 命名空间条目（分片门控，缺省行为不变）。
+  **数据面（chat/messages）刻意不动**，切路由属阶段 2；配套 `tests/provider-{runtime,endpoints}.test.ts` 13 例。
+
 - **P0-PORT-D2：CommandCode Provider 薄适配层**（`1e011a5`）—— 落地 D1 报告决策「不搬家、只做薄包装」
   （4.22.4 起 `src/adapters/commandcode/` 已模块化，整目录迁移收益低、回归风险高）。
   新增 `src/providers/commandcode/provider.ts`（`CommandCodeProvider implements IProvider`，18 成员全集），
@@ -35,9 +41,9 @@
 
 ### 验证
 
-- 全量 `npx vitest run` **58 文件 / 754 用例全绿**（v5.0.2 基线 713 + D2 19 例 + workbuddy 22 例）；
+- 全量 `npx vitest run` **60 文件 / 767 用例全绿**（v5.0.2 基线 713 + D2 19 + workbuddy 22 + T213 阶段 1 13）；
   `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
-- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）。
+- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）。
 
 ## [5.0.2] - 2026-10-07
 

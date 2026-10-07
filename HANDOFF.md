@@ -33,10 +33,12 @@
     「改了不生效」或静默回退直连；端口曾在 7897/7900 间来回变更过，故请保持固定。
   - **基准勘误（保留为教训）**：方案基线事实曾基于过期检出 v4.17.0，真实基准是 v4.22.4；基线事实必须「版本号 + 验证命令」同引。
   - **多上游进度（2026-10-07）**：实际可用上游**仍是 CommandCode 一个**。三源 Provider 外壳均已就位：
-    CommandCode（P0-PORT-D2 薄适配层）/ Freebuff（T201、T202a、T202b、T203）/ WorkBuddy（T204' 联邦透传 + T205' 账号委托），
-    但**均尚未接入运行时**（`providers/*` 只被自身与测试引用，未接 `src/index.ts` / `src/routes/`，接线属 T213）。
-  - **P1 已完成七卡**：T201 / T202a / T202b / T203 / P0-PORT-D2（薄适配层，`1e011a5`）/
-    T204'（联邦透传 + sidecar 管理，`47f8a3a`）/ T205'（账号委托，并入 T204'）。
+    CommandCode（P0-PORT-D2 薄适配层）/ Freebuff（T201、T202a、T202b、T203）/ WorkBuddy（T204' 联邦透传 + T205' 账号委托）。
+    **T213 阶段 1（运行时接线）已完成**（`9b98d9d`）：ProviderRuntime 装配三源 + registry/router、
+    `/api/providers` 状态与总闸（热生效）、`/v1/models` 命名空间聚合（分片门控，缺省行为不变）。
+    **数据面（chat/messages 切路由）为 T213 阶段 2，尚未开工**。
+  - **P1 已完成七卡 + T213 阶段 1**：T201 / T202a / T202b / T203 / P0-PORT-D2（`1e011a5`）/
+    T204'（`47f8a3a`）/ T205'（并入）/ T213·阶段 1（`9b98d9d`）。
   - **当前门禁与远端**：v5.0.2 施工后为 **55 文件 / 713 用例全绿**（typecheck 见上文测试工程的既有红项）；
     产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`），远端 `main` 与 `feat/p0-port` 均在 `2d73635`；
     公开前已核查：无敏感文件被跟踪、无凭据模式命中、历史中亦从未提交过 `.env`/`config.json`/`credentials.enc`。
@@ -54,7 +56,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**58 文件 / 754 用例全绿**（P1 D2/T204'/T205' 后；此前 v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**60 文件 / 767 用例全绿**（T213 阶段 1 后；此前 58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -72,6 +74,18 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T213 阶段 1：三源 Provider 运行时接线（2026-10-07，`9b98d9d`）**：
+  - `src/providers/runtime.ts`——ProviderRuntime：装配 IProvider 三源 + T104 的 ProviderRegistry/RequestRouter
+    实例；**按需初始化**（无分片/环境变量的 Provider 不执行 initialize，缺省部署启动路径与接线前一致）；
+    `status()` 暴露健康/总闸/WorkBuddy sidecar 进程视图（§3.11-4）；`enable/disable` 面板总闸（热生效）；
+    `namespacedModels()` 走注册表缓存（热路径不打 sidecar）。
+  - 管理面：`GET /api/providers`、`POST /api/providers/:name/enable|disable`、
+    `POST /api/providers/registry/refresh`（写端点走既有 x-admin-token 鉴权；未装配 runtime 时优雅降级）。
+  - `/v1/models` 追加 `freebuff/<id>`、`workbuddy/<id>` 命名空间条目；**门控 = 分片存在且 enabled!==false
+    且总闸开启**——存量 config.json 只有 providers.commandcode，行为与接线前一致。
+  - **数据面刻意不动**：chat/messages 仍走 CommandCode 既有通路（零回归）；切路由属阶段 2（见 PLAN-STATE T213 卡）。
+  - 门禁：`npm run verify` **60 文件 / 767 用例全绿**；typecheck 双工程 0 错误；lint 零输出。
 
 - **P1 交付（2026-10-07 第二轮，D2 + T204'/T205'，三卡）**：
   - **P0-PORT-D2 CommandCode Provider 薄适配层**（`1e011a5`）：落地 D1 报告决策「**不搬家、只做薄包装**」——
@@ -174,10 +188,11 @@
 - **当前队列**（严格按 `PLAN-STATE.md` §1 的顺序与 deps）：
   - ✅ `P0-PORT-A~F` **全部完成**（A 基座 / B 批次 B 语义 / C 新增模块 / D1 接线 / D2 薄适配层 / E 面板移植 / F 阶段门），**已部署**。
   - ✅ **P1 已完成七卡**：`T201`、`T202a`、`T202b`、`T203`、`P0-PORT-D2`（`1e011a5`）、`T204'`（`47f8a3a`）、`T205'`（并入）。
-  - ⬜ **下一批**：`T213`（三源接线 + 手动降级——三源 Provider 外壳均已就位，统一在此接入运行时）
-    → `T208~T212`（面板五页，DoD 依赖 T213 后端）→ `T214`（P1 阶段门）。
-    **注意**：三个 Provider 均尚未接入运行时——`providers/*` 只被自身与测试引用，未接 `src/index.ts` / `src/routes/`；
-    T202 卡的 DoD「Anthropic SDK 调 /v1/messages 通过」也定于 T213 收口。
+  - ⬜ **下一批**：`T213 阶段 2`（chat/messages 数据面切路由 + 手动降级/异常横幅 + 面板切换持久化
+    + 限流/modelAccess 双轨配置源与明文行收口）→ `T208~T212`（面板五页，消费 /api/providers 与三源数据）
+    → `T214`（P1 阶段门）。
+    **注意**：T213 阶段 1（运行时装配/管理面/模型聚合）已完成；T202 卡的 DoD「Anthropic SDK 调
+    /v1/messages 通过」定于阶段 2 收口。
   - ⬜ 遗留小项：构建产物名仍为 `commandcode-proxy-v4.exe`，产品改名后待重命名（含 `build:win` 脚本与相关测试）。
 - **重启 9090 必须再次征得用户确认**（AGENTS.md 服务启停硬约束）。上线后用户会在面板点确认风险告知——在此之前 `/v1/*` 会 403。
 - **P1 后续**（移植完成后）：T202（Anthropic 桥——注意新树已有 `anthropic-response.ts`/`pipeline/`，须先评估复用而非另写）→ T203 → T204'（WorkBuddy 联邦透传，见 `docs/wb-source-diff-report.md` §7）→ T208~T212 面板五页 → T213 接线 → T214 阶段门。
