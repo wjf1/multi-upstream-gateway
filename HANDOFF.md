@@ -64,7 +64,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**82 文件 / 1022 用例全绿（1 skipped）**（T305 Freebuff 等待室与队列交付后；此前 81/1017、80/1010、79/997、78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**83 文件 / 1027 用例全绿（1 skipped）**（T303 健康探测与级联防护交付后；此前 82/1022、81/1017、80/1010、79/997、78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -82,6 +82,13 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T303 健康探测 + 自动降级 + 级联防护（2026-10-07）**：
+  - **范围**：按 §3.6 全量实现（30s 探活调度、degraded 状态管理、429 熔断摘除、ramp 渐进切换流量控制、全局在途队列深度控制、流式首字节铁律保护）（DoD 闭环）。
+  - **核心引擎**：新增 `src/providers/core/degradation.ts`（`DegradationManager`），管理全局并发深度（queueMaxDepth 默认 128，超限 503+Retry-After）；提供 30s 定时探活调度器；支持 30s 滑动窗口内 429 达 2 次自动摘除并标记 degraded；支持渐进切换（切换后第 1 分钟 10%，每分钟 +10% 平滑承接，平滑直方图无瞬时尖峰）。
+  - **运行时接线**：`ProviderRuntime` 持有 `degradation` 单例，管理探活调度器生命周期与 Provider degraded 状态视图；`status()` 接口暴露 degraded 标记与原因。
+  - **数据面流式铁律守护**：`provider-dispatch.ts` 请求入口/出口原子管理队列槽位（`acquireQueueSlot` / `releaseQueueSlot`）；记录 429 错误统计；首字节产出后（`began === true`）严格禁止跨 Provider 切换降级，确保协议纯净度。
+  - **测试与门禁**：新增 `tests/degradation.test.ts` 5 例全绿（DoD 1 断网 30s 内 degraded/恢复 healthy、DoD 2 ramp 渐进直方图平滑输出、DoD 3 429×2 摘除并跳过候选、DoD 4 首字节后严禁切换、DoD 5 queueMaxDepth 超限 503）；修复 `tests/admin-boundary.test.ts` 避免在 Windows 上因原生 Toast 耗时导致的 5s 超时假红；全量 `npm run verify` **83 测试文件 / 1027 用例全绿（1 skipped）**；双工程 typecheck 0 错误；lint 零输出；audit 0 漏洞。
 
 - **T305 Freebuff 等待室与队列（2026-10-07）**：
   - **范围**：waitingRoom 排队、位置提示透传、等待室轮询推进、超时错误语义处理（DoD 闭环）。

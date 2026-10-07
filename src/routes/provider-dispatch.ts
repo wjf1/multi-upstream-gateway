@@ -63,6 +63,17 @@ function errorOf(err: unknown): ProxyError {
 
 export async function respondViaProvider(args: ProviderDispatchArgs): Promise<unknown> {
   const { runtime, decision, openaiReq, requestId, abortSignal, reply, mode, startTime, finalize } = args;
+
+  // T303：申请在途队列槽位（超过 queueMaxDepth 立即 503+Retry-After）
+  runtime.degradation.acquireQueueSlot();
+  let slotReleased = false;
+  const releaseSlot = () => {
+    if (!slotReleased) {
+      slotReleased = true;
+      runtime.degradation.releaseQueueSlot();
+    }
+  };
+
   const provider = runtime.get(decision.provider);
   const stream = openaiReq.stream === true;
   const modelName = decision.model;
@@ -75,11 +86,13 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
   const finish = (status: 'COMPLETED' | 'FAILED', errorCode?: string, traceId?: string): void => {
     if (settled) return;
     settled = true;
+    releaseSlot();
     finalize({ status, errorCode, traceId, inputTokens, outputTokens });
   };
   /** 客户端中止：与既有路由同语义——直接收尾，不落用量。 */
   const abandon = (): void => {
     settled = true;
+    releaseSlot();
   };
 
   if (!provider) {
@@ -102,6 +115,12 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
   const disarmPing = (): void => {
     if (ping) clearInterval(ping);
     ping = null;
+  };
+
+  const noteError = (pErr: ProxyError) => {
+    if (pErr.status === 429 || pErr.code === ErrorCode.RATE_LIMIT) {
+      runtime.degradation.recordFallback429(decision.provider);
+    }
   };
 
   if (mode === 'chat') {
@@ -140,6 +159,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
         });
       } catch (err) {
         const proxyErr = errorOf(err);
+        noteError(proxyErr);
         if (isAbortError(err) || (err as { isAbort?: boolean })?.isAbort) {
           abandon();
           return reply.status(499).send({ error: 'client aborted' });
@@ -187,6 +207,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     } catch (err) {
       disarmPing();
       const proxyErr = errorOf(err);
+      noteError(proxyErr);
       if (isAbortError(err) || (err as { isAbort?: boolean })?.isAbort) {
         abandon();
         if (!reply.raw.writableEnded) reply.raw.end();
@@ -232,6 +253,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
       });
     } catch (err) {
       const proxyErr = errorOf(err);
+      noteError(proxyErr);
       if (isAbortError(err) || (err as { isAbort?: boolean })?.isAbort) {
         abandon();
         return reply.status(499).send({ type: 'error', error: { type: 'api_error', message: 'client aborted' } });
@@ -283,6 +305,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
   } catch (err) {
     disarmPing();
     const proxyErr = errorOf(err);
+    noteError(proxyErr);
     if (isAbortError(err) || (err as { isAbort?: boolean })?.isAbort) {
       abandon();
       if (!reply.raw.writableEnded) reply.raw.end();
@@ -296,6 +319,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     finish('FAILED', proxyErr.code, encoder.id);
     reply.raw.write(sseFrame('error', { type: 'error', error: { type: 'api_error', message: `${proxyErr.code}: ${proxyErr.message}` } }));
     if (!reply.raw.writableEnded) reply.raw.end();
+    return reply;
     return reply;
   }
 }

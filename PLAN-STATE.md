@@ -244,7 +244,16 @@
     - Provider 接线：`FreebuffProvider.ensureLeaseSession` 支持配置驱动超时（`waitingRoomTimeoutMs`，默认 30s）；高负载排队时自动轮询推进并透传日志；超时抛出标准 504 `REQUEST_TIMEOUT`（带 `waitingRoom: true, timeout: true` 上下文）；零排队模式（`waitingRoomTimeoutMs: 0`）快速返回 503 与 Retry-After
   - 测试：新增 `tests/freebuff-waiting-room.test.ts` 5 例全绿（DoD 1 高负载排队推进 4/10→1/10→active、DoD 2 超时 504 错误语义、AbortSignal 打断、503 快速失败）
   - 门禁：全量 **82 文件 / 1022 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
-- [ ] T301~T304 / T309~T310 / T401~T406 / T501~T505（见执行依据方案）
+- [x] T303 健康探测 + 自动降级 + 级联防护（2026-10-07 完成）
+  - deps: T214
+  - 范围：按 §3.6 全量实现（30s 周期探活调度、degraded 状态管理、429 熔断摘除、ramp 渐进切换流量控制、全局在途队列深度控制、流式首字节铁律保护）
+  - 交付：
+    - 核心引擎：新增 `src/providers/core/degradation.ts`（`DegradationManager`），管理全局并发深度（queueMaxDepth 默认 128，超限 503+Retry-After）；提供 30s 定时探活调度器；支持 30s 滑动窗口内 429 达 2 次自动摘除并标记 degraded；支持渐进切换（切换后第 1 分钟 10%，每分钟 +10% 平滑承接，平滑直方图无瞬时尖峰）
+    - 运行时接线：`ProviderRuntime` 持有 `degradation` 单例，管理探活调度器生命周期与 Provider degraded 状态视图；`status()` 接口暴露 degraded 标记与原因
+    - 数据面流式铁律守护：`provider-dispatch.ts` 请求入口/出口原子管理队列槽位（`acquireQueueSlot` / `releaseQueueSlot`）；记录 429 错误统计；首字节产出后（`began === true`）严格禁止跨 Provider 切换降级，确保协议纯净度
+  - 测试：新增 `tests/degradation.test.ts` 5 例全绿（DoD 1 断网 30s 内 degraded/恢复 healthy、DoD 2 ramp 渐进直方图平滑输出、DoD 3 429×2 摘除并跳过候选、DoD 4 首字节后严禁切换、DoD 5 queueMaxDepth 超限 503）
+  - 门禁：全量 **83 文件 / 1027 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [ ] T301~T302 / T304 / T309~T310 / T401~T406 / T501~T505（见执行依据方案）
 
 ## 4. 阶段记录
 

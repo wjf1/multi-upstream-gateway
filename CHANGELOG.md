@@ -52,6 +52,12 @@
   legacy 扁平分支 `syncEnvFile` 在加密库可用时不再写明文 `COMMANDCODE_API_KEY` 并摘除旧行。
   配套 `tests/config-source-closure.test.ts` 8 例。
 
+- **T303：健康探测 + 自动降级 + 级联防护** —— 完善级联防护体系（§3.6）：
+  核心引擎：新增 `src/providers/core/degradation.ts`（`DegradationManager`），管理全局并发在途深度（`queueMaxDepth` 默认 128，超限 503+Retry-After）；提供 30s 定时探活调度器；支持 30s 滑动窗口内 429 达 2 次自动摘除并标记 degraded；支持渐进切换（切换后第 1 分钟 10%，每分钟 +10% 平滑承接，平滑直方图无瞬时尖峰）；
+  运行时接线：`ProviderRuntime` 持有 `degradation` 单例，管理探活调度器生命周期与 Provider degraded 状态视图；`status()` 接口暴露 degraded 标记与原因；
+  数据面流式铁律守护：`provider-dispatch.ts` 请求入口/出口原子管理队列槽位（`acquireQueueSlot` / `releaseQueueSlot`）；记录 429 错误统计；首字节产出后（`began === true`）严格禁止跨 Provider 切换降级，确保协议纯净度；
+  配套 `tests/degradation.test.ts` 5 例全绿（DoD 1 断网 30s 内 degraded/恢复 healthy、DoD 2 ramp 渐进直方图平滑输出、DoD 3 429×2 摘除并跳过候选、DoD 4 首字节后严禁切换、DoD 5 queueMaxDepth 超限 503）；修复 `tests/admin-boundary.test.ts` 避免在 Windows 上因原生 Toast 耗时导致的 5s 超时假红。
+
 - **T305：Freebuff 等待室与队列** —— 高负载等待室排队与位置推进机制：
   等待室轮询机：`free-session.ts` 实现 `pollWaitingRoomUntilActive`，按上游 `pollAt` 延迟周期轮询并更新宿主会话，
   捕获排队位置推进直至 active 获得实例；超限抛出 `WaitingRoomTimeoutError`；支持 AbortSignal 客户端主动打断；
@@ -103,11 +109,11 @@
 
 ### 验证
 
-- 全量 `npm run verify` **82 文件 / 1022 用例全绿（1 skipped）**（此前 81 文件 / 1017 用例）；
+- 全量 `npm run verify` **83 文件 / 1027 用例全绿（1 skipped）**（此前 82 文件 / 1022 用例）；
   覆盖率 **Statements 81%+**；
   `npm audit --omit=dev` **0 vulnerabilities**；
   `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
-- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（P0-PORT 补齐 + T214 取证）→ `504d70d`（T306 面板运行日志页）→ `307d751`（T307 面板系统设置页）→ `b5b3b1e`（T308 WorkBuddy Anthropic 桥）。
+- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（P0-PORT 补齐 + T214 取证）→ `504d70d`（T306 面板运行日志页）→ `307d751`（T307 面板系统设置页）→ `b5b3b1e`（T308 WorkBuddy Anthropic 桥）→ `bd27fe0`（T305 Freebuff 等待室与队列）。
 
 ## [5.0.3] - 2026-10-07
 

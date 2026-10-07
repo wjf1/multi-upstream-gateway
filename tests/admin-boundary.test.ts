@@ -148,6 +148,8 @@ describe('B1/B2 端到端：管理面写操作的 token 门与 Host 门', () => 
   });
 
   it('PROXY_API_KEY 不再是管理面凭据（权限分离）', async () => {
+    const origNotify = process.env.COMMANDCODE_NOTIFY;
+    process.env.COMMANDCODE_NOTIFY = '0';
     const key = `k-${randomUUID()}`;
     process.env.PROXY_API_KEY = key;
     const keyed = Fastify();
@@ -182,8 +184,10 @@ describe('B1/B2 端到端：管理面写操作的 token 门与 Host 门', () => 
     } finally {
       await keyed.close();
       delete process.env.PROXY_API_KEY;
+      if (origNotify === undefined) delete process.env.COMMANDCODE_NOTIFY;
+      else process.env.COMMANDCODE_NOTIFY = origNotify;
     }
-  });
+  }, 30000);
 });
 
 describe('B2/B5 GET / 的投递面', () => {
