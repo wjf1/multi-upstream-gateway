@@ -173,21 +173,24 @@ export class FreebuffProvider implements IProvider {
   }
 
   /**
-   * 真实探活：依次对「未暂停且未冷却」的 Token 发起一次 free session 往返
-   * （与 prewarm 同一最小路径，不建 Run、不发对话请求）。
+   * 真实探活：依次对「未暂停且未冷却」的 Token 发起一次**真实**上游往返
+   * （DoD：禁止恒真；T303 依赖其真实性）。
    *
-   * T203 强化：
-   *   - 逐个 Token 尝试，前一个失效（401/403/429/5xx）即冷却并继续下一个，
-   *     全部失败才判不健康——避免"首个 Token 失效就整体不健康"的误判，
-   *     也避免"首个 Token 有效就整体健康"的漏判；
-   *   - 401/403 明确**不返回健康**（DoD：Token 失效时 probe 返回不健康）；
-   *   - 等待室排队说明上游可达 → healthy（T201 语义保留）。
+   * 刻意**不信任会话缓存**：有 instanceId 时发 GET /session（只读探活，不扰动
+   * 正在服务的会话），否则发 POST 新建/刷新。这样"缓存里还是 active 但 Token
+   * 已被上游吊销"的情况也能被探出（T201 直接复用 ensureSession 会漏判）。
+   *
+   * 逐个 Token 尝试：前一个失效（401/403/429/5xx）即冷却并继续下一个，
+   * 全部失败才判不健康；401/403 明确不返回健康；等待室排队表示上游可达 → 健康。
    */
   async probe(): Promise<ProbeResult> {
     const checkedAt = new Date().toISOString();
     if (!this.enabled) return { healthy: false, detail: 'provider disabled', checkedAt };
     const runs = this.runs;
-    if (!runs) return { healthy: false, detail: 'freebuff provider is not initialized', checkedAt };
+    const client = this.client;
+    if (!runs || !client) {
+      return { healthy: false, detail: 'freebuff provider is not initialized', checkedAt };
+    }
 
     const now = Date.now();
     const candidates = runs
@@ -202,7 +205,18 @@ export class FreebuffProvider implements IProvider {
     const failures: string[] = [];
     for (const pool of candidates) {
       try {
-        await ensureSession(pool);
+        const instanceId = pool.session?.instanceId?.trim() ?? '';
+        const state = instanceId
+          ? await client.getSession(pool.token, instanceId)
+          : await client.createOrRefreshSession(pool.token);
+        if (String(state?.status ?? '').trim() === 'queued') {
+          return {
+            healthy: true,
+            latencyMs: Date.now() - started,
+            detail: `waiting room queued (position ${state.position}/${state.queueDepth})`,
+            checkedAt,
+          };
+        }
         pool.noteSuccess();
         return { healthy: true, latencyMs: Date.now() - started, checkedAt };
       } catch (err) {
