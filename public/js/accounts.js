@@ -118,6 +118,70 @@ function quotaBadge(u) {
 
 // T210：多上游账号（Freebuff / WorkBuddy）。数据源 GET /api/providers 与
 // GET /api/providers/:name/accounts（listAccounts 契约：凭据已脱敏）。
+// T301：WorkBuddy 卡片增「添加账号（授权）」入口（面板内完成 OAuth）与「待刷新」徽章。
+let wbPendingRefresh = new Set();   // 刷新连续失败、需重新授权的账号 id
+let wbRealmChoice = 'cn';           // 最近一次选择的 realm（重渲染后保留）
+let wbLoginBusy = false;            // 授权轮询进行中（防重复发起）
+
+function workbuddyAddFooter() {
+  return '<div class="flex items-center gap-2 pt-1">' +
+    '<label for="wbLoginRealm" class="sr-only">WorkBuddy 授权区服</label>' +
+    '<select id="wbLoginRealm" class="text-xs bg-slate-800 border border-slate-600 rounded px-2 py-1 text-slate-200">' +
+    '<option value="cn"' + (wbRealmChoice === 'cn' ? ' selected' : '') + '>国内版（codebuddy.cn）</option>' +
+    '<option value="global"' + (wbRealmChoice === 'global' ? ' selected' : '') + '>国际版（workbuddy.ai）</option>' +
+    '</select>' +
+    '<button type="button" data-wb-action="login" class="text-xs px-3 py-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-200 hover:bg-sky-500/20">' +
+    '<i aria-hidden="true" class="fa-solid fa-user-plus mr-1"></i>添加账号（授权）</button></div>';
+}
+
+async function startWorkBuddyLogin() {
+  if (wbLoginBusy) { showToast('授权流程正在进行中，请先完成或等待超时', 'info'); return; }
+  // realm 以 wbRealmChoice 为准：下拉框按它渲染 selected，change 事件同步回写。
+  // 不从 DOM 回读 id（该 select 是动态渲染的，静态 id 引用会被面板回归测试判为悬空）。
+  const started = await apiJson('/api/upstreams/workbuddy/login/start', {
+    method: 'POST', headers: JSON_HDR, body: JSON.stringify({ realm: wbRealmChoice }),
+  });
+  if (!started.ok) { showToast('发起授权失败：' + started.error, 'error'); return; }
+  const url = started.data && started.data.url;
+  const state = started.data && started.data.state;
+  if (!url || !state) { showToast('授权响应缺少 url/state，请检查 sidecar 版本', 'error'); return; }
+  showToast('已生成授权链接，请在浏览器完成后返回本页', 'info');
+  try { window.open(url, '_blank', 'noopener'); } catch (e) { /* 弹窗被拦：用户可从地址栏重开 */ }
+  wbLoginBusy = true;
+  const deadline = Date.now() + 15 * 60 * 1000;
+  try {
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 3000));
+      const polled = await apiJson('/api/upstreams/workbuddy/login/poll?state=' + encodeURIComponent(state));
+      if (!polled.ok) {
+        if (/unknown or expired/.test(polled.error || '')) { showToast('授权会话已过期，请重新发起', 'error'); return; }
+        continue; // 瞬时故障：继续轮询
+      }
+      if (polled.data && polled.data.done) {
+        showToast('账号已添加：' + (polled.data.nickname || polled.data.uid || '（未命名）'), 'success');
+        loadMultiSourceAccounts(); fetchStatus();
+        return;
+      }
+    }
+    showToast('授权超时（15 分钟），请重新发起', 'error');
+  } finally { wbLoginBusy = false; }
+}
+
+function bindWorkBuddyActionsOnce() {
+  const body = document.getElementById('multiSourceAccountsBody');
+  if (!body || body.dataset.wbBound) return;
+  body.dataset.wbBound = '1';
+  body.addEventListener('click', (e) => {
+    const btn = e.target instanceof Element ? e.target.closest('[data-wb-action]') : null;
+    if (!btn) return;
+    if (btn.dataset.wbAction === 'login') void startWorkBuddyLogin();
+  });
+  body.addEventListener('change', (e) => {
+    const sel = e.target;
+    if (sel instanceof HTMLSelectElement && sel.id === 'wbLoginRealm') wbRealmChoice = sel.value === 'global' ? 'global' : 'cn';
+  });
+}
+
 async function loadMultiSourceAccounts() {
   const body = document.getElementById('multiSourceAccountsBody');
   if (!body) return;
@@ -128,19 +192,29 @@ async function loadMultiSourceAccounts() {
     body.innerHTML = emptyState('fa-server', '暂无其它上游 Provider（Freebuff / WorkBuddy 未配置或未接线）');
     return;
   }
+  // T301：取「待刷新」集合（刷新连续失败需重新授权的号），供账号行徽章使用。
+  wbPendingRefresh = new Set();
+  if (providers.some(p => p.name === 'workbuddy')) {
+    const t = await apiJson('/api/upstreams/workbuddy/tokens');
+    if (t.ok && t.data && Array.isArray(t.data.pendingRefresh)) wbPendingRefresh = new Set(t.data.pendingRefresh);
+  }
   const parts = await Promise.all(providers.map(async p => {
     const r = await apiJson('/api/providers/' + encodeURIComponent(p.name) + '/accounts');
     const rows = (r.ok && r.data && r.data.accounts) || [];
+    const isWb = p.name === 'workbuddy';
     const list = rows.length
       ? '<div class="space-y-1.5">' + rows.map(a =>
           '<div class="flex items-center justify-between inset-card rounded-lg px-3 py-2 text-xs">' +
           '<span class="text-slate-200">' + esc(a.name || a.id) + '</span>' +
-          '<span class="font-mono text-slate-400">' + esc(a.apiKey || '凭据不出上游侧') + '</span></div>').join('') + '</div>'
-      : '<p class="text-xs text-slate-500">该上游暂无账号' + (p.name === 'workbuddy' ? '（WorkBuddy 账号经 sidecar 原生面板 OAuth 登录）' : '') + '</p>';
+          '<span class="flex items-center gap-2 font-mono text-slate-400">' +
+          (isWb && wbPendingRefresh.has(a.id) ? badge('待刷新', 'rose', '刷新连续失败，请重新授权该账号') : '') +
+          esc(a.apiKey || '凭据不出上游侧') + '</span></div>').join('') + '</div>'
+      : '<p class="text-xs text-slate-500">该上游暂无账号' + (isWb ? '（点击下方「添加账号（授权）」完成 OAuth 登录）' : '') + '</p>';
     return '<div class="space-y-2"><p class="text-xs font-bold text-slate-300">' + esc(p.displayName) +
-      '（' + esc(p.name) + '）· ' + rows.length + ' 个账号</p>' + list + '</div>';
+      '（' + esc(p.name) + '）· ' + rows.length + ' 个账号</p>' + list + (isWb ? workbuddyAddFooter() : '') + '</div>';
   }));
   body.innerHTML = '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' + parts.join('') + '</div>';
+  bindWorkBuddyActionsOnce();
 }
 registerRefresh('accounts', loadMultiSourceAccounts, 30000);
 function enter_accounts() { loadAccounts(); loadMultiSourceAccounts(); }

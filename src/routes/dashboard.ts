@@ -651,6 +651,66 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     return { status: 'success', namespacedModels: count };
   });
 
+  // ── T301：WorkBuddy 面板内授权（添加账号）+ 令牌看护状态 ─────────────────────
+  // 凭据全程留在 sidecar：这些端点的响应里**没有**任何 accessToken/refreshToken
+  // 字段（listAccounts 与 oauth 客户端均不持有凭据）。
+
+  /** duck-type：workbuddy 未装配/未初始化时端点优雅降级而非 500。 */
+  const workbuddyT301 = () => {
+    const provider = fastify.providerRuntime?.get('workbuddy') as
+      | {
+          loginStart?: (realm?: 'cn' | 'global') => Promise<unknown>;
+          loginPoll?: (state: string) => Promise<unknown>;
+          tokenWatchStatus?: () => unknown;
+        }
+      | undefined;
+    if (!provider || typeof provider.loginStart !== 'function' || typeof provider.tokenWatchStatus !== 'function') {
+      return null;
+    }
+    return provider;
+  };
+
+  fastify.post('/api/upstreams/workbuddy/login/start', async (req: any, reply) => {
+    const provider = workbuddyT301();
+    if (!provider) return reply.status(404).send({ ok: false, error: 'WorkBuddy provider is not available' });
+    const raw = String(req.body?.realm ?? 'cn').trim().toLowerCase();
+    if (raw !== 'cn' && raw !== 'global') {
+      return reply.status(400).send({ ok: false, error: `无效的 realm "${raw}"，可选：cn / global` });
+    }
+    try {
+      const started = await provider.loginStart!(raw);
+      logger.info(`[DASHBOARD] WorkBuddy login started (realm=${raw})`);
+      return { ok: true, ...(started as object) };
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      logger.warn(`[DASHBOARD] WorkBuddy login/start failed: ${msg}`);
+      return reply.status(503).send({ ok: false, error: msg });
+    }
+  });
+
+  fastify.get('/api/upstreams/workbuddy/login/poll', async (req: any, reply) => {
+    const provider = workbuddyT301();
+    if (!provider) return reply.status(404).send({ ok: false, error: 'WorkBuddy provider is not available' });
+    const state = String(req.query?.state ?? '').trim();
+    if (!state) return reply.status(400).send({ ok: false, error: 'state 参数缺失' });
+    try {
+      return { ok: true, ...((await provider.loginPoll!(state)) as object) };
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      return reply.status(/unknown or expired/.test(msg) ? 404 : 503).send({ ok: false, error: msg });
+    }
+  });
+
+  fastify.get('/api/upstreams/workbuddy/tokens', async (_req, reply) => {
+    const provider = workbuddyT301();
+    if (!provider) return reply.status(404).send({ ok: false, error: 'WorkBuddy provider is not available' });
+    try {
+      return { ok: true, ...(provider.tokenWatchStatus!() as object) };
+    } catch (err: any) {
+      return reply.status(503).send({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
   fastify.get('/api/accounts', async () => {
     const config = loadConfig();
     const safeAccounts = config.accounts.map(a => ({
