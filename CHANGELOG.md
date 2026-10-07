@@ -47,6 +47,11 @@
   命名空间徽章；用量页分上游口径表（`GET /api/usage/by-provider`，§3.9 不跨上游混加）。
   配套 `tests/spa-upstream.test.ts` 12 例 + `tests/multi-source-panel.test.ts` 6 例。
 
+- **T213b：配置源收口**（`5658065`）—— UnifiedConfigStore 进程单例装配（热重载）；`rateLimit` /
+  `modelAccess` 分片非空时驱动限流与模型访问守卫（store 优先、env 回退，缺省部署零破坏）；
+  legacy 扁平分支 `syncEnvFile` 在加密库可用时不再写明文 `COMMANDCODE_API_KEY` 并摘除旧行。
+  配套 `tests/config-source-closure.test.ts` 8 例。
+
 ### 变更说明
 
 - 三个 Provider（CommandCode/Freebuff/WorkBuddy）外壳均已就位，但**尚未接入运行时**——
@@ -56,9 +61,9 @@
 
 ### 验证
 
-- 全量 `npx vitest run` **63 文件 / 793 用例全绿**（v5.0.2 基线 713 + D2 19 + workbuddy 22 + T213 阶段 1 13 + 阶段 2 10 + 面板五页 18 - 合并调整 1）；
+- 全量 `npx vitest run` **64 文件 / 801 用例全绿**（v5.0.2 基线 713 + D2 19 + workbuddy 22 + T213 阶段 1 13 + 阶段 2 10 + 面板五页 18 - 合并调整 1 + T213b 8）；
   `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
-- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）。
+- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）。
 
 ## [5.0.2] - 2026-10-07
 

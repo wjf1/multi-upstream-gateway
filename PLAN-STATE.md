@@ -182,14 +182,19 @@
     切换立即生效 ✅。
   - 剩余一项改立独立卡「T213b 配置源收口」（见下）。
 
-- [ ] T213b 配置源收口（自 T213 拆出的登记项）
+- [x] T213b 配置源收口（2026-10-07，提交 `5658065`）
   - deps: T213
-  - 范围：①运行时 bootstrap `UnifiedConfigStore` 单例（index.ts 装配 + chokidar 热重载），
-    `utils/model-access.ts` 与 `utils/rate-limit.ts` 由直读 env 切为「store 优先、env 回退」；
-    收敛 `utils/rate-limiter.ts`（T105 移植件，当前无消费方）与 `security-guard.ts` 的
-    `resolveModelAccessConfigFromEnv` 双轨；②legacy 扁平分支 `syncEnvFile` 的
-    `COMMANDCODE_API_KEY` 明文行（unified 分支已由 stripEnvKeyLine 摘除）。
-  - blocked: —
+  - 交付：`utils/config-store-runtime.ts`（UnifiedConfigStore 进程单例：start + chokidar 热重载；
+    非空 `rateLimit` 分片注入 security-guard 限流器，空分片回退 env，双向确定性；bootstrap 失败
+    不阻断启动）；`model-access.ts` / `rate-limit.ts` 切为「store 分片非空优先、env 回退」；
+    `syncEnvFile`（legacy 扁平分支）加密库可用时不写明文 `COMMANDCODE_API_KEY` 并摘除旧行
+    （T103 残留的最后一个明文写入点）。index.ts 装配（测试进程跳过）+ 退出释放。
+  - 测试：`tests/config-source-closure.test.ts` 8 例（store 赢/env 回退/热重载/明文行两态）；
+    门禁 **64 文件 / 801 用例全绿**；typecheck / lint 0 错误。
+  - 遗留（登记 → P2 T304/T307 评估）：**判定路径合一**——modelAccess 现有两条执行路径
+    （security-guard preHandler 的 `MODEL_ACCESS_ALLOW/BLOCK` 通配 vs 路由级守卫的
+    `MODEL_ALLOWLIST` 精确）与两条限流路径（security-guard 全局+per-provider vs 路由级全局）；
+    配置源已统一为 store 优先，执行路径合一会改错误码/环境变量语义，需独立评审。
 - [ ] T214 P1 阶段门
 - [ ] T301~T310 / T401~T406 / T501~T505（见执行依据方案）
 

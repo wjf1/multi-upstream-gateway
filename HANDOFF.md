@@ -59,7 +59,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**63 文件 / 793 用例全绿**（T208~T212 后；此前 61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**64 文件 / 801 用例全绿**（T213b 后；此前 63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -77,6 +77,14 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T213b 配置源收口（2026-10-07，`5658065`）**：`utils/config-store-runtime.ts` —— UnifiedConfigStore
+  进程单例（chokidar 热重载），非空 `rateLimit` 分片注入限流器、`modelAccess` 分片驱动模型访问守卫
+  （**store 非空优先、env 回退**，缺省部署零破坏；bootstrap 失败不阻断启动）；legacy 扁平分支
+  `syncEnvFile` 在加密库可用时不再写明文 `COMMANDCODE_API_KEY` 并摘除旧行（T103 残留最后一个
+  明文写入点收口）。测试进程跳过装配（同 loadConfig 迁移守卫口径）。**遗留登记**：判定路径合一
+  （security-guard 与路由级守卫的两套 modelAccess/限流执行路径）→ P2 评估。
+  门禁：`npm run verify` **64 文件 / 801 用例全绿**；typecheck 双工程 / lint 0 错误。
 
 - **T208~T212 面板五页（2026-10-07，`85b0ed9` + `d2611c7`）**：
   - 「上游」页签（第 6 个 tab）：Provider 卡片（健康/可用/冷却计数、WorkBuddy sidecar 进程行、initError）、
@@ -217,8 +225,11 @@
   - ✅ **P1 已完成七卡**：`T201`、`T202a`、`T202b`、`T203`、`P0-PORT-D2`（`1e011a5`）、`T204'`（`47f8a3a`）、`T205'`（并入）。
   - ⬜ **下一批**：`T214`（P1 阶段门：三源 E2E、面板逐页验收、错误注入降级、5 分钟泄漏监控、
     `npm audit --omit=dev`、`DECISION` 行）。
-    **登记的独立小卡**（T213 收口尾项）：限流/modelAccess 双轨配置源（bootstrap UnifiedConfigStore
-    后切源）、legacy 扁平分支明文行、Freebuff 账号池接入路由（T203 遗留：preferredAccountId/onRetry 透传）。
+    **T214 前置（需用户/外部提供）**：三源 E2E 需要 **Freebuff Token（`FREEBUFF_TOKENS`）** 与
+    **WorkBuddy sidecar Go 二进制**（从 `F:/AI/Qdor/review/workbuddy2api-panel` 构建）；
+    CommandCode 源 E2E 无前置。
+    **登记的遗留**：判定路径合一（modelAccess/限流的两套执行路径，见 T213b 卡）；
+    Freebuff 账号池接入路由（T203 遗留：preferredAccountId/onRetry 透传）。
     **登记的独立小卡**（T213 收口尾项，避免混入数据面提交）：限流/modelAccess 双轨配置源
     （bootstrap UnifiedConfigStore 后切源）、legacy 扁平分支明文行、Freebuff 账号池接入路由
     （T203 遗留：preferredAccountId/onRetry 透传）。
