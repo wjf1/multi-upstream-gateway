@@ -607,5 +607,36 @@ async function clearUsageHistory(){
   loadUsageHistory();
 }
 
-function enter_usage() { loadUsageInit(); loadUsageHistory(); }
+// T212：分上游口径（§3.9）。数据源 GET /api/usage/by-provider（本地用量历史聚合）；
+// 成本列按上游口径分别渲染：commandcode 记美元、freebuff 免费、workbuddy 积分，
+// 不做跨上游加总。
+const PROVIDER_LABELS = { commandcode: 'CommandCode', freebuff: 'Freebuff', workbuddy: 'WorkBuddy' };
+function providerCostCell(r) {
+  if (r.provider === 'commandcode') return '$' + Number(r.costUsd || 0).toFixed(4);
+  if (r.provider === 'freebuff') return (r.native && r.native.freeSessionSec) ? (Math.round(r.native.freeSessionSec) + 's 免费') : '免费';
+  if (r.native && r.native.points) return r.native.points + ' pts';
+  return '积分（暂无记录）';
+}
+async function loadProviderUsage() {
+  const body = document.getElementById('providerUsageBody');
+  if (!body) return;
+  const { ok, data, error } = await apiJson('/api/usage/by-provider');
+  if (!ok) { body.innerHTML = emptyState('fa-triangle-exclamation', '加载分上游口径失败：' + error); return; }
+  const rows = data.summary || [];
+  if (!rows.length) { body.innerHTML = emptyState('fa-chart-pie', '暂无用量记录'); return; }
+  body.innerHTML = '<div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-slate-400 text-left">' +
+    '<th scope="col" class="py-1.5 pr-3 font-medium">上游</th><th scope="col" class="py-1.5 pr-3 font-medium">请求数</th>' +
+    '<th scope="col" class="py-1.5 pr-3 font-medium">输入 tokens</th><th scope="col" class="py-1.5 pr-3 font-medium">输出 tokens</th>' +
+    '<th scope="col" class="py-1.5 pr-3 font-medium">缓存读</th><th scope="col" class="py-1.5 font-medium">成本口径</th></tr></thead><tbody>' +
+    rows.map(r => '<tr class="border-t border-slate-800">' +
+      '<td class="py-1.5 pr-3 text-slate-200 font-semibold">' + esc(PROVIDER_LABELS[r.provider] || r.provider) + '</td>' +
+      '<td class="py-1.5 pr-3 text-slate-300">' + esc(r.runs) + '</td>' +
+      '<td class="py-1.5 pr-3 text-slate-300">' + esc(Number(r.inputTokens || 0).toLocaleString('en-US')) + '</td>' +
+      '<td class="py-1.5 pr-3 text-slate-300">' + esc(Number(r.outputTokens || 0).toLocaleString('en-US')) + '</td>' +
+      '<td class="py-1.5 pr-3 text-slate-300">' + esc(Number(r.cacheReadTokens || 0).toLocaleString('en-US')) + '</td>' +
+      '<td class="py-1.5 text-emerald-400 font-medium">' + esc(providerCostCell(r)) + '</td></tr>').join('') +
+    '</tbody></table></div>';
+}
+function enter_usage() { loadUsageInit(); loadUsageHistory(); loadProviderUsage(); }
 registerRefresh('usage', loadUsageHistory, 30000);
+registerRefresh('usage', loadProviderUsage, 30000);

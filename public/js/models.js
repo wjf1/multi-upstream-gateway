@@ -120,6 +120,9 @@ function applyModelFilter() {
     let tags = '';
     const fam = modelFamily(m);
     if (fam) tags += badge(fam, 'sky', '模型家族');
+    // T211：多上游命名空间模型（`freebuff/<id>` / `workbuddy/<id>`），路由按前缀分发。
+    const slash = m.id.indexOf('/');
+    if (slash > 0) tags = badge(m.id.slice(0, slash) + ' 命名空间', 'indigo', '多上游命名空间模型：路由按前缀分发到对应 Provider') + tags;
     if (m.deal && m.deal.free) tags += badge('FREE', 'rose');
     else if (m.deal && m.deal.discountPercent) tags += badge('DEAL ' + m.deal.discountPercent + '%', 'amber');
     // GO/GOAT 都不可用时，用一枚中性徽章说明它属于更高的付费档位，避免误读成"不可调用"。

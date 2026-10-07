@@ -116,5 +116,32 @@ function quotaBadge(u) {
   return badge('额度正常', 'emerald', '5 小时窗口已用 ' + pct + '%');
 }
 
-function enter_accounts() { loadAccounts(); }
+// T210：多上游账号（Freebuff / WorkBuddy）。数据源 GET /api/providers 与
+// GET /api/providers/:name/accounts（listAccounts 契约：凭据已脱敏）。
+async function loadMultiSourceAccounts() {
+  const body = document.getElementById('multiSourceAccountsBody');
+  if (!body) return;
+  const { ok, data, error } = await apiJson('/api/providers');
+  if (!ok) { body.innerHTML = emptyState('fa-triangle-exclamation', '加载多上游账号失败：' + error); return; }
+  const providers = (data.providers || []).filter(p => p.name !== 'commandcode' && p.configured && p.initialized);
+  if (!providers.length) {
+    body.innerHTML = emptyState('fa-server', '暂无其它上游 Provider（Freebuff / WorkBuddy 未配置或未接线）');
+    return;
+  }
+  const parts = await Promise.all(providers.map(async p => {
+    const r = await apiJson('/api/providers/' + encodeURIComponent(p.name) + '/accounts');
+    const rows = (r.ok && r.data && r.data.accounts) || [];
+    const list = rows.length
+      ? '<div class="space-y-1.5">' + rows.map(a =>
+          '<div class="flex items-center justify-between inset-card rounded-lg px-3 py-2 text-xs">' +
+          '<span class="text-slate-200">' + esc(a.name || a.id) + '</span>' +
+          '<span class="font-mono text-slate-400">' + esc(a.apiKey || '凭据不出上游侧') + '</span></div>').join('') + '</div>'
+      : '<p class="text-xs text-slate-500">该上游暂无账号' + (p.name === 'workbuddy' ? '（WorkBuddy 账号经 sidecar 原生面板 OAuth 登录）' : '') + '</p>';
+    return '<div class="space-y-2"><p class="text-xs font-bold text-slate-300">' + esc(p.displayName) +
+      '（' + esc(p.name) + '）· ' + rows.length + ' 个账号</p>' + list + '</div>';
+  }));
+  body.innerHTML = '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' + parts.join('') + '</div>';
+}
+registerRefresh('accounts', loadMultiSourceAccounts, 30000);
+function enter_accounts() { loadAccounts(); loadMultiSourceAccounts(); }
 bindAccountActionsOnce();

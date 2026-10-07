@@ -37,7 +37,7 @@ import {
 import { getCachedModels, MODELS_FILE_PATH } from '../utils/models.js';
 import { planName, planTier } from '../utils/plans.js';
 import { PROXY_VERSION } from '../utils/version.js';
-import { getUsageHistory, getUsageStats, clearUsageHistory, describeBillingWindow, getTimeOfDayModels, USAGE_FILE_PATH, getTodaySpendUsd } from '../utils/usage-store.js';
+import { getUsageHistory, getUsageStats, clearUsageHistory, describeBillingWindow, getTimeOfDayModels, USAGE_FILE_PATH, getTodaySpendUsd, summarizeByProvider } from '../utils/usage-store.js';
 import { getQuotaProjection } from '../utils/quota-tracker.js';
 import { notify } from '../utils/notifier.js';
 import { getChannelHealth } from '../utils/health-check.js';
@@ -416,6 +416,24 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     runtime.disable(name as ProviderName);
     logger.info(`[DASHBOARD] Provider ${name} disabled (hot)`);
     return { status: 'success', name, enabled: false };
+  });
+
+  fastify.get('/api/providers/:name/accounts', async (req: any, reply) => {
+    const runtime = fastify.providerRuntime;
+    if (!runtime) return reply.status(404).send({ error: 'Provider runtime is not wired in this build' });
+    const name = String(req.params?.name ?? '');
+    if (!PROVIDER_NAMES.includes(name)) {
+      return reply.status(404).send({ error: `Unknown provider "${name}"` });
+    }
+    const provider = runtime.get(name as ProviderName);
+    // listAccounts 契约：凭据字段必须脱敏（免费/联邦侧本就不持有明文）。
+    return { provider: name, accounts: provider ? provider.listAccounts() : [] };
+  });
+
+  // T212：用量按上游分口径聚合（§3.9）——commandcode 记美元、freebuff 记免费、
+  // workbuddy 记积分，禁止跨上游混加。数据源是本地用量历史的内存读（廉价）。
+  fastify.get('/api/usage/by-provider', async () => {
+    return { summary: summarizeByProvider(getUsageHistory()) };
   });
 
   fastify.post('/api/providers/default', async (req: any, reply) => {
