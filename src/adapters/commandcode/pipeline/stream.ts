@@ -5,10 +5,11 @@
 //   1. web → Node Readable 包装，空闲看门狗随每个 chunk 重置（wrapUpstreamStream）。
 //   2. 挂钟/空闲超时触发时向已交还的流注入语义正确的 UpstreamError。
 //   3. 首事件探测（probeUpstream 及其判定函数族）：上游在产出任何内容之前就失败时，
-//      丢弃本次调用交给编排层重试。两种形态都覆盖：
+//      丢弃本次调用交给编排层重试。三种形态都覆盖：
 //        - 上游以 HTTP 200 的流内 error 事件报错（error-event）；
-//        - 传输层中断 —— 流被对端掐断 / undici 抛 terminated（stream-error）。
-//      两种形态下客户端都一个字节还没收到（预读到的字节全在本地缓冲里、从未转发），
+//        - 传输层中断 —— 流被对端掐断 / undici 抛 terminated（stream-error）；
+//        - 起了流但一个字节都不吐，被空闲看门狗判死（first-byte-stall）。
+//      三种形态下客户端都一个字节还没收到（预读到的字节全在本地缓冲里、从未转发），
 //      因此丢弃重试是安全的；判错两个方向的代价见 isRetryableEventMessage 的注释。
 //
 // 状态归属：wrapUpstreamStream 内部的 discarded 标志由返回句柄的 markDiscarded()
@@ -136,7 +137,13 @@ export function classifyBuffered(
 
 /** 探测缓冲的字节上限：还没攒出可判定的事件就别再攒了，直接放行。 */
 const PROBE_MAX_BYTES = 64 * 1024;
-/** 探测的时间上限：上游迟迟不吐可判定的事件就放行，不为判别而拖住请求。 */
+/**
+ * 探测的时间上限：上游迟迟不吐可判定的事件就放行，不为判别而拖住请求。
+ *
+ * 唯一例外是**一个字节都没收到**的流（见 first-byte-stall）：那种情况下放行并不会让
+ * 客户端更早看到任何东西 —— 没有字节就没有可转发的内容，只是把一个永远等不到内容的
+ * 流交给路由；所以改由空闲看门狗定性，等它的时限（`idleTimeoutMs`）而不是这个窗口。
+ */
 const PROBE_TIMEOUT_MS = 30_000;
 
 /**
@@ -156,7 +163,13 @@ export function firstEventPayload(text: string): { found: boolean; payload?: str
 }
 
 /** 探测判定为「丢弃重试」时的成因，供编排层拼日志与错误文案。 */
-export type ProbeRejectionReason = 'error-event' | 'stream-error';
+export type ProbeRejectionReason =
+  /** 上游用 200 的流回了可重试的 error 事件。 */
+  | 'error-event'
+  /** 流在产出任何内容之前被掐断（undici 的 terminated / ECONNRESET）。 */
+  | 'stream-error'
+  /** 上游连首个字节都没吐就被空闲看门狗判死（2026-10-07 事故形态）。 */
+  | 'first-byte-stall';
 
 export interface ProbeResult {
   rejected: boolean;
@@ -166,11 +179,24 @@ export interface ProbeResult {
   detail?: string;
 }
 
+/** 探测窗口与空闲看门狗时限，测试可缩短以免真等 30s/120s。 */
+export interface ProbeOptions {
+  /** 有数据但攒不出可判定事件时的放行时限，默认 `PROBE_TIMEOUT_MS`。 */
+  probeTimeoutMs?: number;
+  /**
+   * 空闲看门狗时限。**一个字节都没收到**时探测不会按 `probeTimeoutMs` 放行，而是等
+   * 看门狗定性（再过这么久），因此这一步必须知道生产配置里的真实值。
+   */
+  idleTimeoutMs?: number;
+}
+
 /**
  * 传输层中断是否值得重试。三类区分：
- *   - 中止类（客户端已断开，或挂钟/空闲超时注入的 abort）：不重试。替一个已经走了的
- *     客户端再打一次上游只会白耗额度；超时类在响应处理阶段本就定义为不可重试。
- *   - 已是 UpstreamError 的（超时注入）：沿用它自己的 retryable 标志，不在这里改判。
+ *   - 中止类（客户端已断开 / 上游 abort 信号）：不重试。替一个已经走了的客户端再打
+ *     一次上游只会白耗额度。
+ *   - 已是 UpstreamError 的（挂钟 / 空闲超时注入）：沿用它自己的 retryable 标志，
+ *     不在这里改判。空闲看门狗在「一个字节都没收到」时注入的是可重试的（什么都没
+ *     产出，丢弃安全）；已经收到过字节则不可重试（内容可能已转发，重试会重复投递）。
  *   - 其余（undici 的 terminated / ECONNRESET / 对端提前关流）：瞬时故障，可重试。
  */
 function isRetryableProbeFailure(err: any): boolean {
@@ -196,17 +222,25 @@ function isRetryableProbeFailure(err: any): boolean {
  * 「干净结束但没产出内容」（无 error 的 end/close）不在此列：正常收尾的 SSE 必带
  * finish 事件，理论上也算截断，但拿不出证据就重试的代价是白耗一次上游额度，不猜。
  */
-export async function probeUpstream(raw: Readable): Promise<ProbeResult> {
+export async function probeUpstream(raw: Readable, opts: ProbeOptions = {}): Promise<ProbeResult> {
   const head: Buffer[] = [];
   const state: { verdict: 'retry' | 'accept' | 'ignore' } = { verdict: 'ignore' };
   let scannedLines = 0;
   let consumedBytes = 0;
-  /** 预读期间上游流自己抛出的错误（传输层中断）。 */
+  /** 预读期间上游流自己抛出的错误（传输层中断 / 超时注入）。 */
   let capturedError: any = null;
+  /** 窗口到期时「一个字节都没收到」，已改用空闲看门狗时限再等一轮。 */
+  let waitedForIdle = false;
+  /** 看门狗也没能定性（配置异常）：按死流处理，不放行。 */
+  let stallDetected = false;
+
+  const probeTimeoutMs = opts.probeTimeoutMs ?? PROBE_TIMEOUT_MS;
+  const idleWaitMs = opts.idleTimeoutMs ?? probeTimeoutMs;
 
   await new Promise<void>(resolve => {
+    let timer: NodeJS.Timeout | undefined;
     const finish = () => {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       // 先暂停再摘监听器：否则空档期到达的 chunk 会流向已无消费者的流而丢失。
       raw.pause();
       raw.off('data', onData);
@@ -214,6 +248,25 @@ export async function probeUpstream(raw: Readable): Promise<ProbeResult> {
       raw.off('close', finish);
       raw.off('error', onError);
       resolve();
+    };
+    const armWindow = (ms: number) => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(onWindowExpiry, ms);
+    };
+    const onWindowExpiry = () => {
+      // 一个字节都没收到的流不放行：放行也无可转发的内容，只会让客户端白等一个握
+      // 手，并把一个永远等不到内容的流交给路由。改等空闲看门狗（它到点会把注入的
+      // UpstreamError 打到流上，经下面的 onError 落成判定），窗口再到期就是看门狗
+      // 也没能定性的配置异常，按死流处理。
+      if (consumedBytes === 0 && !capturedError) {
+        if (!waitedForIdle) {
+          waitedForIdle = true;
+          armWindow(idleWaitMs);
+          return;
+        }
+        stallDetected = true;
+      }
+      finish();
     };
     const onData = (chunk: Buffer) => {
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -235,7 +288,7 @@ export async function probeUpstream(raw: Readable): Promise<ProbeResult> {
       finish();
     };
     // finish 只会在计时器触发或数据事件里被调用，那时 timer 已初始化。
-    const timer = setTimeout(finish, PROBE_TIMEOUT_MS);
+    armWindow(probeTimeoutMs);
     raw.on('data', onData);
     raw.once('end', finish);
     raw.once('close', finish);
@@ -253,10 +306,31 @@ export async function probeUpstream(raw: Readable): Promise<ProbeResult> {
     return { rejected: false, stream: reflow(raw, head) };
   }
 
+  // 窗口到期但一个字节都没收到，且看门狗也没能定性：同样是「产出内容前就没数据」，
+  // 客户端一字节未收，丢弃重试是安全的。
+  if (stallDetected) {
+    raw.destroy();
+    return {
+      rejected: true,
+      stream: raw,
+      reason: 'first-byte-stall',
+      detail: `no upstream bytes within ${probeTimeoutMs / 1000}s`,
+    };
+  }
+
   // 传输层中断且尚未产出任何内容：客户端一字节未收，丢弃重试是安全的。
   if (capturedError && isRetryableProbeFailure(capturedError)) {
     raw.destroy();
-    return { rejected: true, stream: raw, reason: 'stream-error', detail: capturedError?.message };
+    // 空闲看门狗注入的错误与传输层中断走同一个入口，但成因不同：前者是「连首字节
+    // 都没吐」，日志与错误文案要能把这两种形态分开，否则排障时又会误判成对端掐流。
+    const idleStall =
+      capturedError instanceof UpstreamError && capturedError.code === ErrorCode.STREAM_IDLE_TIMEOUT;
+    return {
+      rejected: true,
+      stream: raw,
+      reason: idleStall ? 'first-byte-stall' : 'stream-error',
+      detail: capturedError?.message,
+    };
   }
 
   return { rejected: false, stream: reflow(raw, head) };
@@ -310,7 +384,12 @@ export function wrapUpstreamStream(args: {
   // 把 web stream 包装成 Node 流：每收到一个 chunk 都重置空闲看门狗。
   const rawStream = Readable.fromWeb(webBody as any);
   timeouts.armIdleWatchdog();
-  rawStream.on('data', () => timeouts.armIdleWatchdog());
+  // 累计收到的字节数：空闲超时该不该允许重试，判据就是「上游有没有吐过东西」。
+  let receivedBytes = 0;
+  rawStream.on('data', (chunk: Buffer) => {
+    receivedBytes += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk));
+    timeouts.armIdleWatchdog();
+  });
 
   // 被首事件探测判定为「上游以 200 报错」而丢弃的流，不要把并发槽位还回去 ——
   // 槽位要留给紧随其后的那次重试（槽位在整个 sendToCC 调用里只申请一次）。
@@ -344,10 +423,16 @@ export function wrapUpstreamStream(args: {
       // toProxyError 的兜底分类，会被记成 PROVIDER_PROTOCOL_ERROR（502 语义）。
       // "上游卡住不吐字节"是超时而不是协议错误：给成 UpstreamError 后客户端能按
       // STREAM_IDLE_TIMEOUT/504 分支重试，落库的失败原因也随之正确。
+      //
+      // retryable 只在**一个字节都没收到**时为真：那种情况客户端不可能收到任何
+      // 内容，本次尝试什么都没产出，丢弃重试是安全的（首事件探测会据此丢弃，见
+      // probeUpstream）。这与 response-error.ts 里「等响应头阶段的空闲超时」同判
+      // （那里给的就是 true），也与本版本已修的同族形态（产出内容前流被掐断→重试）
+      // 一致。反过来，已经收到过字节就不改判：内容可能已经转发出去，重试会重复投递。
       rawStream.destroy(new UpstreamError(
         `No data from upstream for ${args.idleTimeoutMs / 1000}s`,
         504,
-        false,
+        receivedBytes === 0,
         ErrorCode.STREAM_IDLE_TIMEOUT,
       ));
     }

@@ -33,8 +33,9 @@ let base = '';
 let stateDir = '';
 /** 每次请求到达时，按序记录该次尝试发给上游的 model。 */
 let attempts: string[] = [];
-/** 用哪套剧本：'cut-before-content' 在首个内容事件之前掐断；'cut-mid-stream' 产出一段后再掐断。 */
-let scenario: 'cut-before-content' | 'cut-mid-stream' = 'cut-before-content';
+/** 用哪套剧本：'cut-before-content' 在首个内容事件之前掐断；'cut-mid-stream' 产出一段后再掐断；
+ *  'stall-before-content' 起了流（响应头已发）但一个字节都不吐，只由空闲看门狗定性。 */
+let scenario: 'cut-before-content' | 'cut-mid-stream' | 'stall-before-content' = 'cut-before-content';
 
 beforeAll(async () => {
   stateDir = mkdtempSync(path.join(tmpdir(), 'ccproxy-stream-retry-'));
@@ -47,6 +48,16 @@ beforeAll(async () => {
       attempts.push(JSON.parse(body || '{}')?.params?.model ?? '?');
 
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+
+      if (attempt === 1 && scenario === 'stall-before-content') {
+        // 起了流（响应头已发）但一个字节都不吐，也不断连：只有空闲看门狗能定性。
+        // 头必须先冲刷出去，否则客户端连响应头都收不到，走的是「等响应头阶段的空闲
+        // 超时」—— 那条路径本来就判为可重试（response-error.ts），测不到本次要修的
+        // 缺口：响应头已到、body 一个字节都没有。
+        res.flushHeaders();
+        return;
+      }
+
       res.write(START);
 
       if (attempt === 1 && scenario === 'cut-before-content') {
@@ -138,5 +149,21 @@ describe('上游在产出内容前被掐断 → 丢弃本次尝试重试', () =>
     expect(attempts.length).toBe(1);
     expect(got.text).toContain('partial-before-cut');
     expect(got.error).toMatch(/terminated|other side closed|ECONNRESET/i);
+  }, 20_000);
+
+  // 2026-10-07 10:03 的事故形态：上游回了响应头，之后一个字节都不给，直到空闲看门狗
+  // （本用例配置为 5s）把它判死。修复前这一轮直接失败（retryable=false、预算没用），
+  // 修复后按「产出内容前失败」丢弃重试 —— 与同族的 terminated 形态同判。
+  it('响应头已到但一个字节都不吐 → 空闲看门狗定性后重试', async () => {
+    const { sendToCC } = await import('../src/adapters/commandcode/upstream.js');
+    attempts = [];
+    scenario = 'stall-before-content';
+
+    const stream = await sendToCC(makeBody(), { apiKey: 'ck-a' });
+    const got = await drain(stream);
+
+    expect(attempts.length).toBe(2);
+    expect(got.error).toBeUndefined();
+    expect(got.text).toContain('recovered');
   }, 20_000);
 });

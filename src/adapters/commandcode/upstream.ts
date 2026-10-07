@@ -326,16 +326,21 @@ export async function sendToCC(body: CCRequestBody, opts: SendOptions): Promise<
       // 只在**还有重试预算**时才探测：最后一次尝试直接放行，让调用方按既有逻辑处理
       // （把错误并入流）。这样本机制是纯增量——只多试几次，不改对客户端的契约。
       if (attempt < maxAttempts) {
-        const probe = await probeUpstream(rawStream);
+        const probe = await probeUpstream(rawStream, { idleTimeoutMs: config.idleTimeoutMs });
         if (probe.rejected) {
           wrapped.markDiscarded();
           rawStream.destroy();
           const why = probe.reason === 'error-event'
             ? 'Upstream reported an error event before producing any content'
-            : 'Upstream stream ended prematurely before producing any content';
-          const detail = probe.reason === 'stream-error' && probe.detail ? `: ${probe.detail}` : '';
+            : probe.reason === 'first-byte-stall'
+              ? 'Upstream sent no data at all before stalling'
+              : 'Upstream stream ended prematurely before producing any content';
+          const detail = probe.detail ? `: ${probe.detail}` : '';
           // 客户端已经走了就别重试：这一轮对话已被放弃，替它再打一次上游只是白耗额度。
-          // 两种超时（挂钟 / 空闲）在探测窗口内不可能触发，所以这里的不中止即为客户端中止。
+          // 空闲超时**会**在探测窗口内触发（一个字节都不吐的流由看门狗定性，见
+          // probeUpstream），所以两种超时都必须用 idleFired / deadlineFired 排除在
+          // 「客户端中止」之外 —— 否则一次上游卡死会被记成客户端中止，既不重试、
+          // 又把失败成因落错。
           const clientGone = opts.abortSignal?.aborted === true && !timeouts.deadlineFired && !timeouts.idleFired;
           throw new UpstreamError(
             `${why} (model ${body.params.model})${detail}`,

@@ -14,10 +14,17 @@
   remote 布局：`origin` = 产品仓库（推送目标）、`upstream` = `wjf1/commandcode-proxy`（**仅 fetch，禁止 push**）、`ghproxy` = 上游镜像。
 - **执行依据（SSOT）**：`docs/master-plan-v1.2.md`（已纳入仓库）（v1.2.3 起含基准勘误）。
   审计与评审材料（已随仓库分发）：`docs/review/`（`batch-b.patch`、`architecture-review.md`、`remediation-plan.md`）。
-- **当前状态（2026-10-07）**：**P0 移植已完成并部署，产品首发 v5.0.0；随后发布 v5.0.1（上游流中断重试修复，见 §4 首条）**。
+- **当前状态（2026-10-07）**：**P0 移植已完成并部署，产品首发 v5.0.0；随后发布 v5.0.1（上游流中断重试修复）；
+  本版 v5.0.2（施工完成、未推送）修同族第二形态 —— 产出内容前的空闲超时也进入重试**。见 §4 首条。
   - **Phase A~F 全部完成**：A 工程基座 / B 审计批次 B 安全语义 / C 新增模块 / D1 接缝接线 / E 面板移植 / F 阶段门复验。
   - **门禁数据（F）**：`npm run verify` **50 文件 / 658 用例全绿**；覆盖率 65.87%；`npm audit --omit=dev` **0 漏洞**；50 并发 P99 126ms / 468rps / 0 错误。
   - **门禁数据（v5.0.1）**：`npm run verify` **51 文件 / 667 用例全绿**、`npm run lint` 零输出、`npm run typecheck` 双工程通过；新增 1 文件 9 用例锁定「内容产出前中断必重试 / 内容产出后必不重试」。
+  - **门禁数据（v5.0.2，未推送）**：`build` / `lint` 零输出、src 工程 `tsc --noEmit` 通过；
+    `npx vitest run --exclude '**/commandcode-provider.test.ts'` **55 文件 / 713 用例全绿**（+4 例）。
+    ⚠️ **`npm run typecheck` 的 tests 工程当前会红**：并行会话留有**未跟踪**的 TDD 文件
+    `tests/commandcode-provider.test.ts`，它 import 尚未实现的 `src/providers/commandcode/provider.ts`
+    （故 `npm run verify` 也随之红）。与本版改动无关，**未删除**（属他人进行中的工作），
+    门禁据此作了上述排除并已在此注明 —— 接手时先确认该文件是否已由对方补齐或移除。
   - **已部署（2026-10-07）**：看门狗第 5 秒拉起新代码；`config.json` flat→unified 迁移完成、凭据落 `credentials.enc`（`.env` 明文行已摘除）；
     **风险门经用户在面板确认后放行**。详见 §7 部署检查清单。
   - **代理端口已收敛（2026-10-07）**：Clash 混合端口经用户在界面固定为 **7900**，四处编码（`.env` / `config.json` 的 `upstream.proxy` /
@@ -30,7 +37,7 @@
     但**尚未接入运行时**（`providers/core` 目前只被自身与 freebuff 引用，未接 `src/index.ts` / `src/routes/`，接线属 T213）；
     WorkBuddy 仍在规划（联邦透传路线，见 `docs/wb-source-diff-report.md` §7）。
   - **P1 已完成四卡**：T201（Freebuff 核心移植）/ T202a（tools schema 规范化）/ T202b（Anthropic 桥）/ T203（账号池与错误处理）。
-  - **当前门禁与远端**：`npm run verify` **55 文件 / 709 用例全绿**；typecheck 双工程 0 错误；lint 零输出；
+  - **当前门禁与远端**：v5.0.2 施工后为 **55 文件 / 713 用例全绿**（typecheck 见上文测试工程的既有红项）；
     产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`），远端 `main` 与 `feat/p0-port` 均在 `2d73635`；
     公开前已核查：无敏感文件被跟踪、无凭据模式命中、历史中亦从未提交过 `.env`/`config.json`/`credentials.enc`。
 - **分支模型**：**`main` = 产品主线**（默认分支，已含 P0 移植与 v5.0.0 发布）；`feat/p0-port` = 移植集成分支（与 `main` 同点）。
@@ -47,7 +54,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**55 文件 / 709 用例全绿**（v5.0.1 为 51/667；v5.0.0 为 50/658；v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**55 文件 / 713 用例全绿**（v5.0.2 为 55/713；v5.0.1 为 51/667；v5.0.0 为 50/658；v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -65,6 +72,23 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **v5.0.2 空闲超时重试修复（2026-10-07，接 v5.0.1 同族第二形态）**：用户报
+  `No data from upstream for 120s` / `STREAM_IDLE_TIMEOUT`（`requestId 8eaae6bb-34ec-481c-b500-408f3c0b9788`，10:03）。
+  **排障链路（可复用）**：ZCode 报错卡里的 `TraceID` 是它的**应用启动** traceId（对不上代理），
+  唯一能对齐两端的是 `request=`；代理侧 `logs/proxy.log` 命中同名请求行
+  `POST /v1/messages -> 200 (150788201ms)`（**注意括号里其实是微秒却标成 ms**），上一行即
+  `[MESSAGES] Upstream stream error | Trace msg_fb2f95f3 | No data from upstream for 120s`。
+  成因：150.8s ≈ 32s（上游才回响应头）+ 120s（看门狗）。本次尝试 `textDeltaChars=0`，**什么都没产出**；
+  而 ZCode 侧 `retryable=false`、`canRetry=false`（`maxAttempts: 11` 一次没用）。
+  改动：`pipeline/stream.ts` 注入的 `UpstreamError` 的 `retryable` 按「是否收到过上游字节」条件化
+  （零字节→`true`）；`probeUpstream` 对**零字节**的流不再按 30s 窗口放行，改等看门狗定性
+  （新成因 `first-byte-stall`）；`upstream.ts` 接住新成因并修正「两种超时在探测窗口内不可能触发」
+  这条**已被证伪**的注释。
+  **关键认知（勿再踩）**：`ProxyError.anthropicPayload()` **不下发 `retryable` 字段**，且 ZCode 包里
+  `STREAM_IDLE_TIMEOUT` **0 次出现** —— 「改代理标志让客户端重试」这条路不通，**修复必须落在代理自身的重试循环**。
+  验证：`build`/`lint` 零输出、src 工程 `tsc --noEmit` 通过、**55 文件 / 713 用例全绿**（v5.0.1 基线 55/709，+4 例）。
+  **尚未推送**（tag / push / Release 待用户点头）。
 
 - **P1 交付（2026-10-07，四卡）**：
   - **T201 Freebuff 核心移植**：`src/providers/freebuff/` 7 文件 2,388 行（`run-manager` 含 RunManager/TokenPool：

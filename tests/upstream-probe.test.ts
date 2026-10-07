@@ -183,8 +183,8 @@ describe('probeUpstream — 传输层中断的判定', () => {
     expect(probe.reason).toBe('error-event');
   });
 
-  // 客户端已经走了就别替它重试（白耗额度）；两类超时注入的 UpstreamError 本就定义为
-  // 不可重试，绝不能在这里被改判成可重试。
+  // 客户端已经走了就别替它重试（白耗额度）。判定沿用错误对象自己的 retryable 标志，
+  // 探测层绝不改判 —— 标志由注入点按「是否已经收到过上游字节」决定（见下方用例）。
   it('中止类错误不放行重试', async () => {
     const aborted: any = new Error('The operation was aborted');
     aborted.name = 'AbortError';
@@ -195,6 +195,8 @@ describe('probeUpstream — 传输层中断的判定', () => {
   });
 
   it('UpstreamError 沿用自身的 retryable 标志', async () => {
+    // 已经收到过字节（startLine）之后才空闲超时：注入点给的是 retryable=false，
+    // 内容可能已经转发出去，重试会重复投递 —— 探测层必须原样放行。
     const idle = new UpstreamError('No data from upstream for 120s', 504, false, ErrorCode.STREAM_IDLE_TIMEOUT);
     const p1 = await probeUpstream(thenError([startLine], idle));
     expect(p1.rejected).toBe(false);
@@ -202,6 +204,43 @@ describe('probeUpstream — 传输层中断的判定', () => {
 
     const retryable = new UpstreamError('connect ECONNRESET', undefined, true, ErrorCode.NETWORK_ERROR);
     expect((await probeUpstream(thenError([startLine], retryable))).rejected).toBe(true);
+  });
+
+  // 2026-10-07 10:03 的事故形态：上游回了响应头、body 一个字节都不给，直到空闲看门狗
+  // 判死。修复前注入点给的是 retryable=false，探测层据此放行，重试预算一次都没用上。
+  it('零字节 + 空闲看门狗注入（retryable=true）→ 判为首字节停顿，丢弃重试', async () => {
+    // 注入点在「一个字节都没收到」时给的正是 true（pipeline/stream.ts 的
+    // wrapUpstreamStream）：本次尝试什么都没产出，丢弃重试是安全的。
+    const idle = new UpstreamError('No data from upstream for 120s', 504, true, ErrorCode.STREAM_IDLE_TIMEOUT);
+    const probe = await probeUpstream(thenError([], idle));
+    expect(probe.rejected).toBe(true);
+    expect(probe.reason).toBe('first-byte-stall');
+    expect(probe.detail).toBe('No data from upstream for 120s');
+  });
+
+  it('一个字节都不吐的流不会被放行：窗口到期改等看门狗时限，仍无数据则判为首字节停顿', async () => {
+    // 探测窗口（50ms）到期时零字节 → 不放行（放行也无可转发的内容，只是把一个永远
+    // 等不到内容的流交给路由），改等 idleTimeoutMs（100ms）。这里没有任何东西把它
+    // 判死，于是走兜底分支：同样按「产出内容前失败」丢弃重试。
+    const silent = new Readable({ read() {} });
+    const probe = await probeUpstream(silent, { probeTimeoutMs: 50, idleTimeoutMs: 100 });
+    expect(probe.rejected).toBe(true);
+    expect(probe.reason).toBe('first-byte-stall');
+    silent.destroy();
+  });
+
+  it('窗口内收了数据（哪怕只是 start）仍按时放行，不为判别拖住请求', async () => {
+    const chatty = new Readable({ read() {} });
+    setTimeout(() => chatty.push(Buffer.from(startLine)), 10);
+    const t0 = Date.now();
+    const probe = await probeUpstream(chatty, { probeTimeoutMs: 60, idleTimeoutMs: 5_000 });
+    const elapsed = Date.now() - t0;
+    expect(probe.rejected).toBe(false);
+    // 关键：没有等满 idleTimeoutMs（5s）。延窗只针对「零字节」，有字节就按 30s 窗口
+    // 放行 —— 这条锁死「30s 窗口的既有语义不被本次修复放大」。
+    expect(elapsed).toBeLessThan(1_000);
+    probe.stream.destroy();
+    chatty.destroy();
   });
 
   it('内容事件先到：放行而不是重试（此后中途失败不能再丢弃）', async () => {
