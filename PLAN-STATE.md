@@ -133,8 +133,21 @@
   - 遗留（T213 接线）：`FreebuffAccountPool` 尚未接入 provider/路由；`preferredAccountId`/`onRetry` 未透传到选号；
     面板账号页未消费 `snapshot()`；`updateConfig` 不热改 Token
 - [x] T203 Freebuff 账号池与凭据持久化（历史条目，已完成见上）
-- [ ] T204' WorkBuddy 透传 Provider + Sidecar 管理（联邦，见 `docs/wb-source-diff-report.md` §7）
-- [ ] T205' WorkBuddy 账号管理委托 sidecar（并入 T204'）
+- [x] T204' WorkBuddy 透传 Provider + Sidecar 管理（联邦，见 `docs/wb-source-diff-report.md` §7）
+  - 完成：2026-10-07，提交 `47f8a3a`。按 §3.11-1/2 落地：
+    `src/providers/workbuddy/sidecar.ts`（子进程拉起 Go 二进制 + `/healthz` 就绪轮询 +
+    崩溃自动重启 5min×3 策略 + stop 有意停止 + 随主进程退出）；
+    `src/providers/workbuddy/provider.ts`（`WorkBuddyProvider implements IProvider`：
+    chatCompletion 透传 + conversation_id 原样透传 + rewriteMode 总开关、listModels、
+    probe 真实 `/healthz` 并刷新池快照、sidecarStatus 供面板卡片）。
+    sidecar 端点为 Go 源码实测口径（`internal/server/handler.go`、`internal/panel/panel.go`）。
+  - 测试：`tests/workbuddy-{sidecar,provider}.test.ts` 22 例（先红后绿）。
+  - 门禁：全量 **58 文件 / 754 用例全绿**；typecheck 双工程 0 错误；lint 零输出。
+  - 未接线：接入 `src/index.ts` / `src/routes/` 属 T213（与 Freebuff 同口径）。
+- [x] T205' WorkBuddy 账号管理委托 sidecar（并入 T204'）
+  - 完成：随 T204'（提交 `47f8a3a`）——listAccounts 读 `/status` 池快照、
+    pause/resume/remove 打 `/panel/api/accounts/{uid}/*`、addAccount 明确不支持
+    （OAuth 设备授权属 T301，抛可执行提示）。
 - [ ] T206 WorkBuddy 熔断状态机 —— 已取消（sidecar 内置承接）
 - [ ] T207 WorkBuddy 会话粘性 —— 已取消（sidecar 内置承接）
 - [ ] T208~T212 面板五页（总览/上游管理/账号-Token/模型目录/用量统计）
