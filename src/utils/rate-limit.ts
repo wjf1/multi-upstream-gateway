@@ -23,6 +23,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { ErrorCode, ProxyError } from './errors.js';
 import { estimateTextTokens } from '../adapters/commandcode/upstream.js';
 import { auditReject } from './audit-log.js';
+import { getUnifiedConfigStore } from './config-store-runtime.js';
 
 const WINDOW_MS = 60_000;
 
@@ -70,6 +71,22 @@ export function rateLimitKeyOf(req: { headers: unknown }): string {
   return key ? key.slice(-4) : 'global';
 }
 
+/**
+ * 全局桶配置源（T213b 收口）：config.json 的 `rateLimit.global` 分片（经
+ * UnifiedConfigStore，热重载）非空时优先；否则回退 env（RATE_LIMIT_RPM/TPM，
+ * 调用时读取）。两个源都是「未设置 = 不限流」。
+ */
+function effectiveGlobalLimits(): { rpm?: number; tpm?: number } {
+  const store = getUnifiedConfigStore();
+  if (store) {
+    try {
+      const g = store.get().rateLimit?.global;
+      if (g && (g.rpm !== undefined || g.tpm !== undefined)) return { rpm: g.rpm, tpm: g.tpm };
+    } catch { /* store 未加载：回退 env */ }
+  }
+  return { rpm: intEnv('RATE_LIMIT_RPM'), tpm: intEnv('RATE_LIMIT_TPM') };
+}
+
 function sweepAll(now: number): void {
   if (now - lastSweepAt < WINDOW_MS) return;
   lastSweepAt = now;
@@ -85,8 +102,7 @@ function sweepAll(now: number): void {
  * estimatedTokens 为本次请求的 input 预估；允许时计入窗口。
  */
 export function checkRateLimit(key: string, estimatedTokens = 0): RateLimitVerdict {
-  const rpm = intEnv('RATE_LIMIT_RPM');
-  const tpm = intEnv('RATE_LIMIT_TPM');
+  const { rpm, tpm } = effectiveGlobalLimits();
   if (rpm === undefined && tpm === undefined) return { allowed: true };
 
   const now = Date.now();
@@ -154,7 +170,8 @@ function estimateBodyTokens(body: unknown): number {
  * 返回 true 表示已拒绝并写完响应，handler 应立即 return。
  */
 export function guardRateLimit(req: FastifyRequest, reply: FastifyReply): boolean {
-  if (intEnv('RATE_LIMIT_RPM') === undefined && intEnv('RATE_LIMIT_TPM') === undefined) return false;
+  const { rpm, tpm } = effectiveGlobalLimits();
+  if (rpm === undefined && tpm === undefined) return false;
   const key = rateLimitKeyOf(req);
   const verdict = checkRateLimit(key, estimateBodyTokens(req.body));
   if (verdict.allowed) {

@@ -15,6 +15,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { ErrorCode, ProxyError } from './errors.js';
 import { auditReject } from './audit-log.js';
+import { getUnifiedConfigStore } from './config-store-runtime.js';
 
 function parseList(name: string): string[] {
   return (process.env[name] ?? '')
@@ -24,9 +25,27 @@ function parseList(name: string): string[] {
 }
 
 /** 访问判定：allowlist 优先，其次 blocklist；均未设置全放行。大小写不敏感。 */
+/**
+ * 配置源（T213b 收口）：config.json 的 `modelAccess` 分片（经 UnifiedConfigStore，
+ * 热重载）**非空时优先**；为空/未装配时回退 env（MODEL_ALLOWLIST / MODEL_BLOCKLIST，
+ * 调用时读取，改了即生效）。两个源语义同构（精确匹配、大小写不敏感）。
+ */
+function effectiveLists(): { allow: string[]; block: string[] } {
+  const store = getUnifiedConfigStore();
+  if (store) {
+    try {
+      const ma = store.get().modelAccess;
+      if (ma && (ma.allowlist.length > 0 || ma.blocklist.length > 0)) {
+        const lower = (arr: string[]) => arr.map(s => s.trim().toLowerCase()).filter(Boolean);
+        return { allow: lower(ma.allowlist), block: lower(ma.blocklist) };
+      }
+    } catch { /* store 未加载：回退 env */ }
+  }
+  return { allow: parseList('MODEL_ALLOWLIST'), block: parseList('MODEL_BLOCKLIST') };
+}
+
 export function checkModelAccess(model: string): { allowed: boolean; reason?: string } {
-  const allow = parseList('MODEL_ALLOWLIST');
-  const block = parseList('MODEL_BLOCKLIST');
+  const { allow, block } = effectiveLists();
   if (allow.length === 0 && block.length === 0) return { allowed: true };
   const m = String(model ?? '').trim().toLowerCase();
   if (allow.length > 0) {

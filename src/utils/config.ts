@@ -41,7 +41,7 @@ export const CONFIG_FILE_PATH = process.env.COMMANDCODE_CONFIG_PATH
 // 与 CONFIG_FILE_PATH 同一套隔离约定。缺了它，.env 会无视 COMMANDCODE_CONFIG_PATH
 // 落到项目根 —— 而 .env 里存的是明文上游 key（见 saveEnvFile），测试与从
 // Program Files 运行的打包产物都会把凭据写进各自的工作目录。
-const ENV_FILE_PATH = process.env.COMMANDCODE_ENV_FILE_PATH
+export const ENV_FILE_PATH = process.env.COMMANDCODE_ENV_FILE_PATH
   ? path.resolve(process.env.COMMANDCODE_ENV_FILE_PATH)
   : path.join(getProjectRootDir(), '.env');
 
@@ -376,9 +376,15 @@ function syncEnvFile(
   ccVersion?: string
 ): void {
   try {
+    // T213b 收口（T103 残留）：加密库可用时**不再把明文 key 写进 .env**，并顺手
+    // 摘除旧行 —— legacy 扁平分支是「凭据不落明文」承诺的最后一个明文写入点
+    // （unified 分支已由 stripEnvKeyLine 收口）。密钥不可用时保持旧行为：
+    // 不静默丢凭据，把风险留给启动校验。
+    const keyReady = getDefaultCredentialStore().hasKey();
+    if (keyReady) stripEnvKeyLine(ENV_FILE_PATH, 'COMMANDCODE_API_KEY');
     const envLines = [
       // 无活跃 Key 时整条消失，而不是留着旧值。
-      ...(activeApiKey ? [`COMMANDCODE_API_KEY=${activeApiKey}`] : []),
+      ...(!keyReady && activeApiKey ? [`COMMANDCODE_API_KEY=${activeApiKey}`] : []),
       ...(apiBase ? [`COMMANDCODE_API_BASE=${apiBase}`] : []),
       ...(ccVersion ? [`COMMANDCODE_VERSION=${ccVersion}`] : []),
       `ACCOUNTS_COUNT=${accounts.length}`,

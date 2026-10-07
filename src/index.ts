@@ -34,6 +34,7 @@ import { startHealthChecks } from './utils/health-check.js';
 import { startWebhookAlerts } from './utils/webhook-alerts.js';
 import { initOutboundProxy } from './utils/proxy-agent.js';
 import { ProviderRuntime } from './providers/runtime.js';
+import { bootstrapConfigStore, shutdownConfigStore } from './utils/config-store-runtime.js';
 
 // 未捕获异常/拒绝：单次只记日志（代理要尽量活着）。
 // 但短时间连续出现说明进程已进入不可信状态（可能挂着僵死的上游连接、
@@ -158,6 +159,9 @@ async function shutdown(signal: string, exitCode = 0): Promise<void> {
     await flushPendingWrites();
   } catch { /* 尽力而为 */ }
   try {
+    await shutdownConfigStore();
+  } catch { /* 尽力而为 */ }
+  try {
     await fastify.close();
   } catch { /* 尽力而为 */ }
   process.exit(exitCode);
@@ -177,6 +181,17 @@ function exitForCrashBudget(kind: string): void {
 
 const start = async () => {
   try {
+    // T213b：UnifiedConfigStore 运行时装配（热重载驱动 rateLimit/modelAccess 旋钮）。
+    // 测试进程跳过 —— 与 loadConfig 的迁移守卫同口径，避免触碰真实 config.json
+    // （health-check 类测试不会隔离 CONFIG_FILE_PATH）。
+    if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+      try {
+        await bootstrapConfigStore();
+      } catch (err: any) {
+        logger.warn(`[BOOT] Config store bootstrap warning: ${err?.message || err}`);
+      }
+    }
+
     // T105 安全中间件链（请求 ID 传播 / modelAccess / 限流 / 请求日志）。
     // 必须先于 verifyProxyAuth 注册：请求 ID 的 onRequest 钩子要先执行，
     // 被 401 拒绝的请求才能带上 X-Request-Id 响应头。
