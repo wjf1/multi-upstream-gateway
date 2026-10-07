@@ -35,21 +35,31 @@ import type {
 import { logger } from '../../utils/logger.js';
 import { ErrorCode, ProxyError, codeForStatus, terminalCodeFor, toProxyError } from '../../utils/errors.js';
 import {
+  dedupeStrings,
   generateClientSessionId,
   registerUpstreamHosts,
   resolveFreebuffConfig,
 } from './config.js';
 import { ModelRegistry } from './models.js';
 import { ensureSession, invalidateSession } from './free-session.js';
-import { RunManager, type RunLease } from './run-manager.js';
+import { RunManager, TokenPool, type RunLease } from './run-manager.js';
 import { iterateSsePayloads, UpstreamClient, type ChatCompletionsResult } from './upstream.js';
 import { isWaitingRoomError, WaitingRoomError, type FreebuffConfig } from './types.js';
 import { normalizeToolSchemas } from './tool-schema.js';
+import { classifyFreebuffError, findHttpStatus } from './errors.js';
+import {
+  FreebuffAccountStore,
+  FREEBUFF_PROVIDER_ID,
+  type FreebuffStoredAccount,
+} from './account-store.js';
+import { getDefaultCredentialStore } from '../../utils/credential-store.js';
 
 const PROVIDER_NAME: ProviderName = 'freebuff';
 
-/** 上游 401/403 后的冷却时长（server.go:338 —— 30 分钟）。 */
-const AUTH_REJECT_COOLDOWN_MS = 30 * 60 * 1000;
+// server.go:338 的 30 分钟 401 冷却由 errors.ts 的 classify() 统一给出；
+// 此处保留常量导出以兼容 T201 调用方（值同源）。
+export { AUTH_REJECT_COOLDOWN_MS } from './errors.js';
+export { isSessionInvalid, isRunInvalid } from './errors.js';
 
 /** 单请求最大「上游错误重试」次数（server.go:267 `attempt < 2`）。 */
 const MAX_RUN_ATTEMPTS = 2;
@@ -63,6 +73,11 @@ function maskToken(token: string): string {
   return `****${token.slice(-4)}`;
 }
 
+/** FreebuffProvider 可选依赖注入（T203：账号持久化后端；测试可注入 memory 后端）。 */
+export interface FreebuffProviderDeps {
+  accountStore?: FreebuffAccountStore;
+}
+
 export class FreebuffProvider implements IProvider {
   readonly name: ProviderName = PROVIDER_NAME;
   readonly displayName = 'Freebuff';
@@ -74,6 +89,11 @@ export class FreebuffProvider implements IProvider {
   private registry: ModelRegistry | null = null;
   private runs: RunManager | null = null;
   private accountAddedAt = new Date().toISOString();
+  private accountStore: FreebuffAccountStore | null;
+
+  constructor(deps: FreebuffProviderDeps = {}) {
+    this.accountStore = deps.accountStore ?? null;
+  }
 
   // ─── 生命周期 ───────────────────────────────────────────────────────────────
 
@@ -82,6 +102,14 @@ export class FreebuffProvider implements IProvider {
     this.cfg = cfg;
     this.enabled = cfg.enabled;
     this.initialized = true;
+
+    // T203：启动时从 T103 加密库读回 Freebuff 账号；FREEBUFF_TOKENS 作为引导
+    // 通道保留（两者合并去重，加密库条目在前）。
+    this.accountStore ??= new FreebuffAccountStore(getDefaultCredentialStore());
+    const persisted = this.accountStore.tokens();
+    if (persisted.length > 0) {
+      cfg.tokens = dedupeStrings([...persisted, ...cfg.tokens]);
+    }
 
     // SSRF 白名单自注册必须在任何出站请求之前（safe-fetch 是 fail-closed）。
     registerUpstreamHosts([cfg.apiBase, cfg.modelRegistryUrl]);
@@ -145,35 +173,67 @@ export class FreebuffProvider implements IProvider {
   }
 
   /**
-   * 真实探活：对首个可用 Token 发起一次 free session 往返（与 prewarm 同一
-   * 最小路径，不建 Run、不发对话请求）。等待室排队说明上游可达 → healthy。
+   * 真实探活：依次对「未暂停且未冷却」的 Token 发起一次 free session 往返
+   * （与 prewarm 同一最小路径，不建 Run、不发对话请求）。
+   *
+   * T203 强化：
+   *   - 逐个 Token 尝试，前一个失效（401/403/429/5xx）即冷却并继续下一个，
+   *     全部失败才判不健康——避免"首个 Token 失效就整体不健康"的误判，
+   *     也避免"首个 Token 有效就整体健康"的漏判；
+   *   - 401/403 明确**不返回健康**（DoD：Token 失效时 probe 返回不健康）；
+   *   - 等待室排队说明上游可达 → healthy（T201 语义保留）。
    */
   async probe(): Promise<ProbeResult> {
     const checkedAt = new Date().toISOString();
     if (!this.enabled) return { healthy: false, detail: 'provider disabled', checkedAt };
-    const pool = this.firstUsablePool();
-    if (!pool) return { healthy: false, detail: 'no freebuff token configured', checkedAt };
+    const runs = this.runs;
+    if (!runs) return { healthy: false, detail: 'freebuff provider is not initialized', checkedAt };
+
+    const now = Date.now();
+    const candidates = runs
+      .poolNames()
+      .map((name) => runs.getPool(name))
+      .filter((pool): pool is TokenPool => !!pool && pool.enabled && !pool.isCoolingDown(now));
+    if (candidates.length === 0) {
+      return { healthy: false, detail: 'no usable freebuff token (all paused or cooling down)', checkedAt };
+    }
 
     const started = Date.now();
-    try {
-      await ensureSession(pool);
-      return { healthy: true, latencyMs: Date.now() - started, checkedAt };
-    } catch (err) {
-      if (isWaitingRoomError(err)) {
-        return {
-          healthy: true,
-          latencyMs: Date.now() - started,
-          detail: `waiting room queued: ${err.message}`,
-          checkedAt,
-        };
+    const failures: string[] = [];
+    for (const pool of candidates) {
+      try {
+        await ensureSession(pool);
+        pool.noteSuccess();
+        return { healthy: true, latencyMs: Date.now() - started, checkedAt };
+      } catch (err) {
+        if (isWaitingRoomError(err)) {
+          return {
+            healthy: true,
+            latencyMs: Date.now() - started,
+            detail: `waiting room queued: ${err.message}`,
+            checkedAt,
+          };
+        }
+        const status = findHttpStatus(err);
+        const classified = status !== undefined ? classifyFreebuffError(status, messageOf(err)) : null;
+        if (classified && classified.action === 'cooldown_auth') {
+          pool.markCooldown(classified.cooldownMs, classified.reason);
+          failures.push(`${pool.name}: ${classified.reason}`);
+        } else if (classified && classified.action === 'cooldown_soft') {
+          const ms = pool.noteFailure(classified.reason);
+          failures.push(`${pool.name}: ${classified.reason} (cooldown ${Math.round(ms / 1000)}s)`);
+        } else {
+          pool.lastError = messageOf(err);
+          failures.push(`${pool.name}: ${messageOf(err)}`);
+        }
       }
-      return {
-        healthy: false,
-        latencyMs: Date.now() - started,
-        detail: err instanceof Error ? err.message : String(err),
-        checkedAt,
-      };
     }
+    return {
+      healthy: false,
+      latencyMs: Date.now() - started,
+      detail: `all freebuff tokens unhealthy (${failures.join('; ')})`,
+      checkedAt,
+    };
   }
 
   // ─── 目录 ──────────────────────────────────────────────────────────────────
@@ -242,34 +302,44 @@ export class FreebuffProvider implements IProvider {
         }
 
         if (result.ok && result.response) {
+          lease.pool.noteSuccess();
           // 首字节之后不再重试：streamUpstreamText 一旦 yield 即不可回退。
           yield* streamUpstreamText(result, req?.stream === true, opts.abortSignal);
           return;
         }
 
         const errorText = result.errorText ?? '';
+        const classified = classifyFreebuffError(result.status, errorText);
 
         // server.go:323 —— free session 失效：刷新会话后重试。
-        if (isSessionInvalid(result.status, errorText)) {
-          logger.warn(`${lease.pool.name}: freebuff session invalid, refreshing and retrying`);
-          invalidateSession(lease.pool, errorText.trim());
+        if (classified.action === 'refresh_session') {
+          logger.warn(`${lease.pool.name}: ${classified.reason}, refreshing and retrying`);
+          invalidateSession(lease.pool, classified.reason);
           continue;
         }
         // server.go:330 —— run 失效：摘除 run 后重试（下一轮 rotate）。
-        if (isRunInvalid(result.status, errorText)) {
-          logger.warn(`${lease.pool.name}: freebuff run ${lease.run.id} invalid, rotating and retrying`);
-          runs.invalidate(lease, errorText.trim());
+        if (classified.action === 'rotate_run') {
+          logger.warn(`${lease.pool.name}: ${classified.reason} (run ${lease.run.id}), rotating and retrying`);
+          runs.invalidate(lease, classified.reason);
           continue;
         }
-        // server.go:337 —— token 被上游拒绝：冷却 30 分钟并让调用方换号。
-        if (result.status === 401 || result.status === 403) {
-          runs.cooldown(lease, AUTH_REJECT_COOLDOWN_MS, 'upstream auth rejected token');
-          invalidateSession(lease.pool, 'upstream auth rejected token');
+        // server.go:337 —— token 被上游拒绝：固定冷却并让调用方换号/报错。
+        if (classified.action === 'cooldown_auth') {
+          runs.cooldown(lease, classified.cooldownMs, classified.reason);
+          invalidateSession(lease.pool, classified.reason);
           throw new ProxyError(
             ErrorCode.INVALID_CREDENTIAL,
             `freebuff upstream rejected token (HTTP ${result.status})`,
             { status: result.status, context: { requestId: opts.requestId, token: lease.pool.name } },
           );
+        }
+        // §3.4 软冷却：429/402/5xx 施加指数退避并换号重试。
+        if (classified.action === 'cooldown_soft') {
+          const cooldownMs = lease.pool.noteFailure(classified.reason);
+          logger.warn(
+            `${lease.pool.name}: ${classified.reason}; cooling down ${Math.round(cooldownMs / 1000)}s and retrying`,
+          );
+          continue;
         }
 
         throw new ProxyError(
@@ -340,33 +410,65 @@ export class FreebuffProvider implements IProvider {
   }
 
   /**
-   * 添加账号（内存态）。凭据持久化（加密存储 / .env 写入）属 T203；
-   * 本卡只保证运行期可立即参与轮询。
+   * 添加账号：内存态立即参与轮询，**并写入 T103 加密库**（T203 DoD：
+   * 面板/API 新增的账号必须进加密库，不能只留在内存/环境变量）。
+   *
+   * 落库失败（无 CREDENTIAL_ENCRYPTION_KEY / 库不可写）只告警不抛——
+   * 运行期可用性优先；由 T213 面板据 accountStore.canPersist() 提示用户。
    */
   async addAccount(credentials: unknown): Promise<AccountInfo> {
     if (!this.runs) {
       throw new ProxyError(ErrorCode.NO_PROVIDER_AVAILABLE, 'Freebuff provider is not initialized');
     }
-    const c = (credentials ?? {}) as { token?: string; apiKey?: string };
+    const c = (credentials ?? {}) as { token?: string; apiKey?: string; name?: string };
     const token = String(c.token ?? c.apiKey ?? '').trim();
     if (!token) {
       throw new ProxyError(ErrorCode.INVALID_CREDENTIAL, 'credentials.token is required');
     }
+    let pool: TokenPool;
     try {
-      const pool = this.runs.addPool(token);
-      return {
-        id: pool.name,
-        name: `Freebuff ${pool.name}`,
-        apiKey: maskToken(token),
-        addedAt: new Date().toISOString(),
-      };
+      pool = this.runs.addPool(token);
     } catch (err) {
       throw new ProxyError(ErrorCode.INVALID_CREDENTIAL, messageOf(err));
     }
+
+    const addedAt = new Date().toISOString();
+    const record: FreebuffStoredAccount = {
+      id: pool.name,
+      provider: FREEBUFF_PROVIDER_ID,
+      apiKey: token,
+      name: String(c.name ?? `Freebuff ${pool.name}`),
+      addedAt,
+    };
+    try {
+      if (!this.accountStore) {
+        this.accountStore = new FreebuffAccountStore(getDefaultCredentialStore());
+      }
+      this.accountStore.upsert(record);
+    } catch (err) {
+      logger.warn(
+        `[PVD:freebuff] added ${pool.name} in-memory but could NOT persist to encrypted store: ${messageOf(err)}`,
+      );
+    }
+
+    return {
+      id: pool.name,
+      name: record.name,
+      apiKey: maskToken(token),
+      addedAt,
+    };
   }
 
+  /** 移除账号：内存池 + 加密库同步删除（幂等）。 */
   removeAccount(id: string): void {
     this.runs?.removePool(id);
+    if (this.accountStore) {
+      try {
+        this.accountStore.remove(id);
+      } catch (err) {
+        logger.warn(`[PVD:freebuff] could not remove ${id} from encrypted store: ${messageOf(err)}`);
+      }
+    }
   }
 
   pauseAccount(id: string): void {
@@ -423,15 +525,6 @@ export class FreebuffProvider implements IProvider {
     if (!this.initialized) {
       throw new ProxyError(ErrorCode.NO_PROVIDER_AVAILABLE, 'Freebuff provider is not initialized');
     }
-  }
-
-  private firstUsablePool() {
-    if (!this.runs) return undefined;
-    for (const name of this.runs.poolNames()) {
-      const pool = this.runs.getPool(name);
-      if (pool?.enabled) return pool;
-    }
-    return undefined;
   }
 
   private async ensureLeaseSession(lease: RunLease, requestId: string): Promise<string> {
@@ -497,37 +590,9 @@ export function buildUpstreamBody(
   return JSON.stringify(source);
 }
 
-// ─── 上游错误分类（server.go:387 / 722）──────────────────────────────────────
-
-/** server.go:387 isSessionInvalid。 */
-export function isSessionInvalid(status: number, errorBody: string): boolean {
-  if (status < 400) return false;
-  const code = extractErrorCode(errorBody);
-  return (
-    code === 'freebuff_update_required' ||
-    code === 'waiting_room_required' ||
-    code === 'waiting_room_queued' ||
-    code === 'session_superseded' ||
-    code === 'session_expired'
-  );
-}
-
-/** server.go:722 isRunInvalid（400 + runid not found/running）。 */
-export function isRunInvalid(status: number, errorBody: string): boolean {
-  if (status !== 400) return false;
-  const message = String(errorBody ?? '').toLowerCase();
-  return message.includes('runid not found') || message.includes('runid not running');
-}
-
-/** 从错误体里取字符串型 error 字段（server.go:391 的 `struct{ Error string }`）。 */
-function extractErrorCode(errorBody: string): string {
-  try {
-    const parsed = JSON.parse(errorBody) as { error?: unknown };
-    return typeof parsed?.error === 'string' ? parsed.error.trim() : '';
-  } catch {
-    return '';
-  }
-}
+// ─── 上游错误分类（已收敛至 errors.ts，见文件头说明）─────────────────────────
+// isSessionInvalid / isRunInvalid / classifyFreebuffError 由 ./errors.ts 提供，
+// 本文件仅 re-export 以兼容 T201 调用方。
 
 // ─── 文本增量（IProvider 契约口径）───────────────────────────────────────────
 

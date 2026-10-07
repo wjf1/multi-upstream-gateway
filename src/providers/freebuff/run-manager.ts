@@ -30,6 +30,7 @@
 import { logger } from '../../utils/logger.js';
 import type { FreebuffConfig, ManagedRun, RunSnapshot, TokenSnapshot } from './types.js';
 import { WaitingRoomError } from './types.js';
+import { SOFT_COOL_BASE_MS, softCooldownMs } from './errors.js';
 import {
   endSession,
   ensureSession,
@@ -53,6 +54,8 @@ export class TokenPool implements SessionHost {
   cooldownUntil = 0;
   /** 手动暂停开关（IProvider.pauseAccount）。暂停的池不参与选号。 */
   enabled = true;
+  /** 连续失败计数（T203 §3.4 软冷却指数退避的输入）。 */
+  consecutiveFailures = 0;
   /** 已成功 FINISH 的 run id：保证 created == finished（防 shutdown 与
    *  异步 finishIfReady 竞争导致重复 FINISH）。 */
   private readonly finishedRunIds = new Set<string>();
@@ -250,6 +253,32 @@ export class TokenPool implements SessionHost {
     if (reason) this.lastError = reason;
   }
 
+  // ─── T203：连续失败 → 指数退避软冷却（§3.4 SOFT_COOL）──────────────────────
+
+  /**
+   * 记录一次失败并按 §3.4 施加指数退避软冷却（1→2→4→8→…→max 30min）。
+   * 返回本次施加的冷却毫秒数（0 表示未冷却）。
+   */
+  noteFailure(reason: string, baseMs = SOFT_COOL_BASE_MS): number {
+    this.consecutiveFailures += 1;
+    const durationMs = softCooldownMs(this.consecutiveFailures, baseMs);
+    this.cooldownUntil = Date.now() + durationMs;
+    if (reason) this.lastError = reason;
+    return durationMs;
+  }
+
+  /** 记录一次成功：清零连续失败计数（冷却仍按既有到期时间自然收敛）。 */
+  noteSuccess(): void {
+    this.consecutiveFailures = 0;
+  }
+
+  /** T203：账号级健康分级（面板/快照口径）。 */
+  healthState(nowMs = Date.now()): 'PAUSED' | 'COOLING' | 'HEALTHY' {
+    if (!this.enabled) return 'PAUSED';
+    if (nowMs < this.cooldownUntil) return 'COOLING';
+    return 'HEALTHY';
+  }
+
   // ─── run_manager.go:461 snapshot ───────────────────────────────────────────
 
   snapshot(): TokenSnapshot {
@@ -294,6 +323,12 @@ export class RunManager {
   private next = 0;
   private healthyTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
+  /**
+   * T203 选号策略注入点：返回本次尝试的**起点池下标**（后续仍按顺序环形遍历，
+   * 保证"起点优先 + 失败顺延"）。返回非法值时回退 Round-robin 游标。
+   * 不注入即默认 Round-robin（与 T201 行为字节一致）。
+   */
+  selector: PoolSelector | null = null;
 
   constructor(
     private readonly cfg: FreebuffConfig,
@@ -302,6 +337,11 @@ export class RunManager {
     this.pools = cfg.tokens.map(
       (token, index) => new TokenPool(`token-${index + 1}`, token, cfg, client),
     );
+  }
+
+  /** 只读视图（T203 选号/账号池实现读取；外部不得改写数组结构）。 */
+  poolsView(): readonly TokenPool[] {
+    return this.pools;
   }
 
   // ─── run_manager.go:126 Start ──────────────────────────────────────────────
@@ -380,7 +420,7 @@ export class RunManager {
       throw new Error('run manager is closed');
     }
 
-    const startIndex = this.next++ % this.pools.length;
+    const startIndex = this.selectStartIndex(agentId);
     const errors: string[] = [];
     const waiting: WaitingRoomError[] = [];
 
@@ -409,6 +449,19 @@ export class RunManager {
     }
 
     throw new Error(`unable to acquire run from any token (${errors.join('; ')})`);
+  }
+
+  /** 选号起点：注入 selector 优先；非法返回回退 Round-robin 游标。 */
+  private selectStartIndex(agentId: string): number {
+    if (this.selector) {
+      try {
+        const index = this.selector(this.pools, agentId);
+        if (Number.isInteger(index) && index >= 0 && index < this.pools.length) return index;
+      } catch (err) {
+        logger.warn(`freebuff pool selector failed, falling back to round-robin: ${messageOf(err)}`);
+      }
+    }
+    return this.next++ % this.pools.length;
   }
 
   // ─── run_manager.go:219-246 Release / Invalidate / Cooldown / Snapshots ─────
@@ -472,3 +525,9 @@ export class RunManager {
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+
+/**
+ * T203 选号策略签名：给定池列表与目标 agent，返回尝试起点下标。
+ * 默认 Round-robin；配额感知/加权调度可在 T213 或后续任务注入。
+ */
+export type PoolSelector = (pools: readonly TokenPool[], agentId: string) => number;
