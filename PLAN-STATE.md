@@ -152,6 +152,18 @@
 - [ ] T207 WorkBuddy 会话粘性 —— 已取消（sidecar 内置承接）
 - [ ] T208~T212 面板五页（总览/上游管理/账号-Token/模型目录/用量统计）
 - [ ] T213 统一 API 层三源接线 + P1 手动降级
+  - **阶段 1 完成**（2026-10-07，提交 `9b98d9d`）：ProviderRuntime 装配三源 + registry/router 实例 +
+    `GET /api/providers` + `POST /api/providers/:name/enable|disable`（总闸热生效）+
+    `POST /api/providers/registry/refresh` + `/v1/models` 命名空间聚合
+    （门控 = 分片存在且 `enabled !== false` 且总闸开启；存量 config.json 无 freebuff/workbuddy 分片 →
+    行为与接线前一致）。按需初始化：无配置的 Provider 不执行 initialize（启动零变化）。
+    门禁：`npm run verify` **60 文件 / 767 用例全绿**；typecheck 双工程 0 错误；lint 零输出。
+    CommandCode 目录刻意不入注册表（兜底上游经 priority 命中，入表徒增歧义面）。
+  - **阶段 2 待做（数据面）**：chat/messages 路由经 router 分发三 Provider（X-Upstream-Provider 全链路、
+    X-Actual-Upstream 响应头）；面板手动切换默认上游（持久化）+ 上游异常横幅；
+    T202 DoD「Anthropic SDK 调 /v1/messages 通过」在此收口；限流/modelAccess 双轨配置源、
+    legacy 扁平分支明文行收口。
+  - 卡保持未勾选：DoD「三上游专属模型分别请求来源正确」「混合并发 50 无跨 Provider 污染」属阶段 2。
 - [ ] T214 P1 阶段门
 - [ ] T301~T310 / T401~T406 / T501~T505（见执行依据方案）
 
