@@ -64,7 +64,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**79 文件 / 997 用例全绿（1 skipped）**（T306 面板运行日志页交付后；此前 78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**80 文件 / 1010 用例全绿（1 skipped）**（T307 面板系统设置页交付后；此前 79/997、78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -82,6 +82,17 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T307 面板系统设置页（2026-10-07）**：
+  - **范围**：独立系统设置页、五大区块（网络/安全/告警/存储与危险操作/面板偏好）、热生效、需重启项标红、校验错误字段级标红、清空用量二次确认与审计留痕。
+  - **后端**：`src/routes/dashboard.ts` 实现 `GET /api/settings`（暴露五大区块配置及需重启/热生效字段元数据）；
+    实现 `POST /api/settings`（细粒度参数校验与字段级错误字典，保存至 `config.json` 并即时热生效，2s 内完成响应）；
+    强化 `POST /api/usage/clear` 记录管理面审计日志与事件。
+  - **前端**：`public/index.html` 增加第 7 个导航 Tab 与独立 `#content-settings` 分区；五大区块网格排列；需重启项（端口/主机/代理）红标徽章明确；
+    `public/js/settings.js` 负责表单加载、提交防重、字段级标红、2s 热生效反馈、清空用量二次确认弹窗与审计留痕。
+  - **无障碍与兼容**：严格保持 4 模态弹窗 a11y 守卫，`tests/dashboard-spa.test.ts` 与 `tests/spa-a11y.test.ts` 声明式扩容 settings 语义。
+  - **测试与门禁**：新增 `tests/spa-settings.test.ts` 13 例全绿；全量 `npm run verify` **80 测试文件 / 1010 用例全绿（1 skipped）**；
+    双工程 typecheck 0 错误；lint 零输出；audit 0 漏洞。
 
 - **T306 面板运行日志页（2026-10-07）**：
   - **范围**：独立实时日志页、多维三筛选（级别/上游 Provider/关键词）、RequestId 全链路追踪与详情卡片。

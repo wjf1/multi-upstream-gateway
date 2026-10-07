@@ -52,6 +52,14 @@
   legacy 扁平分支 `syncEnvFile` 在加密库可用时不再写明文 `COMMANDCODE_API_KEY` 并摘除旧行。
   配套 `tests/config-source-closure.test.ts` 8 例。
 
+- **T307：面板系统设置页** —— 独立系统设置管理页升级：
+  后端实现 `GET /api/settings` 与 `POST /api/settings`，支持五大区块（网络/安全/告警/存储与危险操作/面板偏好）细粒度校验，
+  返回字段级错误字典供前端精准标红提示；支持 2s 热生效反馈；增强 `POST /api/usage/clear` 记录管理面审计日志与事件；
+  前端 `public/index.html` 与 `public/js/settings.js` 提供完整配置表单、需重启项（端口/主机/代理）明确红标、
+  字段级校验失败红框与红字提示、危险操作二次确认弹窗与审计留痕；
+  无障碍严格保持 4 模态弹窗守卫。
+  配套 `tests/spa-settings.test.ts` 13 例。
+
 - **T306：面板运行日志页** —— 独立网关事件控制台升级：
   后端增强 `GET /api/logs` 支持参数化过滤（`level`/`provider`/`keyword`/`limit`）；
   新增 `GET /api/logs/request/:id`，支持按 requestId / traceId 深度关联用量记录（模型、上游、状态、耗时、用量及成本）与该请求的生命周期日志事件；
@@ -79,11 +87,11 @@
 
 ### 验证
 
-- 全量 `npm run verify` **79 文件 / 997 用例全绿（1 skipped）**（此前 78 文件 / 984 用例）；
+- 全量 `npm run verify` **80 文件 / 1010 用例全绿（1 skipped）**（此前 79 文件 / 997 用例）；
   覆盖率 **Statements 81%+**；
   `npm audit --omit=dev` **0 vulnerabilities**；
   `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
-- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（P0-PORT 补齐 + T214 取证）。
+- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（P0-PORT 补齐 + T214 取证）→ `504d70d`（T306 面板运行日志页）。
 
 ## [5.0.3] - 2026-10-07
 

@@ -219,7 +219,15 @@
     - 前端：`public/index.html` 增强工具条（级别下拉、上游下拉、关键词搜索框）与 RequestId 关联详情卡片（模型/上游/状态/耗时/token与成本/相关日志）；`public/js/logs.js` 实现三筛选、ID 交互高亮、详情拉取、5s 自动轮询刷新与智能滚动跟随
   - 测试：新增 `tests/spa-logs.test.ts` 13 例（先红后绿），验证 HTML 骨架、a11y 4 弹窗守卫不破坏、三筛选逻辑、5s 轮询与后端参数化 API
   - 门禁：全量 **79 文件 / 997 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
-- [ ] T301~T305 / T307~T310 / T401~T406 / T501~T505（见执行依据方案）
+- [x] T307 面板系统设置页（2026-10-07 完成）
+  - deps: T102
+  - 范围：独立系统设置页、五大区块（网络/安全/告警/存储与危险操作/面板偏好）、热生效、需重启项标红、校验错误字段级标红、清空用量二次确认与审计留痕
+  - 交付：
+    - 后端：实现 `GET /api/settings`（暴露五大区块配置及需重启/热生效字段元数据）；`POST /api/settings` 支持细粒度校验与字段级错误字典，保存至 `config.json` 并即时热生效（2s 内响应）；增强 `POST /api/usage/clear` 记录管理面审计日志与事件
+    - 前端：`public/index.html` 增加第 7 个导航 Tab 与独立 `#content-settings` 分区；五大区块网格卡片排列；需重启项（端口/主机/代理）明确红标徽章；`public/js/settings.js` 负责表单加载、提交防重、字段级标红、2s 热生效 Feedback、清空用量二次确认弹窗与审计留痕
+  - 测试：新增 `tests/spa-settings.test.ts` 13 例全绿；更新 `tests/dashboard-spa.test.ts` 与 `tests/spa-a11y.test.ts` 声明式扩容 settings 语义；严格保持 4 模态弹窗 a11y 守卫
+  - 门禁：全量 **80 文件 / 1010 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [ ] T301~T305 / T308~T310 / T401~T406 / T501~T505（见执行依据方案）
 
 ## 4. 阶段记录
 

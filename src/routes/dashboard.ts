@@ -18,6 +18,7 @@ import { getProjectRootDir, readRawConfigFile, saveConfigFile } from '../utils/c
 import { isSameOriginIfPresent } from './sse-common.js';
 import { ADMIN_CSP, adminTokenOk, injectAdminTokenMeta, isLoopbackHostHeader } from '../utils/admin-guard.js';
 import { registerAuditLog } from '../utils/audit-log.js';
+import { resolveDefaultStoreFilePath } from '../utils/credential-store.js';
 import { acceptRiskDisclaimer, isRiskDisclaimerAccepted } from '../utils/risk-gate.js';
 import {
   loadConfig,
@@ -810,8 +811,190 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
   });
 
   fastify.post('/api/usage/clear', async () => {
+    logger.warn('[AUDIT] Cleared all usage history via dashboard request.');
     clearUsageHistory();
-    return { status: 'success' };
+    return { status: 'success', audited: true };
+  });
+
+  // ─── T307 面板系统设置 API（五大区块 + 字段校验 + 热生效）─────────────────────────
+
+  fastify.get('/api/settings', async () => {
+    const config = loadConfig();
+    const raw = readRawConfigFile();
+    const upstream = (raw.upstream ?? {}) as Record<string, unknown>;
+    const routing = (raw.routing ?? {}) as Record<string, unknown>;
+
+    return {
+      version: PROXY_VERSION,
+      sections: {
+        network: {
+          port: config.port,
+          host: config.host,
+          proxy: (upstream.proxy as string) || config.proxy || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || '',
+          upstreamTimeoutMs: config.upstreamTimeoutMs,
+          idleTimeoutMs: config.idleTimeoutMs,
+          maxRetries: config.maxRetries,
+        },
+        security: {
+          maxBodyMb: Math.round(resolveBodyLimit() / 1048576),
+          allowedHosts: (upstream.allowedHosts as string[]) || ['127.0.0.1'],
+          rateLimitRpm: readEnvIntStrict('RATE_LIMIT_RPM') || 0,
+          rateLimitTpm: readEnvIntStrict('RATE_LIMIT_TPM') || 0,
+        },
+        alerts: {
+          webhookUrl: process.env.WEBHOOK_URL || '',
+          dailyBudgetUsd: process.env.DAILY_BUDGET_USD || '',
+          errorRateThreshold: readEnvFloatLike('WEBHOOK_ERROR_RATE') || 0,
+        },
+        storage: {
+          configFile: CONFIG_FILE_PATH,
+          logFile: LOG_FILE_PATH,
+          usageFile: USAGE_FILE_PATH,
+          credentialStoreFile: resolveDefaultStoreFilePath(),
+        },
+        preferences: {
+          defaultProvider: (routing.defaultProvider as string) || 'commandcode',
+          acceptedRiskDisclaimer: isRiskDisclaimerAccepted(),
+        },
+      },
+      meta: {
+        requiresRestartFields: ['port', 'host', 'proxy'],
+        hotReloadFields: ['upstreamTimeoutMs', 'idleTimeoutMs', 'maxRetries', 'maxBodyMb', 'allowedHosts', 'defaultProvider'],
+      },
+    };
+  });
+
+  fastify.post('/api/settings', async (req: any, reply) => {
+    const body = req.body || {};
+    const errors: Record<string, string> = {};
+
+    const net = body.network || {};
+    let port: number | undefined;
+    let host: string | undefined;
+    let proxy: string | undefined;
+    let upstreamTimeoutMs: number | undefined;
+    let idleTimeoutMs: number | undefined;
+    let maxRetries: number | undefined;
+
+    if (net.port !== undefined && net.port !== null && String(net.port).trim() !== '') {
+      const p = Number(net.port);
+      if (!Number.isInteger(p) || p < 1 || p > 65535) {
+        errors.port = '端口必须为 1 到 65535 之间的整数';
+      } else {
+        port = p;
+      }
+    }
+
+    if (net.host !== undefined && net.host !== null) {
+      const h = String(net.host).trim();
+      if (!h) {
+        errors.host = '监听主机不能为空';
+      } else {
+        host = h;
+      }
+    }
+
+    if (net.proxy !== undefined && net.proxy !== null) {
+      proxy = String(net.proxy).trim();
+    }
+
+    if (net.upstreamTimeoutMs !== undefined && net.upstreamTimeoutMs !== null) {
+      const ms = Number(net.upstreamTimeoutMs);
+      if (!Number.isFinite(ms) || ms < 0) {
+        errors.upstreamTimeoutMs = '超时时间必须大于等于 0 毫秒';
+      } else {
+        upstreamTimeoutMs = Math.round(ms);
+      }
+    }
+
+    if (net.idleTimeoutMs !== undefined && net.idleTimeoutMs !== null) {
+      const ms = Number(net.idleTimeoutMs);
+      if (!Number.isFinite(ms) || ms < 0) {
+        errors.idleTimeoutMs = '空闲超时必须大于等于 0 毫秒';
+      } else {
+        idleTimeoutMs = Math.round(ms);
+      }
+    }
+
+    if (net.maxRetries !== undefined && net.maxRetries !== null) {
+      const r = Number(net.maxRetries);
+      if (!Number.isInteger(r) || r < 0 || r > 10) {
+        errors.maxRetries = '最大重试次数必须在 0 到 10 之间';
+      } else {
+        maxRetries = r;
+      }
+    }
+
+    const sec = body.security || {};
+    let maxBodyMb: number | undefined;
+    if (sec.maxBodyMb !== undefined && sec.maxBodyMb !== null) {
+      const mb = Number(sec.maxBodyMb);
+      if (!Number.isInteger(mb) || mb < 1 || mb > 500) {
+        errors.maxBodyMb = '请求体大小限制必须在 1 到 500 MB 之间';
+      } else {
+        maxBodyMb = mb;
+      }
+    }
+
+    const pref = body.preferences || {};
+    let defaultProvider: string | undefined;
+    if (pref.defaultProvider !== undefined && pref.defaultProvider !== null) {
+      const p = String(pref.defaultProvider).trim().toLowerCase();
+      if (p && !['commandcode', 'freebuff', 'workbuddy'].includes(p)) {
+        errors.defaultProvider = '无效的上游提供商，可选值：commandcode, freebuff, workbuddy';
+      } else if (p) {
+        defaultProvider = p;
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      return reply.status(400).send({
+        ok: false,
+        error: '配置参数校验失败',
+        errors,
+      });
+    }
+
+    // 组装更新
+    const raw = readRawConfigFile();
+    const currentUpstream = (raw.upstream ?? {}) as Record<string, unknown>;
+    const currentRouting = (raw.routing ?? {}) as Record<string, unknown>;
+
+    const updates: Record<string, unknown> = {};
+    if (port !== undefined) updates.port = port;
+    if (host !== undefined) updates.host = host;
+
+    const newUpstream = { ...currentUpstream };
+    let upstreamChanged = false;
+    if (proxy !== undefined) { newUpstream.proxy = proxy; upstreamChanged = true; }
+    if (upstreamTimeoutMs !== undefined) { newUpstream.upstreamTimeoutMs = upstreamTimeoutMs; upstreamChanged = true; }
+    if (idleTimeoutMs !== undefined) { newUpstream.idleTimeoutMs = idleTimeoutMs; upstreamChanged = true; }
+    if (maxRetries !== undefined) { newUpstream.maxRetries = maxRetries; upstreamChanged = true; }
+    if (sec.allowedHosts && Array.isArray(sec.allowedHosts)) { newUpstream.allowedHosts = sec.allowedHosts; upstreamChanged = true; }
+    if (upstreamChanged) updates.upstream = newUpstream;
+    if (maxBodyMb !== undefined) {
+      const currentLimits = (raw.limits ?? {}) as Record<string, unknown>;
+      updates.limits = { ...currentLimits, maxBodyMb };
+    }
+
+    if (defaultProvider) {
+      updates.routing = { ...currentRouting, defaultProvider };
+      if (fastify.providerRuntime) {
+        fastify.providerRuntime.setDefaultProvider(defaultProvider as never);
+      }
+    }
+
+    const persisted = saveConfigFile(updates as never);
+    logger.info(`[SETTINGS] System settings updated (persisted=${persisted}, defaultProvider=${defaultProvider || 'unchanged'})`);
+
+    const hasRestartFields = port !== undefined || host !== undefined || proxy !== undefined;
+    return {
+      ok: true,
+      message: '系统设置保存成功并已热生效' + (hasRestartFields ? '（部分标记需重启的项将在下次启动生效）' : ''),
+      requiresRestart: hasRestartFields,
+      persisted,
+      applied: updates,
+    };
   });
 
   // ─── 仪表盘 SPA ────────────────────────────────────────────────────────────
