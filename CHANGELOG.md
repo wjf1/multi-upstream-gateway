@@ -52,6 +52,14 @@
   legacy 扁平分支 `syncEnvFile` 在加密库可用时不再写明文 `COMMANDCODE_API_KEY` 并摘除旧行。
   配套 `tests/config-source-closure.test.ts` 8 例。
 
+- **T305：Freebuff 等待室与队列** —— 高负载等待室排队与位置推进机制：
+  等待室轮询机：`free-session.ts` 实现 `pollWaitingRoomUntilActive`，按上游 `pollAt` 延迟周期轮询并更新宿主会话，
+  捕获排队位置推进直至 active 获得实例；超限抛出 `WaitingRoomTimeoutError`；支持 AbortSignal 客户端主动打断；
+  Provider 接线与超时处理：`FreebuffProvider.ensureLeaseSession` 支持配置驱动超时（`waitingRoomTimeoutMs`，默认 30s）；
+  高负载排队时自动轮询推进并透传日志；超时抛出标准 504 `REQUEST_TIMEOUT`（带 `waitingRoom: true, timeout: true` 上下文）；
+  零排队模式（`waitingRoomTimeoutMs: 0`）快速返回 503 与 Retry-After；
+  配套 `tests/freebuff-waiting-room.test.ts` 5 例全绿（DoD 1 高负载排队推进 4/10→1/10→active、DoD 2 超时 504 错误语义、AbortSignal 打断、503 快速失败）。
+
 - **T308：WorkBuddy Anthropic 通用桥接入与快照** —— 补齐协议能力矩阵：
   复用 `core/anthropic-bridge`，打通 WorkBuddy 模型在 `/v1/messages` 出口下的双向映射；
   支持 `codebuddy/` 与 `workbuddy/` 前缀及 Header 显式路由，剥离前缀后回传 `x-actual-upstream: workbuddy`；
@@ -95,11 +103,11 @@
 
 ### 验证
 
-- 全量 `npm run verify` **81 文件 / 1017 用例全绿（1 skipped）**（此前 80 文件 / 1010 用例）；
+- 全量 `npm run verify` **82 文件 / 1022 用例全绿（1 skipped）**（此前 81 文件 / 1017 用例）；
   覆盖率 **Statements 81%+**；
   `npm audit --omit=dev` **0 vulnerabilities**；
   `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
-- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（P0-PORT 补齐 + T214 取证）→ `504d70d`（T306 面板运行日志页）→ `307d751`（T307 面板系统设置页）。
+- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（P0-PORT 补齐 + T214 取证）→ `504d70d`（T306 面板运行日志页）→ `307d751`（T307 面板系统设置页）→ `b5b3b1e`（T308 WorkBuddy Anthropic 桥）。
 
 ## [5.0.3] - 2026-10-07
 

@@ -64,7 +64,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**81 文件 / 1017 用例全绿（1 skipped）**（T308 WorkBuddy Anthropic 桥与快照交付后；此前 80/1010、79/997、78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**82 文件 / 1022 用例全绿（1 skipped）**（T305 Freebuff 等待室与队列交付后；此前 81/1017、80/1010、79/997、78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -82,6 +82,16 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T305 Freebuff 等待室与队列（2026-10-07）**：
+  - **范围**：waitingRoom 排队、位置提示透传、等待室轮询推进、超时错误语义处理（DoD 闭环）。
+  - **等待室轮询机**：`free-session.ts` 实现 `pollWaitingRoomUntilActive`，按上游 `pollAt` 延迟周期轮询并更新宿主会话，
+    捕获排队位置推进直至 active 获得实例；超限抛出 `WaitingRoomTimeoutError`；支持 AbortSignal 客户端主动打断。
+  - **Provider 接线与超时处理**：`FreebuffProvider.ensureLeaseSession` 支持配置驱动超时（`waitingRoomTimeoutMs`，默认 30s）；
+    高负载排队时自动轮询推进并透传日志；超时抛出标准 504 `REQUEST_TIMEOUT`（带 `waitingRoom: true, timeout: true` 上下文）；
+    零排队模式（`waitingRoomTimeoutMs: 0`）快速返回 503 与 Retry-After。
+  - **测试与门禁**：新增 `tests/freebuff-waiting-room.test.ts` 5 例全绿（DoD 1 高负载排队推进 4/10→1/10→active、DoD 2 超时 504 错误语义、AbortSignal 打断、503 快速失败）；
+    全量 `npm run verify` **82 测试文件 / 1022 用例全绿（1 skipped）**；双工程 typecheck 0 错误；lint 零输出；audit 0 漏洞。
 
 - **T308 WorkBuddy Anthropic 通用桥接入与快照（2026-10-07）**：
   - **范围**：复用 `core/anthropic-bridge`，补齐协议矩阵中 WorkBuddy 模型的 `/v1/messages` 能力与快照保真度锁（DoD 闭环）。

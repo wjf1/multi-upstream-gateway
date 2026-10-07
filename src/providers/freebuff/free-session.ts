@@ -24,7 +24,8 @@
 
 import { logger } from '../../utils/logger.js';
 import type { CachedSession, FreeSessionResponse, SessionStatus } from './types.js';
-import { WaitingRoomError } from './types.js';
+import { WaitingRoomError, WaitingRoomTimeoutError, isWaitingRoomError, isWaitingRoomTimeoutError } from './types.js';
+export { WaitingRoomTimeoutError, isWaitingRoomTimeoutError };
 import type { UpstreamClient } from './upstream.js';
 
 /** free_session.go:15 freeSessionPollInterval。 */
@@ -308,3 +309,81 @@ function emptySession(status: SessionStatus): CachedSession {
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+
+// ─── T305 等待室排队轮询与超时处理 ──────────────────────────────────────────
+
+export interface WaitingRoomPollOptions {
+  timeoutMs?: number;
+  abortSignal?: AbortSignal;
+  onPosition?: (pos: { position: number; queueDepth: number; estimatedWaitMs?: number }) => void;
+}
+
+/**
+ * T305：高负载等待室轮询推进至 active 或超时。
+ * 遵循 session.pollAt 调度周期，每次轮询更新宿主会话状态，
+ * 直到转为 active 返回 instanceId；超限抛出 WaitingRoomTimeoutError。
+ */
+export async function pollWaitingRoomUntilActive(
+  host: SessionHost,
+  opts: WaitingRoomPollOptions = {},
+): Promise<string> {
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    if (opts.abortSignal?.aborted) {
+      throw new Error('waiting room polling aborted by client');
+    }
+
+    const current = host.session;
+    if (current && current.status === 'active' && current.instanceId) {
+      return current.instanceId;
+    }
+
+    if (Date.now() >= deadline) {
+      const pos = current?.position ?? 0;
+      const depth = current?.queueDepth ?? 0;
+      throw new WaitingRoomTimeoutError(host.name, timeoutMs, pos, depth);
+    }
+
+    const pollAt = current?.pollAt ?? (Date.now() + 1000);
+    const delay = Math.max(50, Math.min(pollAt - Date.now(), deadline - Date.now(), FREE_SESSION_POLL_INTERVAL_MS));
+
+    if (delay > 0) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, delay);
+        if (opts.abortSignal) {
+          const onAbort = () => {
+            clearTimeout(timer);
+            opts.abortSignal?.removeEventListener('abort', onAbort);
+            reject(new Error('waiting room polling aborted by client'));
+          };
+          opts.abortSignal.addEventListener('abort', onAbort, { once: true });
+        }
+      });
+    }
+
+    try {
+      await refreshAndApply(host);
+    } catch (err) {
+      if (!isWaitingRoomError(err)) {
+        throw err;
+      }
+    }
+
+    if (host.session?.status === 'active' && host.session.instanceId) {
+      return host.session.instanceId;
+    }
+
+    if (host.session && host.session.status === 'queued') {
+      if (opts.onPosition) {
+        opts.onPosition({
+          position: host.session.position,
+          queueDepth: host.session.queueDepth,
+          estimatedWaitMs: host.session.retryAfterMs,
+        });
+      }
+    }
+  }
+}
+

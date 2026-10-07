@@ -41,10 +41,10 @@ import {
   resolveFreebuffConfig,
 } from './config.js';
 import { ModelRegistry } from './models.js';
-import { ensureSession, invalidateSession } from './free-session.js';
+import { ensureSession, invalidateSession, pollWaitingRoomUntilActive } from './free-session.js';
 import { RunManager, TokenPool, type RunLease } from './run-manager.js';
 import { iterateSsePayloads, UpstreamClient, type ChatCompletionsResult } from './upstream.js';
-import { isWaitingRoomError, WaitingRoomError, type FreebuffConfig } from './types.js';
+import { isWaitingRoomError, isWaitingRoomTimeoutError, WaitingRoomError, type FreebuffConfig } from './types.js';
 import { normalizeToolSchemas } from './tool-schema.js';
 import { classifyFreebuffError, findHttpStatus } from './errors.js';
 import {
@@ -305,7 +305,7 @@ export class FreebuffProvider implements IProvider {
       }
 
       try {
-        const instanceId = await this.ensureLeaseSession(lease, opts.requestId);
+        const instanceId = await this.ensureLeaseSession(lease, opts.requestId, opts.abortSignal);
         const body = buildUpstreamBody(req, model, lease.run.id, instanceId);
 
         let result: ChatCompletionsResult;
@@ -541,11 +541,57 @@ export class FreebuffProvider implements IProvider {
     }
   }
 
-  private async ensureLeaseSession(lease: RunLease, requestId: string): Promise<string> {
+  private async ensureLeaseSession(
+    lease: RunLease,
+    requestId: string,
+    abortSignal?: AbortSignal,
+  ): Promise<string> {
     try {
       return await ensureSession(lease.pool);
     } catch (err) {
-      if (isWaitingRoomError(err)) throw this.waitingRoomProxyError(err, requestId);
+      if (isWaitingRoomError(err)) {
+        // T305：若配置了 waitingRoomTimeoutMs === 0 则直接拒启返回 503（零排队模式）；
+        // 否则进入 pollWaitingRoomUntilActive 循环轮询，推进位置并尝试获得 active 实例。
+        const timeoutMs = this.cfg?.waitingRoomTimeoutMs;
+        if (timeoutMs === 0) {
+          throw this.waitingRoomProxyError(err, requestId);
+        }
+        try {
+          return await pollWaitingRoomUntilActive(lease.pool, {
+            timeoutMs: timeoutMs ?? 30_000,
+            abortSignal,
+            onPosition: (pos) => {
+              logger.info(
+                `[PVD:freebuff] waiting room position updated for ${maskToken(lease.pool.name)}: ` +
+                  `${pos.position}/${pos.queueDepth}`,
+              );
+            },
+          });
+        } catch (pollErr) {
+          if (isWaitingRoomTimeoutError(pollErr)) {
+            throw new ProxyError(
+              ErrorCode.REQUEST_TIMEOUT,
+              `Freebuff waiting room timeout: queue wait exceeded limit (${Math.round(pollErr.timeoutMs / 1000)}s; last position ${pollErr.lastPosition}/${pollErr.lastQueueDepth})`,
+              {
+                status: 504,
+                retryable: true,
+                context: {
+                  requestId,
+                  waitingRoom: true,
+                  timeout: true,
+                  position: pollErr.lastPosition,
+                  queueDepth: pollErr.lastQueueDepth,
+                  retryAfterSeconds: 30,
+                },
+              },
+            );
+          }
+          if (isWaitingRoomError(pollErr)) {
+            throw this.waitingRoomProxyError(pollErr, requestId);
+          }
+          throw toProxyError(pollErr, ErrorCode.PROVIDER_DEGRADED);
+        }
+      }
       throw new ProxyError(
         ErrorCode.PROVIDER_DEGRADED,
         `failed to acquire freebuff free session: ${messageOf(err)}`,
