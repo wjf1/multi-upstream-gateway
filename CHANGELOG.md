@@ -2,7 +2,10 @@
 
 所有主要版本更新都记录在此文件。
 
-## [Unreleased]
+## [5.0.5] - 2026-10-08
+
+> 补丁版：修复 v5.0.4 里「上游」页完全打不开的阻塞缺陷（hash 路由白名单漏项），并清掉面板品牌残留、
+> 「新版本」徽章指向另一个仓库、以及通知路径的同步阻塞（后者曾让 Windows CI 偶发判红）。
 
 ### 🐛 修复
 
@@ -28,11 +31,7 @@
   本仓库，只有这个前端链接漏改）。现改为"多上游 AI 网关" + 本仓库 releases 链接，6 个面板脚本的头部注释
   一并同步。
 
-### 变更说明
-
-- 修正 `src/utils/update-check.ts` 里一条已过期的事实描述：原文写"本项目只打 tag、不创建 Release 对象，
-  releases/latest 会永久停在旧版本"，而自 v5.0.0 起 Release workflow 已随 tag 自动建 Release。
-  实现仍用 `/tags` 取最大 semver（覆盖面更广、不受 Release 发布状态影响），故只改注释、不改逻辑。
+### 新增
 
 - **T214 阶段门：「错误注入降级（strict 语义）」验收测试**（`tests/t214-strict-degradation.test.ts`，9 例）——
   把 master-plan §3.6 的 strict 语义从"文档承诺"变成"可回归锁"：
@@ -43,6 +42,9 @@
 
 ### 变更说明
 
+- 修正 `src/utils/update-check.ts` 里一条已过期的事实描述：原文写"本项目只打 tag、不创建 Release 对象，
+  `releases/latest` 会永久停在旧版本"，而自 v5.0.0 起 Release workflow 已随 tag 自动建 Release。
+  实现仍用 `/tags` 取最大 semver（覆盖面更广、不受 Release 发布状态影响），故只改注释、不改逻辑。
 - **登记一处契约缺口（测试锁定现状，未改产品行为）**：六步路由决策的**步骤 3（模型名前缀）不检查
   `enabled`** —— 停用某上游后，带该前缀的请求仍会被放行到该 Provider，由 Provider 自身
   （如 `FreebuffProvider.assertEnabled`）抛 503 拒绝。结果是对的（仍是 503、且不静默换上游），但与
@@ -51,6 +53,13 @@
   把 `enabled` 检查提到步骤 3（统一文案与 Retry-After），或在 router 注释与 master-plan §3.3 中明确
   「前缀路径依赖 Provider 自检」。对应用例注释已写明：若今后把检查提到步骤 3，该断言会变红，
   届时同步更新契约说明。
+
+### 验证
+
+- 全量 `npm run verify` **80 文件 / 1003 用例全绿（1 skipped）**；`npm run typecheck` 双工程 0 错误；
+  `npm run lint` 零输出。
+- **GitHub Actions CI 双平台通过**：`ubuntu-latest` 与 `windows-latest` 均绿 —— 本次修复的直接动因就是
+  windows-latest 上 `admin-boundary` 用例因通知路径同步阻塞而超时判红（同一提交在 ubuntu 与本机全绿）。
 
 ## [5.0.4] - 2026-10-08
 

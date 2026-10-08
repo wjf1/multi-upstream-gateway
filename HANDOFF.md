@@ -91,6 +91,18 @@
 
 ## 4. 最近一轮变更与交付成果
 
+- **v5.0.5 补丁发布（2026-10-08）—— 修掉发行版里的「上游」页阻塞缺陷**：
+  - **为什么立即发补丁**：v5.0.4 的「上游」管理页**完全打不开**（路由白名单漏项），这是发行版级缺陷，
+    不能等到下一个功能版本。
+  - **发布内容**：① 面板「上游」页路由修复（阻塞级）；② 面板品牌残留与「新版本」徽章指向上游仓库；
+    ③ 通知路径同步阻塞（Windows CI 偶发判红）；④ T214「错误注入降级（strict 语义）」验收测试；
+    ⑤ 一处契约缺口登记（步骤 3 前缀路径不查 `enabled`）。
+  - **流程**：版本号 5.0.4 → 5.0.5；`CHANGELOG` 的 `[Unreleased]`（含被上一轮编辑打乱的小节顺序）
+    重整为 `## [5.0.5] - 2026-10-08`（修复 → 新增 → 变更说明 → 验证）；annotated tag subject
+    `v5.0.5: 修复上游页打不开、面板品牌与更新链接、通知路径同步阻塞`；push 后 Release workflow 自动建 Release。
+  - **发布前门禁**：`npm run verify` **80 文件 / 1003 用例全绿（1 skipped）**、`typecheck` 0 错误、
+    `lint` 零输出、`npm audit --omit=dev` 0 漏洞，**GitHub Actions CI 双平台（ubuntu + windows）通过**。
+
 - **修复 Windows CI 偶发红：通知路径的同步阻塞（2026-10-08）**：
   - **发现**：推送 `44daff5`（错误注入验收）后 CI 在 `windows-latest` 判红，而**同一提交在 ubuntu 与本机
     全绿**；失败的是既有用例 `admin-boundary`「PROXY_API_KEY 不再是管理面凭据」（耗时 10832ms，形似超时）。
@@ -393,6 +405,8 @@
   面板五页与账号指定上线`（subject 即 Release 标题）；`git push origin main --tags` 后由
   Release workflow 自动建 Release（幂等，可用 `workflow_dispatch` 补建）。**发布前门禁**：
   `verify` 79 文件 / 993 用例全绿、`typecheck` 0 错误、`lint` 零输出、`audit --omit=dev` 0 漏洞。
+- **`v5.0.5` 已发布完成**（2026-10-08，补丁版）：因 v5.0.4 的「上游」页不可用而立即补发，
+  内容见 §4 首条。门禁 80 文件 / 1003 用例全绿、CI 双平台通过。
 - **下一步：T214 范围内只剩「三源 E2E」，卡在外部输入**：
   - ✅ **错误注入降级（strict 语义）已落实**（2026-10-08）：见 §4 与 `tests/t214-strict-degradation.test.ts`；
     同轮登记了一处契约缺口（步骤 3 前缀路径不查 `enabled`）。
