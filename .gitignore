@@ -25,6 +25,9 @@ logs/
 !scripts/bench-baseline.mjs
 !scripts/collect-fixtures.mjs
 !scripts/soak.mjs
+# 快照场景单源：被 vitest 用例与 scripts/collect-fixtures.mjs 同时 import。
+# 少这一行时文件不进版本库，全新克隆的 typecheck/verify 会红，而开发机上毫无异样。
+!tests/snapshot/scenarios.mjs
 *.png
 !docs/screenshots/
 !docs/screenshots/*.png
