@@ -334,7 +334,28 @@
     （三条 DoD 各有可执行取证：5min 节流用「内存更新 vs 磁盘不变」分离断言；kill -9 后重启由新实例读同一
     文件逐字段相等；损坏恢复断言原文件未被覆盖 → 从 sidecar 重建 → 可解析）
   - 门禁：全量 **92 文件 / 1122 用例全绿**（1 skipped，共 1123）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
-- [ ] T309~T310 / T401~T406 / T501~T505（见执行依据方案）
+- [ ] T310 P2 阶段门（**部分完成 — 3 项 BLOCKED，见下方与阶段记录**）
+  - deps: T301~T308
+  - 范围：安全复测（SSRF/rebinding/脱敏断言）、100 并发 WB 池无惊群 P99<2s、OAuth 全链路演练
+  - DoD 自检：
+    - [x] 0.4 强制①依赖安全检查：`npm audit --omit=dev` → **0 vulnerabilities**（high/critical = 0 为过）
+    - [x] 覆盖率 ≥60%：`npm run test:coverage` → **语句 80.21% / 分支 70.06% / 函数 84.23%**（istio 口径，76 文件）
+    - [x] 安全复测：SSRF 二跳（`safe-fetch`：白名单逐跳校验 / `REDIRECT_BLOCKED` / 3 跳截断 / 303 降级）、
+      DNS rebinding（`dns-rebinding`）、全路径日志脱敏（`log-redaction`：Bearer / api-key / sk- / query 参数）、
+      出站重定向（`upstream-redirect`）—— 8 文件 / **88 用例全绿**
+    - [x] 第 6 章 A-F 组 P2 部分：F01/F02/F03/F04/F05/F08/F09 有自动化取证（测试文件映射见阶段记录）
+    - [ ] F03 视觉（CC 必过）：由 `tool-image-and-params.test.ts` 覆盖 CC 侧；**FB/WB 按矩阵未演练**（同下 blocked）
+    - [ ] F06 WB OAuth 全流程 + 预刷 + 待刷新态：**真机全链路演练 BLOCKED** —— 本机无 Go 工具链
+      （`go: command not found`）且 `F:/AI/Qdor/review/workbuddy2api-panel` 无预编译二进制，无法构建 sidecar；
+      编排逻辑已由 `workbuddy-t301.test.ts`（mock sidecar）覆盖
+    - [ ] F07 账号池可视化 + 积分条：账号池可视化与 CC 额度条已在面板；**WorkBuddy 积分条 UI 未接线**
+      （T302 交付的是 `data/state.json` 持久化与 `/api/upstreams/workbuddy/balance` 只读镜像，未加面板渲染）
+    - [ ] 100 并发 WB 池无惊群 P99<2s：**BLOCKED** —— 同上，无 sidecar 可压测；参考值：P0-PORT-F 阶段
+      CommandCode 50 并发 P99 126ms、T310 之前 100 并发无惊群项尚无 WB 实测
+  - BLOCKED: 无 Go 工具链与 WorkBuddy sidecar 二进制 → F06 真机 OAuth 演练、100 并发 WB 池压测、F03 FB/WB 视觉矩阵无法执行
+  - **DECISION: continue**（提案，待项目负责人签字；本阶段自动化验收项全绿，仅外部依赖项受阻）
+  - 说明：按 §0.4「Gate 不过不得开始下一阶段」，P3（T401 起）在 F06/F07/并发项闭环前**不得开工**
+- [ ] T309（基准方案中不存在此卡，疑为笔误）/ T401~T406 / T501~T505（见执行依据方案）
 
 ## 4. 阶段记录
 
@@ -616,3 +637,39 @@ Release 由 workflow 自动创建。门禁：`verify` **80 文件 / 1003 用例�
 **门禁**：`npm run verify` **92 文件 / 1122 用例全绿（1 skipped，共 1123）**；`typecheck` 双工程 0 错误；
 `lint` 零输出；`npm audit --omit=dev` 0 漏洞。
 
+
+## 阶段记录 — T310 P2 阶段门（2026-10-08，部分完成）
+
+**结果：自动化验收项全绿，3 项外部依赖受阻，故 Gate 未全过 → P3 不得开工。**
+
+| 验收项 | 门槛 | 实测 | 结论 |
+|---|---|---|---|
+| 全量回归 | `npm run verify` 绿 | **92 文件 / 1122 用例全绿**（1 skipped，共 1123） | ✅ |
+| 覆盖率 | ≥60% | **语句 80.21% / 分支 70.06% / 函数 84.23%** | ✅ |
+| `npm audit --omit=dev` | high/critical = 0 | **0 vulnerabilities** | ✅ |
+| typecheck（src+tests） | 干净 | 0 错误 | ✅ |
+| eslint | 零输出 | 零输出 | ✅ |
+| 安全复测 | SSRF/rebinding/脱敏全绿 | 8 文件 / **88 用例全绿** | ✅ |
+| 第 6 章 A-F（P2 部分） | 全绿 | F01/F02/F03(CC)/F04/F05/F08/F09 ✅；F06 真机 ⛔；F07 积分条 UI ⛔ | ⚠️ 部分 |
+| 100 并发 WB 池 P99<2s | <2s | **无法执行（无 sidecar）** | ⛔ 受阻 |
+| OAuth 全链路演练 | 全链通 | **无法执行（无 sidecar）** | ⛔ 受阻 |
+
+**A-F P2 部分取证映射（测试文件）**：
+- F01 三源 Anthropic `/v1/messages` —— `anthropic-bridge.test.ts` + `workbuddy-anthropic.test.ts`（+ T214 快照）
+- F02 三源 tools —— `freebuff-tool-schema.test.ts` + `tool-call-fragments.test.ts`
+- F03 视觉 —— `tool-image-and-params.test.ts`（CC 侧）；FB/WB 按矩阵未演练
+- F04 strict/auto/same-model —— `routing-advanced.test.ts` + `t214-strict-degradation.test.ts`
+- F05 X-Upstream-Account + 审计留痕 —— `routing-advanced.test.ts`（`x-upstream-account` → 审计 `accountId`）
+- F06 WB OAuth 全流程 —— `workbuddy-t301.test.ts`（mock）；真机演练 ⛔
+- F07 账号池可视化 + 积分条 —— 账号池与 CC 额度条在面板；WB 积分条 UI 未接线 ⛔
+- F08 Freebuff 等待室 —— `freebuff-waiting-room.test.ts`
+- F09 级联防护（ramp/摘除/队列/首字节）—— `degradation.test.ts`
+
+**受阻根因（同一根因）**：本机 **无 Go 工具链**（`go: command not found`）且 `F:/AI/Qdor/review/workbuddy2api-panel`
+**无预编译二进制**，因此 WorkBuddy sidecar 无法构建/拉起 → F06 真机 OAuth 演练、100 并发 WB 池压测、
+F03 的 FB/WB 视觉矩阵三项**无法在本机执行**。解除条件：安装 Go 并构建 sidecar（或取得预编译二进制），
+另需 **Freebuff Token（`FREEBUFF_TOKENS`）** 才能跑 FB 侧演练。
+
+**DECISION: continue**（提案）—— 本阶段可自动化的验收项**全部为绿**（回归 / 覆盖率 / audit / typecheck / lint /
+安全复测均已闭环），仅剩外部环境依赖项受阻；建议按 §0.4 由项目负责人签字确认 `continue` 后再开工 P3。
+在签字与受阻项闭环之前，**P3（T401 起）保持不开工**。

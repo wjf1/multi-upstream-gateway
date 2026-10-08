@@ -52,8 +52,9 @@
     T304 路由策略高级配置（strict / auto / same-model + 强制账号 + 规则热生效）（`4e8e2ee`）/
     T301 WorkBuddy OAuth 设备授权与令牌看护（`b8b0c37`）/
     T302 余额刷新与池状态持久化（本地未提交，见 §4 首条）。
-  - **当前门禁**：**T302 交付后 92 文件 / 1122 用例全绿（1 skipped，共 1123）**；`typecheck` 双工程
-    0 错误、`lint` 零输出、`npm audit --omit=dev` 0 漏洞。
+  - **当前门禁**：**T302 交付后 92 文件 / 1122 用例全绿（1 skipped，共 1123）**；覆盖率
+    **语句 80.21% / 分支 70.06% / 函数 84.23%**；`typecheck` 双工程 0 错误、`lint` 零输出、
+    `npm audit --omit=dev` 0 漏洞。
     T302 之前：合并云端 `origin/main` 后 90 文件 / 1103 用例；合并前：本分支 T301 交付后 86 文件 / 1061 用例；
     云端 `origin/main` 在 v5.0.4 发布时 80 文件 / 1002 用例。
     首轮合并复核暴露 2 例失败（`spa-upstream` 的 settings 白名单漏项、`state-store` 的 locks 顺序断言），均已修复（详见 §4）。
@@ -98,6 +99,26 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T310 P2 阶段门（2026-10-08，部分完成 — 3 项外部依赖受阻）**：
+  - **结论**：可自动化的验收项**全部为绿**，仅剩外部环境依赖项受阻，故 Gate **未全过 → 按 §0.4 P3 不得开工**。
+  - **已闭环项**：全量回归 **92 文件 / 1122 用例全绿**；覆盖率 **语句 80.21% / 分支 70.06% / 函数 84.23%**
+    （≥60% 门槛）；`npm audit --omit=dev` **0 vulnerabilities**；`typecheck` 双工程 0 错误；`lint` 零输出；
+    安全复测 8 文件 / **88 用例全绿**（SSRF 二跳 `safe-fetch` / DNS rebinding `dns-rebinding` /
+    全路径脱敏 `log-redaction` / 出站重定向 `upstream-redirect`）。
+  - **第 6 章 A-F（P2 部分）取证**：F01 `anthropic-bridge`+`workbuddy-anthropic`、F02 `freebuff-tool-schema`+
+    `tool-call-fragments`、F03 `tool-image-and-params`（CC 侧）、F04 `routing-advanced`+`t214-strict-degradation`、
+    F05 `routing-advanced`（`x-upstream-account`→审计 `accountId`）、F08 `freebuff-waiting-room`、
+    F09 `degradation` 均有自动化取证。
+  - **受阻 3 项（同一根因）**：F06 WorkBuddy OAuth 真机全链路演练、100 并发 WB 池 P99<2s 压测、
+    F03 的 FB/WB 视觉矩阵 —— 本机 **无 Go 工具链**（`go: command not found`）且 `F:/AI/Qdor/review/workbuddy2api-panel`
+    **无预编译二进制**，无法构建/拉起 sidecar；FB 侧还需 **Freebuff Token（`FREEBUFF_TOKENS`）**。
+    OAuth 编排逻辑本身已由 `workbuddy-t301.test.ts`（mock sidecar）覆盖。
+  - **另登记一处能力缺口**：**F07「WorkBuddy 积分条面板 UI」未接线** —— T302 交付的是后端持久化与
+    `GET /api/upstreams/workbuddy/balance` 只读镜像，面板尚未消费该端点渲染积分条（账号池可视化与 CC
+    额度条已在面板）。这属后续小卡，非 T302 卡内 DoD。
+  - **`DECISION: continue`（提案，待项目负责人签字）**：建议签字确认后开工 P3；在签字与受阻项闭环前 P3 保持不开工。
+  - ⚠️ 本轮**仅文档（阶段记录）变更**，无代码变更。
 
 - **T302 余额刷新与池状态持久化（2026-10-08，本次会话）**：
   - **范围**：5min 积分余额刷新 + `data/state.json` 原子写/锁/损坏重建（DoD 三条闭环）。
@@ -613,11 +634,12 @@
   - ✅ **P1 已完成七卡**：`T201`、`T202a`、`T202b`、`T203`、`P0-PORT-D2`（`1e011a5`）、`T204'`（`47f8a3a`）、`T205'`（并入）。
   - ✅ **P2/P3 已完成十卡**：`T213`（阶段 1 `9b98d9d` + 阶段 2 `af6db03`）、`T213b`（`5658065`）、`T303`（`49c4f65`）、
     `T304`（`4e8e2ee`）、`T305`（`bd27fe0`）、`T306`（`504d70d`）、`T307`（`307d751`）、`T308`（`b5b3b1e`）、
-    `T301` WorkBuddy OAuth 设备授权与令牌看护（`b8b0c37`）、`T302` 余额刷新与池状态持久化（本地未提交，见 §4 首条）。
-  - ⬜ **下一张卡**：`T310` P2 阶段门（依赖 T301~T308；DoD：第 6 章 A-F 组 P2 部分全绿、覆盖率 ≥60%）。
-
-  （`T302` 余额刷新与池状态持久化 — 依赖 T301 — 5min 积分余额刷新；`state.json` 原子写 + 锁 + 损坏文件重建
-  （DoD：积分按期刷新、`kill -9` 后重启状态一致、损坏文件可恢复）—— **已完成**，见 §4 首条。）
+    `T301` WorkBuddy OAuth 设备授权与令牌看护（`b8b0c37`）、`T302` 余额刷新与池状态持久化（`00005e4`）。
+  - ⚠️ **当前卡：`T310` P2 阶段门 —— 部分完成（自动项全绿，3 项外部依赖受阻，见 §4 首条）**：
+    自动化验收项（回归 / 覆盖率 80.21% / audit 0 / typecheck / lint / 安全复测 88 例）**全部为绿**；
+    **受阻**：F06 WorkBuddy OAuth 真机演练、100 并发 WB 池 P99<2s 压测、F03 的 FB/WB 视觉矩阵 ——
+    同一根因：本机无 Go 工具链且无 sidecar 预编译二进制。另有 **F07 WorkBuddy 积分条面板 UI 未接线**。
+    `DECISION: continue`（提案，待负责人签字）。**按 §0.4，Gate 未全过 → P3（T401 起）不得开工。**
   - ⬜ **P1 阶段门 `T214`（仍卡外部 blocker）**：三源 E2E 需 **Freebuff Token（`FREEBUFF_TOKENS`）** 与
     **WorkBuddy sidecar Go 二进制**（从 `F:/AI/Qdor/review/workbuddy2api-panel` 构建），另需负责人签字确认 `DECISION` 行；
     自动化项已全绿。CommandCode 源 E2E 无前置。
