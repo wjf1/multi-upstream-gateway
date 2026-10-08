@@ -47,10 +47,16 @@
     `providers.freebuff` 分片 + FREEBUFF_TOKENS，WorkBuddy 需 sidecar 二进制（联邦）。
   - **P1 已完成七卡 + T213 两阶段**：T201 / T202a / T202b / T203 / P0-PORT-D2（`1e011a5`）/
     T204'（`47f8a3a`）/ T205'（并入）/ T213·阶段 1+2（`9b98d9d`/`af6db03`）。
-  - **当前门禁与远端**：v5.0.2 施工后为 **55 文件 / 713 用例全绿**（typecheck 见上文测试工程的既有红项）；
-    产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`），远端 `main` 与 `feat/p0-port` 均在 `2d73635`；
+  - **当前门禁与远端（2026-10-08）**：`npm run verify` **79 文件 / 993 用例全绿（1 skipped）**；
+    `typecheck` 双工程 0 错误、`lint` 零输出、`npm audit --omit=dev` 0 漏洞。
+    产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`）。**本地 `main` 已快进合并集成分支至 `71ed9c1`，
+    远端 `main` 仍停在 `8168a54`（v5.0.2 文档提交）—— 本轮执行环境只能经只读镜像出网，推不上去**，
+    见 §5「待办·第一优先级」。
     公开前已核查：无敏感文件被跟踪、无凭据模式命中、历史中亦从未提交过 `.env`/`config.json`/`credentials.enc`。
-- **分支模型**：**`main` = 产品主线**（默认分支，已含 P0 移植与 v5.0.0 发布）；`feat/p0-port` = 移植集成分支（与 `main` 同点）。
+- **分支模型**：**`main` = 产品主线**（默认分支）；`feat/p0-port` = 移植集成分支。
+  **2026-10-08：`main` 已快进合并 `feat/p0-port`**（基点 `8168a54` → 同点 `71ed9c1`）——
+  此前 `main` 落后集成分支 14 个提交（T208~T213b 与 v5.0.3），"产品主线"名不副实的问题已消除。
+  后续从 `main` 或新建 `feat/*` 拉起皆可，合回 `main` 时保持快进（线性历史，与既有习惯一致）。
   上游基线**不再占用 `main`** —— 需要吸收上游时直接用 `upstream` remote（`git fetch upstream && git merge upstream/main`），合并基点即上游 v4.22.4 `87b1a05`。
   **版本线已定**：自 **v5.0.0** 起另起序列（破坏性变更：风险门默认 403 / 凭据加密启动前置 / 配置形态迁移）；
   四文档（`package.json` / `CHANGELOG.md` / 中英双语 `README.md` / 本文件）已同步，Release 按 `v<版本>: <中文摘要>` 规范。
@@ -291,6 +297,24 @@
 ## 5. 接力开发指引与待办（Next Steps / Backlog）
 
 **接手第一步**：读本文 → `PLAN-STATE.md`（含 §0 基准勘误 + §1 移植任务队列）→ 执行依据方案第 0 章（agent 执行协议）。
+
+**待办·第一优先级（2026-10-08，卡在环境而非代码）**：
+
+- **把本地已合并的 `main` 推到远端**。本轮执行环境无法访问 github.com（直连 TLS 被重置），唯一出网通道是
+  只读镜像 `ghproxy.net` / `gh-proxy.com`（可读 raw 与 API，**不可 push**；实测 `git push` 直接卡在要用户名），
+  因此上面这次合并**只落在本地副本**，远端 `main` 仍是 `8168a54`。
+  在能直连 GitHub 的机器上（以工程仓库为准）执行：
+  ```bash
+  # 方式一：从本机副本/bundle 取回
+  git fetch /path/to/mug-main-merged.bundle main:refs/remotes/local/main
+  git checkout main && git merge --ff-only refs/remotes/local/main
+  # 方式二：直接在工程仓库重做（线性历史，等价）
+  git checkout main && git merge --ff-only feat/p0-port && git push origin main
+  ```
+  推送前按 AGENTS.md 的发布硬门禁复核四文档与版本号（见下条）。
+- **下一次发布建议定为 `v5.0.4`**：`CHANGELOG.md` 的 `[Unreleased]` 已累积实质内容（最初的三源运行时接线
+  T213/T213b，加上本轮账号指定接线、快照单源入库修复、构建产物改名）。本轮**刻意没有打 tag、也没有改
+  `package.json` 的版本号** —— 半套发布（本地有 tag 而远端没有）比不发布更难收拾，留给能推送的环境一次做完。
 
 - **当前队列**（严格按 `PLAN-STATE.md` §1 的顺序与 deps）：
   - ✅ `P0-PORT-A~F` **全部完成**（A 基座 / B 批次 B 语义 / C 新增模块 / D1 接线 / D2 薄适配层 / E 面板移植 / F 阶段门），**已部署**。

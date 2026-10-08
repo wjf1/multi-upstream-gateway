@@ -414,3 +414,24 @@ CommandCode（D2）两个 Provider 均已具备 IProvider 外壳，但**都尚�
 **未做（有意，已登记）**：`FreebuffAccountPool` 不接入（双轨，理由同 D2）；`updateConfig` 热改 Token 仍待；
 T214 的三个外部 blocker（Freebuff 真实 Token / WorkBuddy sidecar Go 二进制 / 负责人 `DECISION` 签字）不变。
 
+## 分支合并记录 — `main` ← `feat/p0-port`（2026-10-08）
+
+**动作**：把集成分支快进合并到 `main`，结束"主线落后于集成分支"的状态。
+
+- **合并前**：远端 `main` = `8168a54`（v5.0.2 文档提交）、`feat/p0-port` = `2adffd5`（v5.0.3），
+  `main` 落后 **14 个提交**（T208~T212 面板、T213 两阶段接线、T213b 配置源收口、T214 移植测试与快照基建补齐、
+  v5.0.3 静默判据修正）；且 **v5.0.3 的 tag 与 Release 都挂在集成分支侧**，`main` 不含该代码 ——
+  分支模型（"main = 产品主线"）名存实亡，任何只看 `main` 的接手者都会读到过期事实。
+- **合并方式**：`git merge --ff-only`。`main` 是集成分支的祖先，无需合并提交，线性历史保持不变
+  （与仓库既有提交习惯一致，便于 `git log` 直读发布序列）。
+- **合并后**：`main` = `feat/p0-port` = `feat/t203-account-pin` = **`71ed9c1`**（含本轮 4 个提交：
+  快照单源入库修复 / 账号指定接线 / 产物改名 / 四文档同步）。
+- **推送状态：未推送**。本轮执行环境无法访问 github.com（直连 TLS 被重置），唯一出网通道是只读镜像
+  （可读不可 push），故合并只落在本地副本，远端 `main` 仍为 `8168a54`。推送操作与下一次发布版本号
+  （建议 `v5.0.4`）见 `HANDOFF.md` §5「待办·第一优先级」。
+
+**遗留（合并后不变）**：T214 三个外部 blocker（Freebuff 真实 Token / WorkBuddy sidecar Go 二进制 /
+负责人 `DECISION` 签字）；`FreebuffAccountPool` 不接入（双轨，理由同 D2）；`updateConfig` 热改 Token 待做；
+判定路径合一（modelAccess/限流两套执行路径）待独立评审；6 个 dependabot PR 未处理（含 zod 3→4、
+undici 7→8、typescript 5.9→7 等 major 升级，需评估后再合）。
+
