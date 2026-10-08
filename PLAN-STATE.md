@@ -140,7 +140,9 @@
     本身即基于 `runs.snapshots()`，`/api/providers/:name/accounts` 与面板多源账号页消费它）；
     ③ ⬜ `FreebuffAccountPool`（`providers/freebuff/account-pool.ts`）尚未接入 provider/路由 ——
     **评估后不接**：它与 RunManager 自身选号构成双轨，接入要同时成立两套调度，理由同 D2「不搬家只薄包装」；
-    ④ ⬜ `updateConfig` 不热改 Token（凭据变更需重新 initialize）—— 仍待。
+    ④ ✅ `updateConfig` 不热改 Token —— **已收口**（2026-10-08）：热重载按当前 `FREEBUFF_TOKENS`
+    补入新 Token（不必重启进程）；删除**刻意不做**（池有两个来源，按 env 校准会摘掉面板加的账号），
+    移除账号只经面板 `removeAccount`。测试 `tests/freebuff-config-hotreload.test.ts` 5 例。
 - [x] T203 Freebuff 账号池与凭据持久化（历史条目，已完成见上）
 - [x] T204' WorkBuddy 透传 Provider + Sidecar 管理（联邦，见 `docs/wb-source-diff-report.md` §7）
   - 完成：2026-10-07，提交 `47f8a3a`。按 §3.11-1/2 落地：

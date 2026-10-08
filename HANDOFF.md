@@ -91,6 +91,22 @@
 
 ## 4. 最近一轮变更与交付成果
 
+- **Freebuff 配置热重载可参保新 Token（2026-10-08）—— 收口 T203 遗留最后一项**：
+  - **交付**：`FreebuffProvider.updateConfig` 现在会按当前 `FREEBUFF_TOKENS` 把**新增** Token 补进池，
+    运维改完环境变量触发热重载即可参保，不必重启进程（此前必须重新 `initialize`）。
+  - **"删"刻意不做（重要的取舍）**：池有两个来源 —— 环境变量，以及面板 `addAccount` 落进加密库的账号。
+    若按 env 校准（把不在 env 里的池摘掉），一次普通的配置保存就会把面板加的账号一起清掉，
+    属"改配置丢账号"的事故级副作用。移除账号只经面板 `removeAccount`（明确的用户动作，另有审计与落库）。
+    这个取舍已写进 `updateConfig` 的注释与测试用例名，避免后来者"顺手补全删除逻辑"。
+  - **测试**：`tests/freebuff-config-hotreload.test.ts` 5 例（增量参保 / 新 Token 真的承接请求 /
+    **面板账号不被误删** / 重复热重载幂等 / 非凭据字段热更新通道不受影响）。
+  - **顺带记录一个调用陷阱**（写测试时踩到）：热重载入参必须是**完整分片** —— `resolveFreebuffConfig`
+    对缺失字段回落默认值，传空对象会把 `apiBase` 重置为官方默认 `www.codebuff.com`，现象像"热重载把
+    上游地址改坏了"（本轮实际表现为新池去打真实上游、被 SSRF 白名单拦下）。
+  - **至此 T203 遗留三项全部有了结论**：`preferredAccountId`/`onRetry` 透传 ✅ 已收口；
+    `updateConfig` 热改 Token ✅ 已收口；`FreebuffAccountPool` 契约适配层 ⬜ **有意不接**
+    （与 RunManager 自身选号双轨，理由同 D2「不搬家只薄包装」，已在文档登记）。
+
 - **v5.0.5 补丁发布（2026-10-08）—— 修掉发行版里的「上游」页阻塞缺陷**：
   - **为什么立即发补丁**：v5.0.4 的「上游」管理页**完全打不开**（路由白名单漏项），这是发行版级缺陷，
     不能等到下一个功能版本。
@@ -430,10 +446,10 @@
     **登记的遗留**：判定路径合一（modelAccess/限流的两套执行路径，见 T213b 卡）——**仍待**；
     限流/modelAccess 双轨配置源与 legacy 扁平分支明文行——**已由 T213b 收口**。
     **T203 账号池遗留**：`preferredAccountId` / `onRetry` 透传入选号 —— ✅ **已收口**
-    （`X-Upstream-Account` 端到端接线，见 §4）。**同卡另两项仍未做**：
-    ① `providers/freebuff/account-pool.ts` 的 `FreebuffAccountPool` 契约适配层仍未被生产代码引用
-    （评估后**不接**：与 RunManager 自身选号双轨，理由同 D2「不搬家只薄包装」）；
-    ② `FreebuffProvider.updateConfig` 仍不热改 Token（凭据变更需重新 initialize）。
+    （`X-Upstream-Account` 端到端接线）；`updateConfig` 热改 Token —— ✅ **已收口**（2026-10-08，
+    热重载按 env 补入新 Token，删除刻意留给面板）。**同卡剩一项为有意不做**：
+    `providers/freebuff/account-pool.ts` 的 `FreebuffAccountPool` 契约适配层仍未被生产代码引用
+    —— 与 RunManager 自身选号构成双轨，接入要同时成立两套调度，理由同 D2「不搬家只薄包装」。
     **注意**：T202 卡 DoD「Anthropic SDK 调 /v1/messages 通过」的协议层已由阶段 2 锁定
     （假 Provider 端到端），真上游联调待 Freebuff Token/sidecar 配置后补验。
   - ✅ 遗留小项已办：构建产物改名 `dist/multi-upstream-gateway-v5.exe`（`build:win` + README 双语同步）。
