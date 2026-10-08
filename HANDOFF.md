@@ -745,6 +745,12 @@
       改用事件委托（`change` 事件同步回模块级状态）或 `querySelector`。
     - 另：`tests/spa-a11y.test.ts` 的取证源只含 `['core','overview','accounts','usage','models','logs']`
       （不含 `upstream`/`settings`），`dashboard-spa.test.ts` 则含全部八个；新增/删除 `public/js/*.js` 文件时两处清单都要同步。
+14. **`gh` 在此仓库会解析到上游 fork，必须显式 `--repo`**（2026-10-08 实际踩坑，v5.0.6 发布核验）：
+    本目录同时挂了 `origin`/`gateway`（产品仓库 `wjf1/multi-upstream-gateway`）与 `upstream`/`ghproxy`
+    （上游 `wjf1/commandcode-proxy`），`gh` 不按 `origin` 取默认仓库，而是解析到 **`wjf1/commandcode-proxy`**。
+    后果：`gh release list` 会显示上游的 v4.22.4 为 Latest，让人误判"v5.0.x 一直没建 Release"，
+    `gh release create` 也会因 tag 不在该仓库而报 `tag ... has not been pushed`（或本地已有同名 tag 时 422）。
+    **做法**：所有 `gh` 命令一律带 `--repo wjf1/multi-upstream-gateway`；核验 Release 也用该仓库。
 
 
 ---
