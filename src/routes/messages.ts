@@ -24,7 +24,7 @@ import { ErrorCode, ProxyError, toProxyError } from '../utils/errors.js';
 import { auditRequestStart, auditRequestEnd, accountTail } from '../utils/audit-log.js';
 import { guardRateLimit, recordRequestOutput } from '../utils/rate-limit.js';
 import { guardModelAccess } from '../utils/model-access.js';
-import { respondViaProvider } from './provider-dispatch.js';
+import { respondViaProvider, resolvePreferredAccount } from './provider-dispatch.js';
 import { anthropicToOpenAIRequest } from '../providers/core/anthropic-bridge.js';
 import type { RouteDecision } from '../providers/core/router.js';
 
@@ -158,6 +158,7 @@ export async function messagesRoutes(fastify: FastifyInstance) {
         reply,
         mode: 'messages',
         startTime,
+        preferredAccountId: resolvePreferredAccount(req.headers as never),
         finalize: (info) => {
           const acc = createUsageAccumulator();
           acc.inputTokens = info.inputTokens;

@@ -288,11 +288,25 @@ export class FreebuffProvider implements IProvider {
       });
     }
 
+    // 指定账号（X-Upstream-Account）只作首轮起点；后续每轮换号由 onRetry 回调决定，
+    // 契约与 commandcode 适配器一致：返回值 = 下一次要用的账号 ID，undefined = 沿用。
+    let preferredAccountId = opts.preferredAccountId;
+    const askNextAccount = async (attempt: number, reason: string): Promise<void> => {
+      if (!opts.onRetry) return;
+      try {
+        const next = await opts.onRetry(attempt, new Error(reason));
+        if (next) preferredAccountId = next;
+      } catch (cbErr) {
+        // 回调是调用方代码：它自己抛错不能连累本次请求的重试决策。
+        logger.warn(`freebuff onRetry callback failed: ${messageOf(cbErr)}`);
+      }
+    };
+
     for (let attempt = 0; attempt < MAX_RUN_ATTEMPTS; attempt++) {
       // 选号 + 预占租约（Round-robin + 冷却跳过；等待室信号透传为 503）。
       let lease: RunLease;
       try {
-        lease = await runs.acquire(agentId);
+        lease = await runs.acquire(agentId, preferredAccountId);
       } catch (err) {
         if (isWaitingRoomError(err)) {
           throw this.waitingRoomProxyError(err, opts.requestId);
@@ -329,12 +343,14 @@ export class FreebuffProvider implements IProvider {
         if (classified.action === 'refresh_session') {
           logger.warn(`${lease.pool.name}: ${classified.reason}, refreshing and retrying`);
           invalidateSession(lease.pool, classified.reason);
+          await askNextAccount(attempt, classified.reason);
           continue;
         }
         // server.go:330 —— run 失效：摘除 run 后重试（下一轮 rotate）。
         if (classified.action === 'rotate_run') {
           logger.warn(`${lease.pool.name}: ${classified.reason} (run ${lease.run.id}), rotating and retrying`);
           runs.invalidate(lease, classified.reason);
+          await askNextAccount(attempt, classified.reason);
           continue;
         }
         // server.go:337 —— token 被上游拒绝：固定冷却并让调用方换号/报错。
@@ -353,6 +369,7 @@ export class FreebuffProvider implements IProvider {
           logger.warn(
             `${lease.pool.name}: ${classified.reason}; cooling down ${Math.round(cooldownMs / 1000)}s and retrying`,
           );
+          await askNextAccount(attempt, classified.reason);
           continue;
         }
 

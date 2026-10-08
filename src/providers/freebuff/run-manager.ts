@@ -411,8 +411,12 @@ export class RunManager {
    *
    * T203 扩展点：把 startIndex 的选择替换为配额感知调度器（保留本方法签名，
    * 注入 `selector?: (pools) => number` 即可，不影响调用方）。
+   *
+   * `preferredAccountId` 承接路由层的 `X-Upstream-Account`（ChatOptions.preferredAccountId）：
+   * 指定账号只影响**起点**，仍走下方的既有兜底链——指定的池不可用时换下一个池，
+   * 指定一个不存在的账号不会让请求直接失败。
    */
-  async acquire(agentId: string): Promise<RunLease> {
+  async acquire(agentId: string, preferredAccountId?: string): Promise<RunLease> {
     if (this.pools.length === 0) {
       throw new Error('no auth tokens configured');
     }
@@ -420,7 +424,7 @@ export class RunManager {
       throw new Error('run manager is closed');
     }
 
-    const startIndex = this.selectStartIndex(agentId);
+    const startIndex = this.selectStartIndex(agentId, preferredAccountId);
     const errors: string[] = [];
     const waiting: WaitingRoomError[] = [];
 
@@ -451,8 +455,28 @@ export class RunManager {
     throw new Error(`unable to acquire run from any token (${errors.join('; ')})`);
   }
 
-  /** 选号起点：注入 selector 优先；非法返回回退 Round-robin 游标。 */
-  private selectStartIndex(agentId: string): number {
+  /**
+   * 选号起点，优先级：指定账号 → 注入 selector → Round-robin 游标。
+   *
+   * 指定账号（X-Upstream-Account）命中且参与调度时直接用；未命中或已暂停时**告警并回退**——
+   * 强制失败会把一个「想让请求走某个账号」的意图升级成一次请求失败，而回退至少保住可用性。
+   * 回退原因必须留日志，否则「指定了却没生效」在排障时无迹可寻（与端口漂移同类的坑）。
+   */
+  private selectStartIndex(agentId: string, preferredAccountId?: string): number {
+    if (preferredAccountId) {
+      const index = this.pools.findIndex((pool) => pool.name === preferredAccountId);
+      if (index < 0) {
+        logger.warn(
+          `freebuff preferred account "${preferredAccountId}" not found, falling back to round-robin`,
+        );
+      } else if (!this.pools[index].enabled) {
+        logger.warn(
+          `freebuff preferred account "${preferredAccountId}" is paused, falling back to round-robin`,
+        );
+      } else {
+        return index;
+      }
+    }
     if (this.selector) {
       try {
         const index = this.selector(this.pools, agentId);

@@ -22,12 +22,31 @@ import { estimateTextTokens, isAbortError } from '../adapters/commandcode/upstre
 import { writeSSEHeaders } from './sse-common.js';
 import { ErrorCode, ProxyError, toProxyError } from '../utils/errors.js';
 import { AnthropicStreamEncoder, sseFrame } from '../providers/core/anthropic-bridge.js';
+import type { ChatOptions } from '../providers/core/interface.js';
 import type { ProviderRuntime } from '../providers/runtime.js';
 import type { RouteDecision } from '../providers/core/router.js';
 import { logger } from '../utils/logger.js';
 
 /** 空闲防断注释行（与 chat.ts 同频：15s 一条 `:`，防 CDN/代理掐空闲连接）。 */
 const PING_INTERVAL_MS = 15_000;
+
+/**
+ * 数据面账号指定头：值 = Provider 账号 ID（如 freebuff 的 `token-2`）。
+ *
+ * 形状与 `ChatOptions.preferredAccountId`（§3.4 契约）一致；校验留在 Provider 侧——
+ * 路由层不认识各家的账号命名，在这里判存在性只会把「未知账号」误报成非法请求。
+ */
+export const PREFERRED_ACCOUNT_HEADER = 'x-upstream-account';
+
+/** 从请求头解析指定账号；缺失/空白/数组（重复头）时取首值，全空返回 undefined。 */
+export function resolvePreferredAccount(
+  headers: Record<string, unknown> | undefined,
+): string | undefined {
+  const raw = headers?.[PREFERRED_ACCOUNT_HEADER];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  const trimmed = String(value ?? '').trim();
+  return trimmed || undefined;
+}
 
 export interface ProviderFinalizeInfo {
   status: 'COMPLETED' | 'FAILED';
@@ -48,6 +67,8 @@ export interface ProviderDispatchArgs {
   /** 出口协议：'chat' = OpenAI chunk 流；'messages' = Anthropic SSE。 */
   mode: 'chat' | 'messages';
   startTime: number;
+  /** 数据面账号指定（`X-Upstream-Account` 头解析结果）；Provider 不支持时被忽略。 */
+  preferredAccountId?: string;
   /** 路由侧回调：审计 + 用量落库（本模块保证每个请求至多调用一次；客户端中止不调用）。 */
   finalize: (info: ProviderFinalizeInfo) => void;
 }
@@ -66,6 +87,19 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
   const provider = runtime.get(decision.provider);
   const stream = openaiReq.stream === true;
   const modelName = decision.model;
+
+  // 传递给 Provider 的调用选项：指定账号只声明意图，是否命中由 Provider 的账号池决定
+  // （未命中回退 + 告警），故这里不做存在性校验。
+  const providerOpts: ChatOptions = {
+    requestId,
+    abortSignal,
+    preferredAccountId: args.preferredAccountId,
+  };
+  if (args.preferredAccountId) {
+    logger.info(
+      `[DISPATCH] ${decision.provider} preferred account "${args.preferredAccountId}" requested | Request ${requestId}`,
+    );
+  }
 
   // 本地估算口径：文本增量流没有上游 usage 事件（与 CommandCode 路径「未回 usage
   // 时回落估算」一致）。输入按序列化消息长度估，输出按分片累计。
@@ -121,7 +155,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     if (!stream) {
       let fullText = '';
       try {
-        for await (const delta of provider.chatCompletion(openaiReq, { requestId, abortSignal })) {
+        for await (const delta of provider.chatCompletion(openaiReq, providerOpts)) {
           if (abortSignal.aborted) {
             abandon();
             return reply.status(499).send({ error: 'client aborted' });
@@ -152,7 +186,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
 
     // 流式：OpenAI chunk 序列（role 起始 → 内容增量 → finish [+usage]）。
     try {
-      for await (const delta of provider.chatCompletion(openaiReq, { requestId, abortSignal })) {
+      for await (const delta of provider.chatCompletion(openaiReq, providerOpts)) {
         if (abortSignal.aborted) {
           disarmPing();
           abandon();
@@ -211,7 +245,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
   if (!stream) {
     let fullText = '';
     try {
-      for await (const delta of provider.chatCompletion(openaiReq, { requestId, abortSignal })) {
+      for await (const delta of provider.chatCompletion(openaiReq, providerOpts)) {
         if (abortSignal.aborted) {
           abandon();
           return reply.status(499).send({ type: 'error', error: { type: 'api_error', message: 'client aborted' } });
@@ -251,7 +285,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     armPing();
   };
   try {
-    for await (const delta of provider.chatCompletion(openaiReq, { requestId, abortSignal })) {
+    for await (const delta of provider.chatCompletion(openaiReq, providerOpts)) {
       if (abortSignal.aborted) {
         disarmPing();
         abandon();
