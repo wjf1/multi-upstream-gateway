@@ -49,7 +49,8 @@ Freebuff 模块已移植入树但**尚未接入运行时**，详见[项目状态
 ## 🚦 项目状态
 <a id="status"></a>
 
-**版本线：v5.0.0** —— 自该线起另起产品版本序列，勿与上游 `commandcode-proxy` 的 v4.22.x 混用。
+**当前版本：v5.0.4**（2026-10-08）—— 版本线自 v5.0.0 起另起产品序列，勿与上游 `commandcode-proxy` 的
+v4.22.x 混用；完整发布记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/wjf1/multi-upstream-gateway/releases)。
 
 **P0 语义移植（Phase A~F）已完成并部署**（2026-10-07）：
 
@@ -449,11 +450,13 @@ with a built-in Chinese dashboard, usage & cost analytics, multi-account quota r
 </div>
 
 > [!WARNING]
-> **Unofficial community tool, still under development.** This repo is a semantic fork of [`wjf1/commandcode-proxy`](https://github.com/wjf1/commandcode-proxy) (MIT) at **v4.22.4**, reverse-engineered from the official CommandCode CLI wire protocol (`/alpha/generate`). Not affiliated with CommandCode; may break when the upstream changes. **Multi-upstream support is not finished** — only CommandCode is usable today, so do not treat "in-tree but unwired" modules as available. Use with your own account and credentials. The bilingual sections above (screenshots, security) apply here too.
+> **Unofficial community tool, still under development.** This repo is a semantic fork of [`wjf1/commandcode-proxy`](https://github.com/wjf1/commandcode-proxy) (MIT) at **v4.22.4**, reverse-engineered from the official CommandCode CLI wire protocol (`/alpha/generate`). Not affiliated with CommandCode; may break when the upstream changes. **Multi-upstream support is not finished** — only CommandCode is usable today, so do not treat "wired but unconfigured" providers as available. Use with your own account and credentials. The bilingual sections above (screenshots, security) apply here too.
 
 ### <a id="status-en"></a>Project status
 
-**Version line: v5.0.0** — a separate product version series; do not mix it with the upstream `commandcode-proxy` v4.22.x.
+**Current version: v5.0.4** (2026-10-08) — the product version line starts at v5.0.0; do not mix it with the
+upstream `commandcode-proxy` v4.22.x. Full release history: [CHANGELOG](CHANGELOG.md) and
+[Releases](https://github.com/wjf1/multi-upstream-gateway/releases).
 
 **The P0 semantic port (Phases A–F) is complete and deployed** (2026-10-07): engineering base, audit-batch-B security semantics,
 new modules (provider contract layer, unified config, credential encryption, rate limiting, risk gate, Freebuff), seam wiring,

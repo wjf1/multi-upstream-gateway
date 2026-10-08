@@ -436,3 +436,24 @@ T214 的三个外部 blocker（Freebuff 真实 Token / WorkBuddy sidecar Go 二�
 判定路径合一（modelAccess/限流两套执行路径）待独立评审；6 个 dependabot PR 未处理（含 zod 3→4、
 undici 7→8、typescript 5.9→7 等 major 升级，需评估后再合）。
 
+## 发布记录 — v5.0.4（2026-10-08）
+
+**发布内容**：T208~T213b 的三源运行时接线与面板多源消费面（此前只存在于集成分支）、指定上游账号能力、
+`tests/snapshot/scenarios.mjs` 入库修复、构建产物改名。**这是三源接线成果第一次进入带版本号的发行版**
+—— v5.0.3 及之前，多上游接线只存在于 `feat/p0-port`，主线与发行版都看不到。
+
+**执行**：
+1. 版本号 5.0.3 → 5.0.4（`package.json` + `package-lock.json`）。
+2. `CHANGELOG.md` 的 `## [Unreleased]` 整理为 `## [5.0.4] - 2026-10-08`：合并两个平行「新增」小节、
+   去掉「（本轮）」这类工作标签、修正「变更说明」里已过期的事实（原文仍写"三个 Provider 尚未接入运行时"，
+   而 T213 早已接入 —— 这段会直接成为 Release 正文，属必须修正项）。
+3. 发布前门禁：`npm run verify` **79 文件 / 993 用例全绿（1 skipped）**；`typecheck` 双工程 0 错误；
+   `lint` 零输出；`npm audit --omit=dev` **0 vulnerabilities**。
+4. annotated tag subject（即 Release 标题）：`v5.0.4: 三源 Provider 运行时接线、面板五页与账号指定上线`；
+   推送 `git push origin main --tags`，由 Release workflow 从 CHANGELOG 同名段抽正文自动建 Release
+   （`scripts/extract-release-notes.mjs` 取不到正文会非零退出，不会发出空正文 Release）。
+
+**下一步（T214 阶段门的三个外部 blocker，非代码问题）**：
+① Freebuff 真实线上 Token（`FREEBUFF_TOKENS`）；② WorkBuddy sidecar 的 Go 二进制；
+③ 负责人签字确认 master-plan §0.4 的 `DECISION` 行（`continue | pause | pivot-federated`）。
+

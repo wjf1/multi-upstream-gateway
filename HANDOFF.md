@@ -49,8 +49,10 @@
     T204'（`47f8a3a`）/ T205'（并入）/ T213·阶段 1+2（`9b98d9d`/`af6db03`）。
   - **当前门禁与远端（2026-10-08）**：`npm run verify` **79 文件 / 993 用例全绿（1 skipped）**；
     `typecheck` 双工程 0 错误、`lint` 零输出、`npm audit --omit=dev` 0 漏洞。
-    产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`）。**`main` 与 `feat/p0-port` 已快进合并并推送成功，
-    远端两者同为 `8340e68`**（含 T208~T213b、v5.0.3 与本轮 5 个提交）。
+    产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`）；`main` 与 `feat/p0-port` 已快进合并并推送，
+    远端两者同点。**`v5.0.4` 已发布**（annotated tag + GitHub Release：
+    https://github.com/wjf1/multi-upstream-gateway/releases/tag/v5.0.4 ，内容见 CHANGELOG 的 `[5.0.4]` 段）——
+    这是 T208~T213b 三源接线成果**第一次进入带版本号的发行版**。
     公开前已核查：无敏感文件被跟踪、无凭据模式命中、历史中亦从未提交过 `.env`/`config.json`/`credentials.enc`。
 - **分支模型**：**`main` = 产品主线**（默认分支）；`feat/p0-port` = 移植集成分支。
   **2026-10-08：`main` 已快进合并 `feat/p0-port` 并推送**（基点 `8168a54` → 合并后同点 `8340e68`）——
@@ -87,6 +89,20 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **v5.0.4 发布（2026-10-08）—— 三源接线成果首次进入带版本号的发行版**：
+  - **发布内容**：T208~T213b 的三源运行时接线与面板多源消费面（此前只在集成分支上）、本轮新增的
+    指定上游账号能力、`tests/snapshot/scenarios.mjs` 入库修复、构建产物改名。正文见 CHANGELOG 的
+    `[5.0.4]` 段（Release 正文由 CI 从该段抽取，故 CHANGELOG 段落格式即发布格式）。
+  - **流程**：版本号 5.0.3 → 5.0.4（`package.json` + `package-lock.json`）；`## [Unreleased]` 整理为
+    `## [5.0.4] - 2026-10-08` 并合并平行小节（两个「新增」合为一个、去掉「（本轮）」这类工作标签）；
+    annotated tag subject 即 Release 标题：`v5.0.4: 三源 Provider 运行时接线、面板五页与账号指定上线`；
+    `git push origin main --tags` 触发 Release workflow 自动建 Release。
+  - **发布前门禁**：`npm run verify` **79 文件 / 993 用例全绿（1 skipped）**；`typecheck` 双工程 0 错误；
+    `lint` 零输出；`npm audit --omit=dev` **0 vulnerabilities**。
+  - **顺带修正**：CHANGELOG「变更说明」段此前仍写着"三个 Provider 尚未接入运行时"（T213 早已接入），
+    属于会被发布出去的过期事实，本次一并改正，并补上真实遗留（判定路径合一 / account-pool 不接入 /
+    updateConfig 热改 Token）。
 
 - **T203 账号池遗留收口 + 全新克隆门禁阻塞缺陷修复（2026-10-08）**：
   - **① 指定上游账号（`X-Upstream-Account`）端到端接线**（收口 T203 登记的
@@ -307,15 +323,20 @@
 > 换 OpenSSL 后端 + 置空代理即直连成功（凭据由 Git Credential Manager 提供）。
 > **结论：TLS backend 的报错不等于网络不可达；判定"推不上去"之前，先把 sslBackend 与代理两个变量各试一次。**
 
-**待办·第一优先级（2026-10-08 起转为发布流程）**：
+**待办·第一优先级（2026-10-08 起回到 T214 阶段门）**：
 
-- **发布 `v5.0.4`**：`CHANGELOG.md` 的 `[Unreleased]` 已累积实质内容（三源运行时接线 T213/T213b，
-  加上本轮账号指定接线、快照单源入库修复、构建产物改名）。按 AGENTS.md 的发布硬门禁走：
-  ① 版本号（`package.json`）与四文档齐备 → ② 打 annotated tag
-  `v5.0.4: <中文摘要>` → ③ `git push origin main --tags` → ④ 核验 CI 自动创建的 Release 标题/正文
-  （标题必须 `v<版本>: <中文摘要>`，正文与 CHANGELOG 对应版本对齐）。
-  **本轮刻意未打 tag、未改版本号**：合并推送是主线同步，发布是独立动作，混在一起会让 tag 指向一个
-  还能再改的中间状态。
+- **`v5.0.4` 已发布完成**（2026-10-08）：`package.json` / `package-lock.json` 版本号 5.0.4；
+  `CHANGELOG.md` 的 `[Unreleased]` 已整理为 `## [5.0.4] - 2026-10-08`（Release 正文由 CI 的
+  `scripts/extract-release-notes.mjs` 从该段抽取）；annotated tag `v5.0.4: 三源 Provider 运行时接线、
+  面板五页与账号指定上线`（subject 即 Release 标题）；`git push origin main --tags` 后由
+  Release workflow 自动建 Release（幂等，可用 `workflow_dispatch` 补建）。**发布前门禁**：
+  `verify` 79 文件 / 993 用例全绿、`typecheck` 0 错误、`lint` 零输出、`audit --omit=dev` 0 漏洞。
+- **下一步：T214 阶段门剩下的三个外部 blocker**（自动化项此前已全绿）：
+  ① Freebuff 真实线上 Token（`FREEBUFF_TOKENS`）；② WorkBuddy sidecar 的 Go 二进制
+  （需 Go 工具链或预构建产物）；③ 项目负责人签字确认 master-plan §0.4 的 `DECISION` 行
+  （`continue | pause | pivot-federated`）。三者都不是代码问题，**卡在外部输入**。
+- 拿到 Freebuff Token / sidecar 后要做的是**真上游三源端到端联调**（协议层已由假 Provider 端到端锁定：
+  三上游来源正确、混合并发 50 无污染、切换默认上游热生效均已断言）。
 
 - **当前队列**（严格按 `PLAN-STATE.md` §1 的顺序与 deps）：
   - ✅ `P0-PORT-A~F` **全部完成**（A 基座 / B 批次 B 语义 / C 新增模块 / D1 接线 / D2 薄适配层 / E 面板移植 / F 阶段门），**已部署**。

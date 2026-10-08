@@ -2,9 +2,13 @@
 
 所有主要版本更新都记录在此文件。
 
-## [Unreleased]
+## [5.0.4] - 2026-10-08
 
-### 新增（P1 任务卡）
+> 单面板三源统一网关正式接线完成：三个 Provider（CommandCode / Freebuff / WorkBuddy）全部接入运行时，
+> 数据面按路由决策分发、面板多源消费面（上游 / 账号 / 模型 / 用量）就位；新增「指定上游账号」能力；
+> 并修复一个会让**全新克隆**门禁必红的快照基建缺陷。
+
+### 新增
 
 - **T213 阶段 1：三源 Provider 运行时接线**（`9b98d9d`）—— `src/providers/runtime.ts`（ProviderRuntime：
   三源装配 + T104 registry/router 实例 + 按需初始化 + 总闸/状态/registry 刷新）；
@@ -62,8 +66,6 @@
   （远超 ≥55% 门槛）；5 分钟自动化泄漏监控（`scripts/soak.mjs` 400 请求，RSS 净降 31.9MB）
   与 CommandCode / Freebuff 快照测试全部通过。
 
-### 新增（本轮收尾）
-
 - **指定上游账号（`X-Upstream-Account`）端到端接线** —— 收口 T203 登记的遗留「`preferredAccountId` /
   `onRetry` 未透传到选号」。此前 `ChatOptions` 里的这两个字段在数据面**从未被赋值**
   （`src/routes/` 下 grep 零命中），契约一直空转。
@@ -82,7 +84,7 @@
   - 测试：`tests/freebuff-preferred-account.test.ts` 9 例（头解析 3 例 + 命中/未命中/暂停回退 +
     `onRetry` 生效 / 返回 undefined / 抛错）。
 
-### 🐛 修复（本轮）
+### 🐛 修复
 
 - **`tests/snapshot/scenarios.mjs` 从未入库，导致全新克隆的 `typecheck` / `verify` 必红**（阻塞级）。
   `.gitignore` 的全局 `*.mjs` 规则把它静默吞掉——而它与 `scripts/collect-fixtures.mjs`、
@@ -97,7 +99,7 @@
   仍是 `4.22.4`，与 `package.json`（`multi-upstream-gateway` / 5.0.3）不一致；任何一次 `npm install`
   都会重写它，把与改动无关的噪声混进 diff。已对齐为当前包名与版本。
 
-### 🔧 变更（本轮）
+### 🔧 变更
 
 - **构建产物改名**：`build:win` 输出由 `dist/commandcode-proxy-v4.exe` 改为
   **`dist/multi-upstream-gateway-v5.exe`**（README 中英双语的构建说明同步更新）。
@@ -105,21 +107,29 @@
 
 ### 变更说明
 
-- 三个 Provider（CommandCode/Freebuff/WorkBuddy）外壳均已就位，但**尚未接入运行时**——
-  接入 `src/index.ts` / `src/routes/` 统一属 T213；T202 卡 DoD「Anthropic SDK 调 /v1/messages 通过」同步定于 T213 收口。
-- 遗留（T213 收口，登记于 PLAN-STATE）：限流/modelAccess 双轨配置源、legacy 扁平分支 `syncEnvFile`
-  的 `COMMANDCODE_API_KEY` 明文行、`saveConfigFile` 旧扁平分支明文回写。
+- 三个 Provider（CommandCode / Freebuff / WorkBuddy）**均已接入运行时**（T213 阶段 1+2）：
+  数据面按「前缀 / 注册表 / 显式指定 / priority」四路决策分发。**缺省部署行为与接线前完全一致** ——
+  实际可用上游仍是 CommandCode 一个：Freebuff 需配置 `providers.freebuff` 分片与 `FREEBUFF_TOKENS`，
+  WorkBuddy 需 sidecar Go 二进制（联邦透传路线）。
+- 配置源已收口（T213b）：限流 / modelAccess 在 store 分片非空时优先于 env、空分片回退 env；
+  legacy 扁平分支不再写明文 `COMMANDCODE_API_KEY`。
+- 遗留（登记于 PLAN-STATE）：判定路径合一（modelAccess / 限流的两套执行路径）待独立评审；
+  `FreebuffAccountPool` 契约适配层**有意不接入**（与 RunManager 自身选号构成双轨）；`updateConfig`
+  热改 Token 待做。
 
 ### 验证
 
-- 全量 `npm run verify` **78 文件 / 984 用例全绿（1 skipped）**（此前 64 文件 / 801 用例）；
-  覆盖率 **Statements 80.97%**（5003/6179）、Conditionals 68.30%、Methods 82.70%；
-  `npm audit --omit=dev` **0 vulnerabilities**；
-  `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
-- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）。
-- **本轮收尾**（账号指定接线 + `scenarios.mjs` 入库修复 + 产物改名）：`npm run verify`
-  **79 文件 / 993 用例全绿（1 skipped）**（984 + 新增 9 例）；`npm run typecheck` 双工程 0 错误
-  （**修复前为 3 条 `TS2307`**）；`npm run lint` 零输出；`npm audit --omit=dev` **0 vulnerabilities**。
+- 全量 `npm run verify` **79 文件 / 993 用例全绿（1 skipped）**；覆盖率 **Statements 80.97%**
+  （5003/6179）、Conditionals 68.30%、Methods 82.70%，远超 ≥55% 门槛；`npm run typecheck`（src+tests
+  双工程）0 错误（快照基建缺文件时曾为 3 条 `TS2307`）；`npm run lint` 零输出；
+  `npm audit --omit=dev` **0 vulnerabilities**。
+- 5 分钟自动化泄漏监控（`scripts/soak.mjs`，400 请求）RSS 净降 31.9MB；CommandCode 与 Freebuff
+  端到端快照测试通过；GitHub Actions CI（`npm ci` → lint → typecheck → build → 全量测试 → 覆盖率
+  → 启动代理探活）通过。
+- 提交序列：`1e011a5`（D2）→ `d879121` → `47f8a3a`（T204'/T205'）→ `fe6350c` → `304ac6d` →
+  `9b98d9d`（T213 阶段 1）→ `fc36e5b` → `eb103a3` → `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→
+  `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（移植测试收口）→ `2adffd5`（v5.0.3 判据修正）→
+  `510556d`（快照单源入库）→ `9ed1915`（账号指定接线）→ `896987a`（产物改名）→ `71ed9c1` / `8340e68`（文档与合并）。
 
 ## [5.0.3] - 2026-10-07
 
