@@ -4,7 +4,26 @@
 
 ## [Unreleased]
 
-### 新增
+### 🐛 修复
+
+- **面板「上游」页点不开（阻塞级）** —— `public/js/core.js` 的 hash 路由白名单 `ROUTES` 漏了 T208 新增的
+  `upstream`。`switchTab()` 末尾会把 hash 写成 `#/<tab>`，而 `hashchange` 处理器对不在白名单里的 hash
+  一律回落 `overview` —— 于是**点「上游」页签会被立刻弹回概览，该页完全无法使用**（直链 `#/upstream`
+  也只显示概览）。此前 12 条 `spa-upstream` 断言全是静态文本比对（骨架是否齐备），测不出"点击之后路由
+  落到哪一页"。修复：白名单补齐 6 项，并加注释写明"新增页签必须同步改 `ROUTES`"。
+  回归锁：`tests/spa-upstream.test.ts` 新增一条断言 —— **`ROUTES` 与 `index.html` 的页签集合必须一致**。
+  （由 T214「面板逐页验收」的真实浏览器走查发现：静态断言全绿，真实点一次按钮即复现。）
+- **面板仍用旧品牌名，且「新版本」徽章指向上游仓库** —— `public/index.html` 的 `<title>` 与页头 h1 仍写
+  "CommandCode 代理"，`#updateBadge` 的 href 仍指向 `wjf1/commandcode-proxy/releases`。产品已分化为
+  multi-upstream-gateway，用户点"新版本"会被带到**另一个项目**的发布页（后端 `update-check.ts` 早已指向
+  本仓库，只有这个前端链接漏改）。现改为"多上游 AI 网关" + 本仓库 releases 链接，6 个面板脚本的头部注释
+  一并同步。
+
+### 变更说明
+
+- 修正 `src/utils/update-check.ts` 里一条已过期的事实描述：原文写"本项目只打 tag、不创建 Release 对象，
+  releases/latest 会永久停在旧版本"，而自 v5.0.0 起 Release workflow 已随 tag 自动建 Release。
+  实现仍用 `/tags` 取最大 semver（覆盖面更广、不受 Release 发布状态影响），故只改注释、不改逻辑。
 
 - **T214 阶段门：「错误注入降级（strict 语义）」验收测试**（`tests/t214-strict-degradation.test.ts`，9 例）——
   把 master-plan §3.6 的 strict 语义从"文档承诺"变成"可回归锁"：

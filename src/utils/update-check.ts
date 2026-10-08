@@ -47,9 +47,10 @@ export function isNewerVersion(latest: string, current: string): boolean {
 /**
  * 从 GitHub `/tags` 的响应里取最大 semver tag。
  *
- * 不能用 releases/latest：本项目只打 tag、不创建 Release 对象，releases/latest
- * 会永久停在最后一次手工建 Release 的版本上（实测 v4.12.0），使"发现新版本"失效。
- * GitHub 也不保证 /tags 按版本序返回，因此必须比较后取最大。
+ * 仍用 `/tags` 而非 `releases/latest`：本仓已自 v5.0.0 起由 Release workflow 自动建 Release，
+ * `releases/latest` 现在可用，但 `/tags` 覆盖面更广（历史上 v4.13.0~v4.22.x 那批只有 tag、
+ * 没有 Release 对象，退回 releases 会让版本比较漏掉它们），且不依赖 Release 是否发布成功。
+ * GitHub 不保证 /tags 按版本序返回，因此必须比较后取最大。
  * 对脏数据（非数组、null 项、非版本号 tag、字段类型错误）一律忽略而非抛错。
  */
 export function pickLatestTag(items: unknown): string | null {
