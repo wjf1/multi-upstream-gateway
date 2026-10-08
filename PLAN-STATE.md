@@ -426,9 +426,10 @@ T214 的三个外部 blocker（Freebuff 真实 Token / WorkBuddy sidecar Go 二�
   （与仓库既有提交习惯一致，便于 `git log` 直读发布序列）。
 - **合并后**：`main` = `feat/p0-port` = `feat/t203-account-pin` = **`71ed9c1`**（含本轮 4 个提交：
   快照单源入库修复 / 账号指定接线 / 产物改名 / 四文档同步）。
-- **推送状态：未推送**。本轮执行环境无法访问 github.com（直连 TLS 被重置），唯一出网通道是只读镜像
-  （可读不可 push），故合并只落在本地副本，远端 `main` 仍为 `8168a54`。推送操作与下一次发布版本号
-  （建议 `v5.0.4`）见 `HANDOFF.md` §5「待办·第一优先级」。
+- **推送状态：已推送（2026-10-08）**。远端 `main` 与 `feat/p0-port` 同为 `8340e68`。
+  过程说明：最初误判为"本机连不上 GitHub"（`git` 默认 `schannel` 对 github.com 报 TLS 握手失败，
+  叠加当时本地代理端口无出网），实际加 `-c http.sslBackend=openssl -c http.proxy=` 后直连推送即成功
+  —— 教训见 `HANDOFF.md` §5 的踩坑记录。下一次发布版本号（建议 `v5.0.4`）与发布步骤同见该处。
 
 **遗留（合并后不变）**：T214 三个外部 blocker（Freebuff 真实 Token / WorkBuddy sidecar Go 二进制 /
 负责人 `DECISION` 签字）；`FreebuffAccountPool` 不接入（双轨，理由同 D2）；`updateConfig` 热改 Token 待做；
