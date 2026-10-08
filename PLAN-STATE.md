@@ -214,6 +214,16 @@
     - 静态检查：`npm run typecheck` 双工程 0 错误；`npm run lint` 零告警零输出
     - 5 分钟泄漏监控：专用独立压测 `scripts/soak.mjs` 跑满 300s，400/400 请求成功，RSS 114.8MB → 83.0MB（增长 -31.9MB），无内存泄漏
     - 快照测试：CommandCode 端到端流式/非流式快照通过；Freebuff 快照测试通过
+  - **范围四项的进展（2026-10-08 更新）**：
+    - ✅ **错误注入降级（strict 语义）** —— 新增 `tests/t214-strict-degradation.test.ts`（9 例），
+      把 §3.6 的 strict 语义落成可回归断言：失败不跨上游兜底（其它 Provider 零调用）、首字节之后
+      禁止切换（内容保留 + 错误并入流）、未装配/已停用给明确状态码（503/502，非 500 内部错误）、
+      显式 header 点名已停用上游由 router 决策期拒绝。
+      期间发现并登记**一处契约缺口**：步骤 3（模型名前缀）不查 `enabled`，停用拦截依赖 Provider 自检
+      （详见 CHANGELOG `[Unreleased]` 与 HANDOFF §4）。
+    - ✅ 5 分钟泄漏监控（`scripts/soak.mjs` 满 300s / 400 请求 / RSS 净降 31.9MB）
+    - ⬜ **面板逐页验收**（需浏览器逐页走查五页 + 风险门/主题/横幅的可见状态，尚未做）
+    - ⬜ **三源 E2E**（卡在下面 ①② 两个外部 blocker）
   - 剩余 Blocker：
     - ① Freebuff 真实线上 Token（`FREEBUFF_TOKENS`）待配置
     - ② WorkBuddy sidecar 缺少 Go 运行时 / 预构建二进制（需环境补齐以完成端到端三方通信）

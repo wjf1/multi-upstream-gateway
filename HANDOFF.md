@@ -47,7 +47,7 @@
     `providers.freebuff` 分片 + FREEBUFF_TOKENS，WorkBuddy 需 sidecar 二进制（联邦）。
   - **P1 已完成七卡 + T213 两阶段**：T201 / T202a / T202b / T203 / P0-PORT-D2（`1e011a5`）/
     T204'（`47f8a3a`）/ T205'（并入）/ T213·阶段 1+2（`9b98d9d`/`af6db03`）。
-  - **当前门禁与远端（2026-10-08）**：`npm run verify` **79 文件 / 993 用例全绿（1 skipped）**；
+  - **当前门禁与远端（2026-10-08）**：`npm run verify` **80 文件 / 1002 用例全绿（1 skipped）**；
     `typecheck` 双工程 0 错误、`lint` 零输出、`npm audit --omit=dev` 0 漏洞。
     产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`）；`main` 与 `feat/p0-port` 已快进合并并推送
     （远端两者同点 `bd04489`）。**`v5.0.4` 已发布**（annotated tag + GitHub Release，Release 标题与正文
@@ -90,6 +90,27 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T214 阶段门：「错误注入降级（strict 语义）」验收落实（2026-10-08）**：
+  - **背景**：T214 的范围是「三源 E2E、面板逐页验收、错误注入降级（strict 语义）、5 分钟泄漏监控」，
+    但此前的"自动化项已达标"清单里只覆盖了 verify / 覆盖率 / audit / 静态检查 / 泄漏监控 / 快照 ——
+    另两项**没有对应取证**。其中"错误注入降级"不依赖任何外部输入，本轮把它补上。
+  - **交付**：`tests/t214-strict-degradation.test.ts`（9 例），用真实 ProviderRuntime + 注入故障的假
+    Provider（可分别注入"产出前失败"与"首块之后失败"）锁定 §3.6：
+    ① 选定上游失败 → `PROVIDER_PROTOCOL_ERROR`(502)，且**其它 Provider 一次都没被调用**（无跨上游兜底）；
+    ② 流式首字节之后失败 → HTTP 200 保持（流已开始），已产出内容保留、错误码并入流，**禁止跨 Provider 切换**；
+    ③ 全部注入故障 / 上游未装配 → 明确 503，不是 500 内部错误、不挂起；
+    ④ `X-Upstream-Provider` 点名已停用上游 → router 决策期直接拒绝（带 `explicitly requested` 文案）。
+  - **顺带修正的一处认知**：我最初把断言写成"错误码必须是 4xx"——而 `NO_PROVIDER_AVAILABLE` 的 503
+    本就是合理状态码。要排除的是 **500 `INTERNAL_ERROR`**（未预期异常）；断言已按此校正，
+    否则会把"明确的服务端不可用"误判成缺陷。
+  - **发现并登记一处契约缺口（未改产品行为）**：六步决策的**步骤 3（模型名前缀）不检查 `enabled`** ——
+    停用某上游后，带该前缀的请求仍会被放行到该 Provider，由 Provider 自身（`FreebuffProvider.assertEnabled`）
+    抛 503。结果正确（503、不静默换上游），但与步骤 1/2（header / `extra_body` → router 直接抛 503 且带
+    Retry-After 文案）不同源；`router.ts` 文件头注释只声明了「粘性步骤落空」，未声明前缀路径的分工。
+    建议确认语义后二选一：把检查提到步骤 3，或在注释与 master-plan §3.3 明确「前缀路径依赖 Provider 自检」。
+    测试已把现状锁定（并在用例注释注明"若今后统一到步骤 3，该断言会变红"）。
+  - **门禁**：`npm run verify` **80 文件 / 1002 用例全绿（1 skipped）**；`typecheck` 双工程 0 错误；`lint` 零输出。
 
 - **v5.0.4 发布（2026-10-08）—— 三源接线成果首次进入带版本号的发行版**：
   - **发布内容**：T208~T213b 的三源运行时接线与面板多源消费面（此前只在集成分支上）、本轮新增的
@@ -338,10 +359,16 @@
   面板五页与账号指定上线`（subject 即 Release 标题）；`git push origin main --tags` 后由
   Release workflow 自动建 Release（幂等，可用 `workflow_dispatch` 补建）。**发布前门禁**：
   `verify` 79 文件 / 993 用例全绿、`typecheck` 0 错误、`lint` 零输出、`audit --omit=dev` 0 漏洞。
-- **下一步：T214 阶段门剩下的三个外部 blocker**（自动化项此前已全绿）：
-  ① Freebuff 真实线上 Token（`FREEBUFF_TOKENS`）；② WorkBuddy sidecar 的 Go 二进制
-  （需 Go 工具链或预构建产物）；③ 项目负责人签字确认 master-plan §0.4 的 `DECISION` 行
-  （`continue | pause | pivot-federated`）。三者都不是代码问题，**卡在外部输入**。
+- **下一步：T214 范围内剩两项**（一项可自主推进，一项卡外部输入）：
+  - ✅ **错误注入降级（strict 语义）已落实**（2026-10-08）：见 §4 与 `tests/t214-strict-degradation.test.ts`；
+    同轮登记了一处契约缺口（步骤 3 前缀路径不查 `enabled`）。
+  - ⬜ **面板逐页验收** —— 浏览器逐页走查五页（总览/账号/模型/用量/日志）+ 上游页，以及风险门弹窗、
+    明暗主题、异常横幅的可见状态。**不依赖外部输入，是可以接着做的下一件事**（起隔离端口的实例走查，
+    不要动 9090 上的生产实例）。
+  - ⬜ **三源 E2E** —— 卡在下面三个外部 blocker，非代码问题：
+    ① Freebuff 真实线上 Token（`FREEBUFF_TOKENS`）；② WorkBuddy sidecar 的 Go 二进制
+    （需 Go 工具链或预构建产物）；③ 项目负责人签字确认 master-plan §0.4 的 `DECISION` 行
+    （`continue | pause | pivot-federated`）。
 - 拿到 Freebuff Token / sidecar 后要做的是**真上游三源端到端联调**（协议层已由假 Provider 端到端锁定：
   三上游来源正确、混合并发 50 无污染、切换默认上游热生效均已断言）。
 

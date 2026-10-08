@@ -2,6 +2,28 @@
 
 所有主要版本更新都记录在此文件。
 
+## [Unreleased]
+
+### 新增
+
+- **T214 阶段门：「错误注入降级（strict 语义）」验收测试**（`tests/t214-strict-degradation.test.ts`，9 例）——
+  把 master-plan §3.6 的 strict 语义从"文档承诺"变成"可回归锁"：
+  ① 选定上游失败 → 稳定错误码（502 `PROVIDER_PROTOCOL_ERROR`）且**其它 Provider 一次都没被调用**（无跨上游兜底）；
+  ② 流式在首字节之后失败 → 只能中断（已产出内容保留、错误码并入内容流），**禁止跨 Provider 切换**；
+  ③ 未装配 / 全部注入故障 → 明确状态码（503 `NO_PROVIDER_AVAILABLE` / 502），不是 500 内部错误、不挂起；
+  ④ 显式 `X-Upstream-Provider` 点名已停用上游 → router 在决策期直接拒绝（带 `explicitly requested` 文案）。
+
+### 变更说明
+
+- **登记一处契约缺口（测试锁定现状，未改产品行为）**：六步路由决策的**步骤 3（模型名前缀）不检查
+  `enabled`** —— 停用某上游后，带该前缀的请求仍会被放行到该 Provider，由 Provider 自身
+  （如 `FreebuffProvider.assertEnabled`）抛 503 拒绝。结果是对的（仍是 503、且不静默换上游），但与
+  步骤 1/2（header / `extra_body` 显式指定 → router 直接抛 503 且带 Retry-After 文案）**不同源**，
+  且 `router.ts` 文件头注释只声明了「粘性步骤落空」，未声明前缀路径的这层分工。建议确认语义后二选一：
+  把 `enabled` 检查提到步骤 3（统一文案与 Retry-After），或在 router 注释与 master-plan §3.3 中明确
+  「前缀路径依赖 Provider 自检」。对应用例注释已写明：若今后把检查提到步骤 3，该断言会变红，
+  届时同步更新契约说明。
+
 ## [5.0.4] - 2026-10-08
 
 > 单面板三源统一网关正式接线完成：三个 Provider（CommandCode / Freebuff / WorkBuddy）全部接入运行时，
