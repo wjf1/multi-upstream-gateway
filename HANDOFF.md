@@ -49,9 +49,10 @@
     T204'（`47f8a3a`）/ T205'（并入）/ T213·阶段 1+2（`9b98d9d`/`af6db03`）。
   - **当前门禁与远端（2026-10-08）**：`npm run verify` **79 文件 / 993 用例全绿（1 skipped）**；
     `typecheck` 双工程 0 错误、`lint` 零输出、`npm audit --omit=dev` 0 漏洞。
-    产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`）；`main` 与 `feat/p0-port` 已快进合并并推送，
-    远端两者同点。**`v5.0.4` 已发布**（annotated tag + GitHub Release：
-    https://github.com/wjf1/multi-upstream-gateway/releases/tag/v5.0.4 ，内容见 CHANGELOG 的 `[5.0.4]` 段）——
+    产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`）；`main` 与 `feat/p0-port` 已快进合并并推送
+    （远端两者同点 `bd04489`）。**`v5.0.4` 已发布**（annotated tag + GitHub Release，Release 标题与正文
+    均按规范自动生成，CI 通过：
+    https://github.com/wjf1/multi-upstream-gateway/releases/tag/v5.0.4 ）——
     这是 T208~T213b 三源接线成果**第一次进入带版本号的发行版**。
     公开前已核查：无敏感文件被跟踪、无凭据模式命中、历史中亦从未提交过 `.env`/`config.json`/`credentials.enc`。
 - **分支模型**：**`main` = 产品主线**（默认分支）；`feat/p0-port` = 移植集成分支。
@@ -316,12 +317,18 @@
 **已办（2026-10-08）**：`main` ← `feat/p0-port` 快进合并**并推送成功**，远端 `main` 与 `feat/p0-port`
 同为 `8340e68`。
 
-> **踩坑记录（本次最大的时间浪费，勿重演）**：本机 `git` 默认走 Windows 的 `schannel`，对 github.com 报
-> `schannel: failed to receive handshake, SSL/TLS connection failed`；叠加当时 Clash 的 7900 端口无出网，
-> 一度被误判成"本机根本连不上 GitHub、只能读镜像"。**实际只需**：
-> `git -c http.sslBackend=openssl -c http.proxy= -c https.proxy= push https://github.com/<repo>.git` ——
-> 换 OpenSSL 后端 + 置空代理即直连成功（凭据由 Git Credential Manager 提供）。
-> **结论：TLS backend 的报错不等于网络不可达；判定"推不上去"之前，先把 sslBackend 与代理两个变量各试一次。**
+> **推送通道踩坑记录（2026-10-08，两次误判，勿重演）**：
+> 1. **别把 TLS backend 的报错当成网络不可达**：本机 `git` 默认走 Windows `schannel`，对 github.com 报
+>    `schannel: failed to receive handshake, SSL/TLS connection failed`；换
+>    `-c http.sslBackend=openssl -c http.proxy=` 后直连即成功（凭据由 Git Credential Manager 提供）。
+> 2. **但 HTTPS 直连在本机是时通时断的**：同一命令曾连续成功两次，随后的多次重试全部
+>    `Recv failure: Connection was reset` / `Failed to connect to github.com port 443`；
+>    而此时 `curl https://api.github.com` 仍返回 200、`ssh -p 443 git@ssh.github.com` 认证正常 ——
+>    是到 `github.com:443` 的间歇性阻断，不是凭据或配置问题。反复重试 HTTPS 是低效路径。
+> 3. **结论：推送走 SSH over 443**。本机 `~/.ssh/id_ed25519` 已注册，`ssh.github.com:443` 认证通过；
+>    `origin` 的 pushurl 已固定为 `ssh://git@ssh.github.com:443/wjf1/multi-upstream-gateway.git`，
+>    因此 **`git push origin main` 直接可用、无需任何额外参数**（fetch 仍走 ghproxy 镜像；
+>    GitHub REST API 在 `api.github.com` 上直连可用，可作读侧兜底）。
 
 **待办·第一优先级（2026-10-08 起回到 T214 阶段门）**：
 
