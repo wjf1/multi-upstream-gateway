@@ -70,14 +70,18 @@ export function ensureAumidRegistered(): boolean {
   if (aumidState !== null) return aumidState;
   try {
     // 先探测：已存在就不再写，避免每次启动都改注册表。
-    const probe = spawnSync('reg', ['query', REG_KEY], { windowsHide: true });
+    // 全部加 timeout：spawnSync 是**同步**的，读一个注册表键正常 <200ms，但在 CI / 杀软扫描的
+    // 机器上会慢到十几秒，而这条路径位于引擎启停等写操作的事件循环里 —— 无上限的同步等待会
+    // 把一次 toggle 请求拖成超时（实测 Windows CI 上 admin-boundary 用例因此卡 10.8s 判红）。
+    // 超时后 status 为 null，下方既有的 `status === 0` 判定会自然回退到 PowerShell AUMID。
+    const probe = spawnSync('reg', ['query', REG_KEY], { windowsHide: true, timeout: 3000 });
     const exists = probe.status === 0;
     if (!exists) {
-      const add = (args: string[]) => spawnSync('reg', ['add', REG_KEY, ...args, '/f'], { windowsHide: true });
+      const add = (args: string[]) => spawnSync('reg', ['add', REG_KEY, ...args, '/f'], { windowsHide: true, timeout: 3000 });
       add(['/v', 'DisplayName', '/t', 'REG_SZ', '/d', 'CommandCode Proxy']);
       add(['/v', 'ShowInSettings', '/t', 'REG_DWORD', '/d', '1']);
       if (NOTIFY_ICON) add(['/v', 'IconUri', '/t', 'REG_SZ', '/d', NOTIFY_ICON]);
-      const verify = spawnSync('reg', ['query', REG_KEY], { windowsHide: true });
+      const verify = spawnSync('reg', ['query', REG_KEY], { windowsHide: true, timeout: 3000 });
       aumidState = verify.status === 0;
     } else {
       aumidState = true;
@@ -129,13 +133,16 @@ export function isGlobalToastEnabled(now: number = Date.now()): boolean {
   }
   let enabled = true;
   try {
+    // 3s 上限（原为 15s）：spawnSync 会同步阻塞事件循环，而 PowerShell 冷启动在 CI runner 上
+    // 实测可达 10s+ —— 一次引擎启停请求就被这条自诊断拖成超时。读一个注册表值 3s 足够，
+    // 超时按"读不到"处理（沿用默认 enabled=true），不影响通知语义。
     const r = spawnSync(
       PS_EXE,
       [
         '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
         `(Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications' -Name ToastEnabled -ErrorAction SilentlyContinue).ToastEnabled`,
       ],
-      { windowsHide: true, encoding: 'utf8', timeout: 15000 },
+      { windowsHide: true, encoding: 'utf8', timeout: 3000 },
     );
     if (r.status === 0 && typeof r.stdout === 'string') {
       const t = r.stdout.trim();

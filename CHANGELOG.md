@@ -6,6 +6,15 @@
 
 ### 🐛 修复
 
+- **Windows CI 上 `admin-boundary` 用例超时判红（通知路径同步阻塞事件循环）** —— 该用例的写操作正例
+  会真的暂停一次引擎，而引擎暂停会发桌面通知：`notifier.ts` 的通知前置检查用 **`spawnSync`** 同步读注册表
+  与起 PowerShell（其中读系统通知总开关的超时上限原为 **15s**），同步等待位于请求路径的事件循环里。
+  ubuntu 上不触发这条 Windows 专用分支，而 windows-latest runner 上 PowerShell 冷启动实测 **10s+**，
+  把用例拖成超时（实测 10832ms 判红，同一提交在 ubuntu 与本机均通过 —— 属间歇性）。
+  修复：① 读系统通知开关的超时 15s → **3s**，AUMID 注册的 3 处 `reg` 调用补 `timeout: 3000`
+  （超时按"读不到"处理，沿用既有回退逻辑，通知语义不变）；② `admin-boundary` 测试整体关闭通知
+  （`COMMANDCODE_NOTIFY=0`）—— 它验的是鉴权边界，不该真的弹系统通知。
+  这也顺带修掉了审计材料 `docs/review/architecture-review.md` P2-11 登记的"`notifier.ts` 同步阻塞 ≤15s"。
 - **面板「上游」页点不开（阻塞级）** —— `public/js/core.js` 的 hash 路由白名单 `ROUTES` 漏了 T208 新增的
   `upstream`。`switchTab()` 末尾会把 hash 写成 `#/<tab>`，而 `hashchange` 处理器对不在白名单里的 hash
   一律回落 `overview` —— 于是**点「上游」页签会被立刻弹回概览，该页完全无法使用**（直链 `#/upstream`

@@ -48,6 +48,10 @@ beforeAll(async () => {
   process.env.COMMANDCODE_MODELS_CACHE_PATH = path.join(stateDir, 'models.json');
   process.env.COMMANDCODE_PRICING_CACHE_PATH = path.join(stateDir, 'pricing.json');
   process.env.USAGE_HISTORY_PATH = path.join(stateDir, 'usage.jsonl');
+  // 本文件的写操作正例真的会停一次引擎，而引擎暂停会发桌面通知 —— 通知路径在 Windows 上
+  // 同步读注册表/起 PowerShell（见 notifier.ts 的 timeout 说明），在 CI runner 上实测卡 10s+
+  // 把用例拖成超时判红。这里测的是鉴权边界，不是通知，故整体关掉（notify() 首行即返回 false）。
+  process.env.COMMANDCODE_NOTIFY = '0';
 
   app = Fastify();
   await app.register(dashboardRoutes);
