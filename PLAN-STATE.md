@@ -469,3 +469,23 @@ undici 7→8、typescript 5.9→7 等 major 升级，需评估后再合）。
 ① Freebuff 真实线上 Token（`FREEBUFF_TOKENS`）；② WorkBuddy sidecar 的 Go 二进制；
 ③ 负责人签字确认 master-plan §0.4 的 `DECISION` 行（`continue | pause | pivot-federated`）。
 
+## 发布记录 — v5.0.5（2026-10-08，补丁版）
+
+**为什么立即补发**：v5.0.4 的「上游」管理页**完全打不开** —— `public/js/core.js` 的 hash 路由白名单
+`ROUTES` 漏了 `upstream`，`switchTab()` 写完 hash 后被 `hashchange` 处理器回落 `overview`（点了就弹回、
+直链也无效）。这是 T208 的核心交付，属**发行版级缺陷**，不能等到下一个功能版本。由 T214「面板逐页验收」
+的真实浏览器走查发现（12 条既有静态断言全绿，真实点一次按钮即复现）。
+
+**发布内容**：① 上游页路由修复（阻塞级）+ `ROUTES`/页签集合一致性回归锁；② 面板品牌残留（`<title>`/h1
+仍写"CommandCode 代理"）与「新版本」徽章指向上游仓库；③ 通知路径同步阻塞（Windows CI 上 `admin-boundary`
+用例超时判红，顺带修掉 `docs/review/architecture-review.md` P2-11 登记的同一处）；④ T214「错误注入降级
+（strict 语义）」验收测试 9 例；⑤ 一处契约缺口登记（六步决策的步骤 3 前缀路径不查 `enabled`）。
+
+**流程与门禁**：版本号 5.0.4 → 5.0.5；CHANGELOG 重整为 `## [5.0.5] - 2026-10-08`（修复 → 新增 →
+变更说明 → 验证）；annotated tag subject `v5.0.5: 修复上游页打不开、面板品牌与更新链接、通知路径同步阻塞`；
+Release 由 workflow 自动创建。门禁：`verify` **80 文件 / 1003 用例全绿（1 skipped）**、`typecheck` 0 错误、
+`lint` 零输出、`audit --omit=dev` 0 漏洞、**CI 双平台（ubuntu + windows）通过**。
+
+**教训（新增验收方法，已写入 HANDOFF §4）**：面板这类"交互之后落到哪个状态"的缺陷，静态文本断言测不出来，
+**必须真点一次**；而 Windows 专用分支的缺陷只有 `windows-latest` 能暴露 —— 判断门禁是否真绿要看**两个平台**。
+
