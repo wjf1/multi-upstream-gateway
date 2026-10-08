@@ -83,6 +83,32 @@
 
 ## 4. 最近一轮变更与交付成果
 
+- **T203 账号池遗留收口 + 全新克隆门禁阻塞缺陷修复（2026-10-08）**：
+  - **① 指定上游账号（`X-Upstream-Account`）端到端接线**（收口 T203 登记的
+    「`preferredAccountId`/`onRetry` 未透传到选号」）：此前这两个字段只存在于
+    `providers/core/interface.ts` 的 `ChatOptions` 里，`src/routes/` 下 grep 零命中 —— 契约空转。
+    现打通三段：`routes/provider-dispatch.ts` 导出 `resolvePreferredAccount()` 解析请求头
+    （重复头取首值、空白视为未指定）→ `chat.ts`/`messages.ts` 两个出口透传 →
+    `RunManager.acquire(agentId, preferredAccountId?)` 在 `selectStartIndex()` 里把「指定账号」
+    置于 selector 与 round-robin 之上；**未命中/已暂停时告警回退**（不让坏账号把请求打挂）。
+    重试侧 `FreebuffProvider.chatCompletion` 在三类换号重试前调用 `opts.onRetry(attempt, err)`，
+    返回值决定下一轮账号（与 commandcode 适配器 `onRetry` 同契约）。
+    测试 `tests/freebuff-preferred-account.test.ts` 9 例。
+  - **② `tests/snapshot/scenarios.mjs` 被 `.gitignore` 的 `*.mjs` 吞掉、从未入库**（阻塞级）：
+    开发机上该文件只在磁盘（未跟踪）→ 门禁全绿；**全新克隆**跑 `npm run typecheck` 必报 3 条
+    `TS2307`、快照套件 import 失败。这是避坑 #2 记的 `*.mjs` 坑**第三次复现**。
+    已补 `.gitignore` 例外并按其调用契约重建该文件，`renderScenario('commandcode-chat-basic')`
+    与既有 fixture **逐字节比对通过**（未改写任何 fixture）。
+  - **③ 构建产物改名**：`build:win` 输出 `commandcode-proxy-v4.exe` → `multi-upstream-gateway-v5.exe`
+    （README 中英双语同步）；顺带对齐 `package-lock.json` 中滞留的上游包名/版本（`commandcode-proxy-v4` /
+    4.22.4 → `multi-upstream-gateway` / 5.0.3）。
+  - **门禁**：`npm run verify` **79 文件 / 993 用例全绿（1 skipped）**（984 + 新增 9 例）；
+    `typecheck` 双工程 0 错误（修复前 3 条 `TS2307`）；`lint` 零输出；
+    `npm audit --omit=dev` **0 vulnerabilities**。
+  - **未做（有意）**：`FreebuffAccountPool`（`providers/freebuff/account-pool.ts` 契约适配层）
+    仍未接生产代码 —— 它与 RunManager 自身选号是双轨，接入要成立两套调度，理由与 D2「不搬家只薄包装」同；
+    `updateConfig` 热改 Token 仍待（凭据变更目前需重新 initialize）。
+
 - **P0 移植测试完整补齐与 T214 阶段门自动化指标全绿（2026-10-07）**：
   - **背景**：推进 T214 阶段门验收时，复核发现旧树中此前未移植至 4.22.4 树的 13 个关键单元/集成测试与
     T107 快照基础设施（`tests/snapshot/` 完整用例、scenarios 及 upstream/snapshots fixtures）遗漏，
@@ -274,14 +300,20 @@
     **T214 前置（需用户/外部提供）**：三源 E2E 需要 **Freebuff Token（`FREEBUFF_TOKENS`）** 与
     **WorkBuddy sidecar Go 二进制**（从 `F:/AI/Qdor/review/workbuddy2api-panel` 构建）；
     CommandCode 源 E2E 无前置。
-    **登记的遗留**：判定路径合一（modelAccess/限流的两套执行路径，见 T213b 卡）；
-    Freebuff 账号池接入路由（T203 遗留：preferredAccountId/onRetry 透传）。
-    **登记的独立小卡**（T213 收口尾项，避免混入数据面提交）：限流/modelAccess 双轨配置源
-    （bootstrap UnifiedConfigStore 后切源）、legacy 扁平分支明文行、Freebuff 账号池接入路由
-    （T203 遗留：preferredAccountId/onRetry 透传）。
+    **登记的遗留**：判定路径合一（modelAccess/限流的两套执行路径，见 T213b 卡）——**仍待**；
+    限流/modelAccess 双轨配置源与 legacy 扁平分支明文行——**已由 T213b 收口**。
+    **T203 账号池遗留**：`preferredAccountId` / `onRetry` 透传入选号 —— ✅ **已收口**
+    （`X-Upstream-Account` 端到端接线，见 §4）。**同卡另两项仍未做**：
+    ① `providers/freebuff/account-pool.ts` 的 `FreebuffAccountPool` 契约适配层仍未被生产代码引用
+    （评估后**不接**：与 RunManager 自身选号双轨，理由同 D2「不搬家只薄包装」）；
+    ② `FreebuffProvider.updateConfig` 仍不热改 Token（凭据变更需重新 initialize）。
     **注意**：T202 卡 DoD「Anthropic SDK 调 /v1/messages 通过」的协议层已由阶段 2 锁定
     （假 Provider 端到端），真上游联调待 Freebuff Token/sidecar 配置后补验。
-  - ⬜ 遗留小项：构建产物名仍为 `commandcode-proxy-v4.exe`，产品改名后待重命名（含 `build:win` 脚本与相关测试）。
+  - ✅ 遗留小项已办：构建产物改名 `dist/multi-upstream-gateway-v5.exe`（`build:win` + README 双语同步）。
+  - ⬜ **新登记（2026-10-08 发现，阻塞级）**：`tests/snapshot/scenarios.mjs` 曾被 `.gitignore` 的
+    `*.mjs` 吞掉、从未入库 —— 开发机上无感，全新克隆的 `typecheck`/`verify` 必红。本轮已补例外并重建
+    （逐字节比对通过），见 §4。**同类风险未根除**：任何新增的被测试/脚本引用的 `.mjs`，
+    提交前都要 `git check-ignore -v <file>` 复核（避坑 #2 已第三次踩中）。
 - **重启 9090 必须再次征得用户确认**（AGENTS.md 服务启停硬约束）。上线后用户会在面板点确认风险告知——在此之前 `/v1/*` 会 403。
 - **P1 后续**（移植完成后）：T202（Anthropic 桥——注意新树已有 `anthropic-response.ts`/`pipeline/`，须先评估复用而非另写）→ T203 → T204'（WorkBuddy 联邦透传，见 `docs/wb-source-diff-report.md` §7）→ T208~T212 面板五页 → T213 接线 → T214 阶段门。
 

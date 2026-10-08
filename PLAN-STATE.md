@@ -132,8 +132,15 @@
     会话端点恒 401 时 probe 稳定不健康（刻意不信任会话缓存，修掉 T201「缓存 active 但 Token 已吊销」漏判）
   - 凭据：新增 Token 落 T103 加密库（断言磁盘为 AES-256-GCM 密文、新实例可读回、与 commandcode 账号共库互不干扰）
   - 门禁：55 文件 / 709 用例全绿；typecheck 双工程 0 错误；lint 零输出
-  - 遗留（T213 接线）：`FreebuffAccountPool` 尚未接入 provider/路由；`preferredAccountId`/`onRetry` 未透传到选号；
-    面板账号页未消费 `snapshot()`；`updateConfig` 不热改 Token
+  - 遗留（T213 接线）——**2026-10-08 复核后的状态**：
+    ① ✅ `preferredAccountId`/`onRetry` 未透传到选号 —— **已收口**（`X-Upstream-Account` 端到端接线：
+    `routes/provider-dispatch.ts::resolvePreferredAccount` → chat/messages 两出口 →
+    `RunManager.acquire(agentId, preferredAccountId?)` 选号优先级；重试侧消费 `onRetry`。见本轮阶段记录）；
+    ② ✅ 面板账号页未消费 `snapshot()` —— **已由 T210 满足**（`FreebuffProvider.listAccounts()`
+    本身即基于 `runs.snapshots()`，`/api/providers/:name/accounts` 与面板多源账号页消费它）；
+    ③ ⬜ `FreebuffAccountPool`（`providers/freebuff/account-pool.ts`）尚未接入 provider/路由 ——
+    **评估后不接**：它与 RunManager 自身选号构成双轨，接入要同时成立两套调度，理由同 D2「不搬家只薄包装」；
+    ④ ⬜ `updateConfig` 不热改 Token（凭据变更需重新 initialize）—— 仍待。
 - [x] T203 Freebuff 账号池与凭据持久化（历史条目，已完成见上）
 - [x] T204' WorkBuddy 透传 Provider + Sidecar 管理（联邦，见 `docs/wb-source-diff-report.md` §7）
   - 完成：2026-10-07，提交 `47f8a3a`。按 §3.11-1/2 落地：
@@ -381,4 +388,29 @@ CommandCode（D2）两个 Provider 均已具备 IProvider 外壳，但**都尚�
 2. legacy 扁平分支 `syncEnvFile` 的 `COMMANDCODE_API_KEY` 明文行（unified 分支已由
    `stripEnvKeyLine` 摘除，仅旧形态残留）。
 3. `saveConfigFile` 旧扁平分支明文回写（unified 分支已走加密库）。
+
+## 阶段记录 — T203 账号池遗留收口与全新克隆门禁缺陷修复（2026-10-08）
+
+**背景**：接手复核时，把「唯一可用上游仍是 CommandCode」之外的遗留项逐条对照源码，发现两条与文档描述不一致：
+
+1. **`X-Upstream-Account` 契约空转**：`providers/core/interface.ts` 的 `ChatOptions` 定义了
+   `preferredAccountId` / `onRetry`，但 `src/routes/` 下 grep 零命中 —— 路由层从不解析账号指定头、
+   也从不构造这两个字段，Provider 侧自然也无从消费。本次将其打通（路由解析 → 两出口透传 →
+   `RunManager` 选号优先级 → 重试期 `onRetry` 回调决定下一轮账号），并把「指定不存在/已暂停账号」
+   定为**告警回退**而非失败。测试 `tests/freebuff-preferred-account.test.ts` 9 例。
+2. **`tests/snapshot/scenarios.mjs` 从未入库（阻塞级）**：`.gitignore:17` 的全局 `*.mjs` 规则把它吞掉，
+   而它是 T107 快照基建的场景单源（被 `tests/snapshot/helpers.ts`、`snapshot.test.ts`、
+   `tests/freebuff-snapshot.test.ts`、`scripts/collect-fixtures.mjs` 四路 import）。后果：
+   开发机上文件在磁盘（未跟踪）→ 门禁全绿；任何**全新克隆**跑 `npm run typecheck` 必报 3 条 `TS2307`。
+   这是避坑 #2 记录的 `*.mjs` 坑第三次复现。已补 `.gitignore` 例外并按契约重建该文件；
+   重建产物 `renderScenario('commandcode-chat-basic')` 与既有 upstream fixture **逐字节一致**（回放基线未被改写）。
+
+**另办**：构建产物 `build:win` 改名 `dist/multi-upstream-gateway-v5.exe`（README 中英双语同步）；
+对齐 `package-lock.json` 中滞留的上游包名/版本（`commandcode-proxy-v4`/4.22.4 → `multi-upstream-gateway`/5.0.3）。
+
+**门禁**：`npm run verify` **79 文件 / 993 用例全绿（1 skipped）**（984 + 新增 9 例）；`typecheck`
+双工程 0 错误（修复前 3 条 `TS2307`）；`lint` 零输出；`npm audit --omit=dev` **0 vulnerabilities**。
+
+**未做（有意，已登记）**：`FreebuffAccountPool` 不接入（双轨，理由同 D2）；`updateConfig` 热改 Token 仍待；
+T214 的三个外部 blocker（Freebuff 真实 Token / WorkBuddy sidecar Go 二进制 / 负责人 `DECISION` 签字）不变。
 

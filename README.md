@@ -172,7 +172,7 @@ npm run build && npm start
 或独立二进制：
 
 ```bash
-npm run build:win    # dist/commandcode-proxy-v4.exe —— 零依赖运行（打包需 Node ≥22）
+npm run build:win    # dist/multi-upstream-gateway-v5.exe —— 零依赖运行（打包需 Node ≥22）
 ```
 
 > [!TIP]
@@ -205,6 +205,19 @@ curl http://127.0.0.1:9090/v1/messages \
 ```bash
 curl "http://127.0.0.1:9090/v1/models?plan=individual-go&available=1"
 ```
+
+### 指定上游账号
+
+多上游数据面支持把**单次请求**钉到某个账号上——用于比较账号之间的额度/延迟，或在某个账号异常时手动把流量固定在健康的那一个：
+
+```bash
+curl http://127.0.0.1:9090/v1/chat/completions \
+  -H "X-Upstream-Account: token-2" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<freebuff 模型 id>","messages":[{"role":"user","content":"hi"}]}'
+```
+
+账号 ID 取自仪表盘「账号」页或 `GET /api/providers/<provider>/accounts`（Freebuff 形如 `token-2`）。**指定的账号不存在或已暂停时不会让请求失败**：网关回退到常规轮询，并在日志里留一行告警写明回退原因（`preferred account … not found / is paused`）。该头只对按账号调度的上游生效（当前为 Freebuff），其余 Provider 忽略它、行为与从前完全一致。
 
 ## 🚨 错误码与重试语义
 <a id="errors"></a>
@@ -527,6 +540,19 @@ npm run build:win              # standalone Windows exe
 ```
 
 On first launch the dashboard opens automatically. Log in via **Browser (OAuth)** or paste an API key; keys are also auto-loaded from `~/.commandcode/auth.json` or `COMMANDCODE_API_KEY`. Full config table: see the [中文配置](#config) section (env var names are identical).
+
+### Pin a request to an upstream account
+
+A single request can be pinned to one account with the `X-Upstream-Account` header — useful for comparing quota or latency between accounts, or for holding traffic on a healthy one while another misbehaves:
+
+```bash
+curl http://127.0.0.1:9090/v1/chat/completions \
+  -H "X-Upstream-Account: token-2" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<freebuff model id>","messages":[{"role":"user","content":"hi"}]}'
+```
+
+Account ids come from the dashboard's Accounts page or `GET /api/providers/<provider>/accounts` (for Freebuff, e.g. `token-2`). An unknown or paused id **never fails the request**: the gateway falls back to normal rotation and logs a warning naming the reason (`preferred account … not found / is paused`). The header only applies to providers that schedule per account (currently Freebuff); others ignore it and behave exactly as before.
 
 ### Error contract
 

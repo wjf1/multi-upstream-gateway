@@ -62,6 +62,47 @@
   （远超 ≥55% 门槛）；5 分钟自动化泄漏监控（`scripts/soak.mjs` 400 请求，RSS 净降 31.9MB）
   与 CommandCode / Freebuff 快照测试全部通过。
 
+### 新增（本轮收尾）
+
+- **指定上游账号（`X-Upstream-Account`）端到端接线** —— 收口 T203 登记的遗留「`preferredAccountId` /
+  `onRetry` 未透传到选号」。此前 `ChatOptions` 里的这两个字段在数据面**从未被赋值**
+  （`src/routes/` 下 grep 零命中），契约一直空转。
+  - 路由层：`routes/provider-dispatch.ts` 新增 `resolvePreferredAccount()` 解析 `X-Upstream-Account`
+    （重复头取首值、空白/非字符串视为未指定），`chat.ts` / `messages.ts` 两个出口经
+    `ProviderDispatchArgs.preferredAccountId` 透传；指定时留一行
+    `[DISPATCH] <provider> preferred account "<id>" requested` 便于排障。
+  - 选号：`RunManager.acquire(agentId, preferredAccountId?)` 与 `selectStartIndex()` 增加最高优先级
+    「指定账号」；命中且未暂停直接生效，**未命中或已暂停则告警并回退**到 selector / round-robin
+    —— 指定一个坏账号不该把一次请求升级成失败。
+  - 重试：`FreebuffProvider.chatCompletion` 在三类换号重试（`refresh_session` / `rotate_run` /
+    `cooldown_soft`）前调用 `opts.onRetry(attempt, err)`，返回值作为下一轮指定账号（契约与
+    `adapters/commandcode/upstream.ts` 的 `onRetry` 对齐：返回值而非出参）；回调自身抛错只告警，
+    不影响本轮重试决策。
+  - 边界：该头只对按账号调度的 Provider 生效（当前为 Freebuff），其余 Provider 忽略、零回归。
+  - 测试：`tests/freebuff-preferred-account.test.ts` 9 例（头解析 3 例 + 命中/未命中/暂停回退 +
+    `onRetry` 生效 / 返回 undefined / 抛错）。
+
+### 🐛 修复（本轮）
+
+- **`tests/snapshot/scenarios.mjs` 从未入库，导致全新克隆的 `typecheck` / `verify` 必红**（阻塞级）。
+  `.gitignore` 的全局 `*.mjs` 规则把它静默吞掉——而它与 `scripts/collect-fixtures.mjs`、
+  `tests/snapshot/helpers.ts` 及两个快照用例共同构成 T107 基建。后果是：开发机上文件只在磁盘
+  （未跟踪）→ 门禁全绿；任何**全新克隆**跑 `npm run typecheck` 会报 3 条 `TS2307`，快照套件
+  import 失败。这是 HANDOFF §6 避坑 #2 记录的 `*.mjs` 坑**第三次复现**（前两次在 `*.mjs` 脚本清单上）。
+  - `.gitignore` 补例外 `!tests/snapshot/scenarios.mjs`（附注释说明为何必须入库）。
+  - 按调用契约重建该文件（`sentinelFor` / `scenarioNameFromBody` / `renderScenario` / `CC_SCENARIOS`），
+    并把 `renderScenario('commandcode-chat-basic')` 的产出与既有 upstream fixture 做**逐字节比对**
+    （通过）——录制路径与回放基线一致，未改写任何 fixture。
+- **`package-lock.json` 的包名/版本停留在上游 4.22.4**：`name` 仍是 `commandcode-proxy-v4`、`version`
+  仍是 `4.22.4`，与 `package.json`（`multi-upstream-gateway` / 5.0.3）不一致；任何一次 `npm install`
+  都会重写它，把与改动无关的噪声混进 diff。已对齐为当前包名与版本。
+
+### 🔧 变更（本轮）
+
+- **构建产物改名**：`build:win` 输出由 `dist/commandcode-proxy-v4.exe` 改为
+  **`dist/multi-upstream-gateway-v5.exe`**（README 中英双语的构建说明同步更新）。
+  该文件名未被 `.github/workflows/` 引用，CI 无需联动。
+
 ### 变更说明
 
 - 三个 Provider（CommandCode/Freebuff/WorkBuddy）外壳均已就位，但**尚未接入运行时**——
@@ -76,6 +117,9 @@
   `npm audit --omit=dev` **0 vulnerabilities**；
   `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
 - 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）。
+- **本轮收尾**（账号指定接线 + `scenarios.mjs` 入库修复 + 产物改名）：`npm run verify`
+  **79 文件 / 993 用例全绿（1 skipped）**（984 + 新增 9 例）；`npm run typecheck` 双工程 0 错误
+  （**修复前为 3 条 `TS2307`**）；`npm run lint` 零输出；`npm audit --omit=dev` **0 vulnerabilities**。
 
 ## [5.0.3] - 2026-10-07
 
