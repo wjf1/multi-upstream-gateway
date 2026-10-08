@@ -4,6 +4,41 @@
 
 ## [Unreleased]
 
+## [5.0.7] - 2026-10-08
+
+> 补丁版：把 T302 已交付却一直没渲染的 WorkBuddy 积分镜像接到面板上（F07 的最后一小块），并修掉一条
+> 满负载下会误报的测试超时。本版之后 **P3 仍不开工** —— T310 阶段门剩下的三项都卡在外部依赖
+> （真实 WorkBuddy 账号 / `FREEBUFF_TOKENS`）。
+
+### 新增
+
+- **WorkBuddy 账号池「积分条」面板（F07 收口）** —— T302 交付的是 `/api/upstreams/workbuddy/balance`
+  只读镜像与 `data/state.json` 持久化，面板一直没渲染：运维能看出账号在不在，看不出还剩多少积分。
+  现在「多上游账号」页的 WorkBuddy 卡片底部多出积分面板：
+  - 每号一条进度条（余量 / 总量 + 百分比），≤10% 转 rose、≤30% 转 amber、其余 emerald，带
+    `role="progressbar"` 与 `aria-valuenow`；
+  - 「即将过期」单独一行（`creditsExpiring` + 最早过期日）；
+  - 池状态三态徽章（暂停 / 停用 / 冷却中）—— 这三个字段后端早已落盘，此前面板完全不显示；
+  - 「刷新积分」按钮走 `POST /api/upstreams/workbuddy/balance/refresh`（真正的刷新执行者是 sidecar，
+    网关只做镜像 + 原子持久化）；sidecar 不可用时如实报错并保留上次已知值，不谎报成功。
+  - **两条语义红线**（`balance-watch.ts` 源码注释里明写的口径，本版在渲染层落实）：
+    1. **未知 ≠ 0**：`credits` / `creditsTotal` 缺失时**不画进度条**（更不把 `undefined` 当 0 算成
+       「已用光」），只报余量原值或 `—`；`creditsTotal <= 0` 同样算不出百分比，退化为纯文本余量。
+    2. **degraded 必须显式标红**：镜像不可信（从未成功 / 连续失败 / 损坏未重建）时，这批数字只是
+       「最后一次已知值」，面板显式标红并带出 `degradedReason`，不当实时余额展示。
+  - 全部动态文本（昵称 / uid / 失败原因）过 `esc`；刷新按钮走既有事件委托（`data-wb-action`），
+    不新增内联 `onclick`、不新增静态 id 引用，避免撞 `dashboard-spa.test.ts` 的两条正则守卫。
+  - 测试：新增 `tests/workbuddy-f07-balance-panel.test.ts` 17 例，其中 8 例为**运行时求值** —— 用
+    `new Function` 真跑面板渲染函数，把「未知 ≠ 0」「degraded 标红」「XSS 转义」等语义变成可执行断言，
+    而不是只对源码打正则（静态正则改不动行为，运行时断言可以）。
+
+### 🐛 修复
+
+- **`tests/usage-surfacing.test.ts` 的 `beforeAll` 在满负载下假红**（2026-10-08 实测）：该 hook 要串行
+  发 205 次完整请求再轮询落库，隔离单跑就 6.3s，而 vitest 默认 `hookTimeout` 是 10s —— 整机被其余 93 个
+  测试文件（或同时跑的 `tsc` / `eslint`）抢满时会超时报 `Hook timed out in 10000ms`，并把同文件用例
+  连带标成 skipped，看起来像真实回归。现显式给到 60s。**纯测试稳定性修复，不改变任何生产行为**。
+
 ## [5.0.6] - 2026-10-08
 
 > 补丁版：P1 收口（T301~T308）与 T203/T302 遗留一并发布，并修复 WorkBuddy sidecar 与**真实 Go 二进制**

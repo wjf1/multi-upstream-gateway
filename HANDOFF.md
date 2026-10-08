@@ -143,9 +143,9 @@
     sidecar 真机链路已通（拉起 / 配置落盘 / `/status` 200 / `/healthz` 语义正确），剩余受阻为
     **真实 WorkBuddy 账号**（OAuth 人工授权与压测前提）与 **`FREEBUFF_TOKENS`**（F03 FB 侧）。
     OAuth 编排逻辑本身已由 `workbuddy-t301.test.ts`（mock sidecar）覆盖。
-  - **另登记一处能力缺口**：**F07「WorkBuddy 积分条面板 UI」未接线** —— T302 交付的是后端持久化与
-    `GET /api/upstreams/workbuddy/balance` 只读镜像，面板尚未消费该端点渲染积分条（账号池可视化与 CC
-    额度条已在面板）。这属后续小卡，非 T302 卡内 DoD。
+  - ~~**另登记一处能力缺口**：**F07「WorkBuddy 积分条面板 UI」未接线**~~ —— **已于 v5.0.7 收口**
+    （2026-10-08）：`public/js/accounts.js` 已消费 `GET /api/upstreams/workbuddy/balance` 渲染积分条
+    （详见 §4 的 v5.0.7 发布段）。
   - **`DECISION: continue`（✅ 2026-10-08 项目负责人签字确认）**：签字后开工 P3；受阻的 F06/F03/压测项经授权安装 Go 工具链后继续闭环。
   - ⚠️ 本轮**仅文档（阶段记录）变更**，无代码变更。
 
@@ -509,6 +509,29 @@
     `updateConfig` 热改 Token ✅ 已收口；`FreebuffAccountPool` 契约适配层 ⬜ **有意不接**
     （与 RunManager 自身选号双轨，理由同 D2「不搬家只薄包装」，已在文档登记）。
 
+- **v5.0.7 发布（2026-10-08）—— F07 积分条面板接线 + 测试超时稳定性**：
+  - **发布内容**：① **F07 收口** —— T302 交付了 `/api/upstreams/workbuddy/balance` 只读镜像与池状态持久化，
+    但面板一直没渲染，运维能看出账号在不在、看不出还剩多少积分。本版在 `public/js/accounts.js` 渲染出
+    WorkBuddy 积分面板：每号余量进度条（≤10% rose / ≤30% amber / 其余 emerald，带 `role="progressbar"` +
+    `aria-valuenow`）、「即将过期」单列一行、**暂停 / 停用 / 冷却中三态徽章**（后端早已落盘、面板此前不显示）、
+    「刷新积分」按钮走 `POST /api/upstreams/workbuddy/balance/refresh`（真刷新执行者是 sidecar，网关只做镜像；
+    sidecar 不可用时如实报错并保留上次已知值）。**两条语义红线在渲染层落实**：`credits`/`creditsTotal`
+    缺失**不画进度条**（不把 `undefined` 当 0 算成「已用光」），`creditsTotal <= 0` 同样退化纯文本余量；
+    `degraded === true`（镜像不可信）显式标红并带出 `degradedReason`。动态文本一律 `esc`，刷新走既有
+    `data-wb-action` 事件委托（不新增内联 `onclick` / 不新增静态 id 引用，避开 `dashboard-spa.test.ts`
+    的两条正则守卫）。
+    ② **测试超时修复**：`tests/usage-surfacing.test.ts` 的 `beforeAll` 串行发 205 次完整请求 + 轮询落库，
+    隔离跑 6.3s，vitest 默认 `hookTimeout` 10s → 整机满负载时误报 `Hook timed out in 10000ms` 并把同文件
+    用例连带标 skipped（2026-10-08 实测一次假红；该文件与本卡改动无关，单跑 3/3 绿）。现显式给到 60s。
+  - **流程**：版本号 5.0.6 → 5.0.7（`package.json` + `package-lock.json`）；`CHANGELOG` 的 `[Unreleased]`
+    收为 `## [5.0.7] - 2026-10-08`（新增 → 修复）；annotated tag subject
+    `v5.0.7: WorkBuddy 积分条面板接线与 F07 收口`；push 后 Release workflow 自动建 Release
+    （核验必带 `--repo wjf1/multi-upstream-gateway`，见 §6 第 14 条）。
+  - **发布前门禁**：`npm run verify` **94 文件 / 1148 用例全绿（1 skipped，共 1149）**、`typecheck` 双工程
+    0 错误、`lint` 零输出、`npm audit --omit=dev` 0 漏洞。
+  - **注意**：本版**不解除 T310 阶段门**，P3 仍不开工 —— 剩余受阻项为真实 WorkBuddy 账号（OAuth 人工授权
+    + 100 并发压测前提）与 `FREEBUFF_TOKENS`（F03 的 FB 侧视觉矩阵）。
+
 - **v5.0.6 发布（2026-10-08）—— P1 收口 + WorkBuddy sidecar 真机契约修复**：
   - **发布内容**：① P1 任务卡 T301~T308 与 T203 遗留（Freebuff 配置热重载参保新 Token）、T302
     （余额刷新与池状态持久化）一并进发行版；② **WorkBuddy sidecar 启动契约修复**（真机演练发现）——
@@ -680,11 +703,13 @@
   - ✅ **P2/P3 已完成十卡**：`T213`（阶段 1 `9b98d9d` + 阶段 2 `af6db03`）、`T213b`（`5658065`）、`T303`（`49c4f65`）、
     `T304`（`4e8e2ee`）、`T305`（`bd27fe0`）、`T306`（`504d70d`）、`T307`（`307d751`）、`T308`（`b5b3b1e`）、
     `T301` WorkBuddy OAuth 设备授权与令牌看护（`b8b0c37`）、`T302` 余额刷新与池状态持久化（`00005e4`）。
-  - ⚠️ **当前卡：`T310` P2 阶段门 —— 部分完成（自动项全绿，2 项外部依赖受阻，见 §4 首条）**：
+  - ⚠️ **当前卡：`T310` P2 阶段门 —— 自动项全绿 + F07 已闭环，剩 2 项外部依赖受阻（见 §4 首条）**：
     自动化验收项（回归 / 覆盖率 80.21% / audit 0 / typecheck / lint / 安全复测 88 例）**全部为绿**；
-    **受阻**：F06 WorkBuddy OAuth 真机演练、100 并发 WB 池 P99<2s 压测、F03 的 FB/WB 视觉矩阵。
+    **F07 账号池可视化 + 积分条已于 v5.0.7 收口**（面板已消费 `/api/upstreams/workbuddy/balance`）；
+    **仍受阻**：F06 WorkBuddy OAuth 真机演练、100 并发 WB 池 P99<2s 压测、F03 的 FB/WB 视觉矩阵。
     其中「无 Go 工具链 / 无 sidecar 二进制」的根因**已于 2026-10-08 同日解除**（真机链路打通），
-    剩余受阻为**真实 WorkBuddy 账号**与 **`FREEBUFF_TOKENS`**。另有 **F07 WorkBuddy 积分条面板 UI 未接线**（小卡）。
+    剩余受阻为**真实 WorkBuddy 账号**与 **`FREEBUFF_TOKENS`**。（**F07 WorkBuddy 积分条面板 UI 已于
+    v5.0.7 收口**，不再是缺口。）
     `DECISION: continue`（✅ 2026-10-08 项目负责人签字确认）。
   - ⬜ **P1 阶段门 `T214`（仍卡外部 blocker）**：三源 E2E 需 **Freebuff Token（`FREEBUFF_TOKENS`）** 与
     **真实 WorkBuddy 账号**（sidecar 二进制已构建并就绪，真机 `/status` 200）；`DECISION` 行已获签字。

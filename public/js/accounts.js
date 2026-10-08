@@ -122,6 +122,8 @@ function quotaBadge(u) {
 let wbPendingRefresh = new Set();   // 刷新连续失败、需重新授权的账号 id
 let wbRealmChoice = 'cn';           // 最近一次选择的 realm（重渲染后保留）
 let wbLoginBusy = false;            // 授权轮询进行中（防重复发起）
+let wbBalanceSnapshot = null;       // F07：最近一次 GET /api/upstreams/workbuddy/balance 的快照
+let wbBalanceBusy = false;          // 手动刷新进行中（防重复点击）
 
 function workbuddyAddFooter() {
   return '<div class="flex items-center gap-2 pt-1">' +
@@ -167,6 +169,83 @@ async function startWorkBuddyLogin() {
   } finally { wbLoginBusy = false; }
 }
 
+// ─── F07：WorkBuddy 账号池可视化的「积分条」──────────────────────────────────
+// 数据源 GET /api/upstreams/workbuddy/balance（T302 的只读镜像；真正的刷新执行者是
+// sidecar，网关只是镜像 + 原子持久化）。两条语义红线：
+// 1. **未知 ≠ 0**：credits / creditsTotal 缺失时画不成进度条，也不能把 undefined 当 0
+//    算成「已用光」；creditsTotal <= 0 同样算不出百分比。此时只报余量原值（可能也是「—」）。
+// 2. **degraded 必须显式标红**：镜像不可信（从未成功 / 连续失败 / 损坏未重建）时，
+//    这批数字只是最后一次已知值，不能当实时余额展示。
+function formatCredits(v) {
+  return typeof v === 'number' && Number.isFinite(v) ? String(Math.round(v)) : '—';
+}
+
+function creditsBar(entry) {
+  const { credits, creditsTotal } = entry;
+  if (typeof credits !== 'number' || typeof creditsTotal !== 'number' || creditsTotal <= 0) {
+    return '<p class="text-xs text-slate-400">余量：<span class="text-slate-200 font-semibold">' + esc(formatCredits(credits)) + '</span></p>';
+  }
+  const pct = Math.max(0, Math.min(100, Math.round(credits / creditsTotal * 100)));
+  const tone = pct <= 10 ? 'bg-rose-500' : (pct <= 30 ? 'bg-amber-500' : 'bg-emerald-500');
+  const expiring = typeof entry.creditsExpiring === 'number' && entry.creditsExpiring > 0
+    ? '<p class="text-[10px] text-amber-300">即将过期：' + esc(formatCredits(entry.creditsExpiring)) + ' 积分' +
+      (typeof entry.earliestExpiry === 'number' ? '（最早 ' + esc(new Date(entry.earliestExpiry).toLocaleDateString()) + '）' : '') + '</p>'
+    : '';
+  return '<div class="space-y-1">' +
+    '<div class="flex items-center justify-between text-xs text-slate-400"><span>余量 <span class="text-slate-200 font-semibold">' +
+    esc(formatCredits(credits)) + '</span> / ' + esc(formatCredits(creditsTotal)) + '</span><span>' + pct + '%</span></div>' +
+    '<div class="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '">' +
+    '<div class="h-full ' + tone + '" style="width:' + pct + '%"></div></div>' + expiring + '</div>';
+}
+
+/** 池状态徽章（T302 落盘的 paused/disabled/cooling 三态，此前只有后端有）。 */
+function poolStateBadges(entry) {
+  const out = [];
+  if (entry.paused) out.push(badge('暂停', 'amber', '该账号在池中被暂停，不参与派发'));
+  if (entry.disabled) out.push(badge('停用', 'rose', '该账号已停用（凭据失效或人工摘除）'));
+  if (entry.cooling) out.push(badge('冷却中', 'slate', '连续失败进入冷却，冷却期内不派发'));
+  return out.join(' ');
+}
+
+function workbuddyBalancePanel(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.accounts)) return '';
+  const degraded = snapshot.degraded === true;
+  const head = '<div class="flex items-center justify-between">' +
+    '<p class="text-xs font-bold text-slate-300">WorkBuddy 账号池 · 积分</p>' +
+    '<button type="button" data-wb-action="refresh-balance" aria-label="立即刷新 WorkBuddy 积分镜像"' +
+    (wbBalanceBusy ? ' disabled' : '') +
+    ' class="text-[10px] px-2 py-1 rounded border border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700 transition">' +
+    (wbBalanceBusy ? '刷新中…' : '刷新积分') + '</button></div>' +
+    '<p class="text-[10px] text-slate-500">最近成功刷新：' +
+    esc(snapshot.refreshedAt ? new Date(snapshot.refreshedAt).toLocaleString() : '—') +
+    ' · 间隔 ' + esc(Math.round((Number(snapshot.intervalMs) || 0) / 60000)) + ' 分钟</p>';
+  const warn = degraded
+    ? '<p class="text-xs text-rose-300"><i aria-hidden="true" class="fa-solid fa-triangle-exclamation"></i> 积分镜像不可信（' +
+      esc(snapshot.degradedReason || '刷新失败') + '），下面是最后一次已知值</p>'
+    : '';
+  const rows = snapshot.accounts.length
+    ? '<div class="space-y-2">' + snapshot.accounts.map(e => {
+        const title = e.nickname || e.uid || '（未命名）';
+        return '<div class="inset-card rounded-lg px-3 py-2 space-y-1">' +
+          '<div class="flex items-center justify-between gap-2"><span class="text-xs text-slate-200">' + esc(title) + '</span>' +
+          '<span class="flex items-center gap-1">' + poolStateBadges(e) + '</span></div>' +
+          creditsBar(e) + '</div>';
+      }).join('') + '</div>'
+    : '<p class="text-xs text-slate-500">池内暂无账号（积分镜像为空）</p>';
+  return '<div class="space-y-2 border-t border-slate-800/80 pt-2 mt-2">' + head + warn + rows + '</div>';
+}
+
+async function refreshWorkBuddyBalance() {
+  if (wbBalanceBusy) return;
+  wbBalanceBusy = true;
+  try {
+    const r = await apiJson('/api/upstreams/workbuddy/balance/refresh', { method: 'POST' });
+    if (r.ok) showToast('WorkBuddy 积分已刷新', 'success');
+    else showToast('刷新积分失败：' + (r.error || 'sidecar 暂不可用，镜像保持上次已知值'), 'error');
+  } finally { wbBalanceBusy = false; }
+  loadMultiSourceAccounts();
+}
+
 function bindWorkBuddyActionsOnce() {
   const body = document.getElementById('multiSourceAccountsBody');
   if (!body || body.dataset.wbBound) return;
@@ -175,6 +254,7 @@ function bindWorkBuddyActionsOnce() {
     const btn = e.target instanceof Element ? e.target.closest('[data-wb-action]') : null;
     if (!btn) return;
     if (btn.dataset.wbAction === 'login') void startWorkBuddyLogin();
+    else if (btn.dataset.wbAction === 'refresh-balance') void refreshWorkBuddyBalance();
   });
   body.addEventListener('change', (e) => {
     const sel = e.target;
@@ -194,9 +274,15 @@ async function loadMultiSourceAccounts() {
   }
   // T301：取「待刷新」集合（刷新连续失败需重新授权的号），供账号行徽章使用。
   wbPendingRefresh = new Set();
+  wbBalanceSnapshot = null;
   if (providers.some(p => p.name === 'workbuddy')) {
-    const t = await apiJson('/api/upstreams/workbuddy/tokens');
+    // 待刷新集合与积分镜像并行取：镜像失败只降级（不渲染积分条），不阻塞账号列表。
+    const [t, b] = await Promise.all([
+      apiJson('/api/upstreams/workbuddy/tokens'),
+      apiJson('/api/upstreams/workbuddy/balance'),
+    ]);
     if (t.ok && t.data && Array.isArray(t.data.pendingRefresh)) wbPendingRefresh = new Set(t.data.pendingRefresh);
+    if (b.ok && b.data) wbBalanceSnapshot = b.data;
   }
   const parts = await Promise.all(providers.map(async p => {
     const r = await apiJson('/api/providers/' + encodeURIComponent(p.name) + '/accounts');
@@ -211,7 +297,8 @@ async function loadMultiSourceAccounts() {
           esc(a.apiKey || '凭据不出上游侧') + '</span></div>').join('') + '</div>'
       : '<p class="text-xs text-slate-500">该上游暂无账号' + (isWb ? '（点击下方「添加账号（授权）」完成 OAuth 登录）' : '') + '</p>';
     return '<div class="space-y-2"><p class="text-xs font-bold text-slate-300">' + esc(p.displayName) +
-      '（' + esc(p.name) + '）· ' + rows.length + ' 个账号</p>' + list + (isWb ? workbuddyAddFooter() : '') + '</div>';
+      '（' + esc(p.name) + '）· ' + rows.length + ' 个账号</p>' + list +
+      (isWb ? workbuddyBalancePanel(wbBalanceSnapshot) + workbuddyAddFooter() : '') + '</div>';
   }));
   body.innerHTML = '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' + parts.join('') + '</div>';
   bindWorkBuddyActionsOnce();

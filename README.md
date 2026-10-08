@@ -49,10 +49,13 @@ Freebuff 模块已移植入树但**尚未接入运行时**，详见[项目状态
 ## 🚦 项目状态
 <a id="status"></a>
 
-**当前版本：v5.0.6**（2026-10-08）—— 版本线自 v5.0.0 起另起产品序列，勿与上游 `commandcode-proxy` 的
+**当前版本：v5.0.7**（2026-10-08）—— 版本线自 v5.0.0 起另起产品序列，勿与上游 `commandcode-proxy` 的
 v4.22.x 混用；完整发布记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/wjf1/multi-upstream-gateway/releases)。
-本版为补丁版：收口 P1 任务卡（T301~T308）与 T203/T302 遗留，并修复 WorkBuddy sidecar 与真实 Go
-二进制之间的启动契约断点（启动参数只认 `-config`、空池 `/healthz` 503 不再被误判为崩溃）。
+本版为补丁版：把 T302 已交付的 WorkBuddy 积分镜像接到面板上（**F07 积分条 UI 收口**——「多上游账号」页的
+WorkBuddy 卡片现在会显示每号余量进度条、即将过期积分与「暂停 / 停用 / 冷却中」三态徽章，并提供「刷新积分」
+按钮；**未知 ≠ 0**、**镜像不可信时显式标红**两条语义红线在渲染层落实）。前一版 v5.0.6 收口了 P1 任务卡
+（T301~T308）与 T203/T302 遗留，并修复 WorkBuddy sidecar 与真实 Go 二进制之间的启动契约断点
+（启动参数只认 `-config`、空池 `/healthz` 503 不再被误判为崩溃）。
 
 **P0 语义移植（Phase A~F）已完成并部署**（2026-10-07）：
 
@@ -481,10 +484,14 @@ with a built-in Chinese dashboard, usage & cost analytics, multi-account quota r
 
 ### <a id="status-en"></a>Project status
 
-**Current version: v5.0.6** (2026-10-08) — the product version line starts at v5.0.0; do not mix it with the
+**Current version: v5.0.7** (2026-10-08) — the product version line starts at v5.0.0; do not mix it with the
 upstream `commandcode-proxy` v4.22.x. Full release history: [CHANGELOG](CHANGELOG.md) and
-[Releases](https://github.com/wjf1/multi-upstream-gateway/releases). This is a patch release: it lands the
-P1 task cards (T301~T308) plus the T203/T302 leftovers, and fixes the launch contract between the gateway
+[Releases](https://github.com/wjf1/multi-upstream-gateway/releases). This is a patch release that wires the
+WorkBuddy credit mirror shipped by T302 into the panel (**closing out the F07 credit-bar UI** — the WorkBuddy
+card on the "Multi-upstream accounts" page now shows a per-account credit progress bar, expiring credits, and
+the paused / disabled / cooling badges, plus a "refresh credits" button; two semantic red lines are enforced
+in the renderer: **unknown ≠ 0** and **an untrusted mirror is flagged in red**). The previous v5.0.6 landed the
+P1 task cards (T301~T308) plus the T203/T302 leftovers, and fixed the launch contract between the gateway
 and the **real** WorkBuddy Go sidecar binary (the binary only accepts `-config <path>`, and an empty-pool
 `/healthz` 503 is no longer mistaken for a crashed process).
 

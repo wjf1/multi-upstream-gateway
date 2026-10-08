@@ -352,14 +352,20 @@
     - [ ] F06 WB OAuth 全流程 + 预刷 + 待刷新态：**sidecar 真机链路已打通**（拉起 / 配置落盘 / `/status` 200 /
       `/healthz` 语义正确），**仍待人工步骤**——需真实 WorkBuddy 账号在浏览器完成 OAuth 授权（授权编排逻辑
       已由 `workbuddy-t301.test.ts` 覆盖）
-    - [ ] F07 账号池可视化 + 积分条：账号池可视化与 CC 额度条已在面板；**WorkBuddy 积分条 UI 未接线**
-      （T302 交付的是 `data/state.json` 持久化与 `/api/upstreams/workbuddy/balance` 只读镜像，未加面板渲染）
+    - [x] F07 账号池可视化 + 积分条：**已接线（2026-10-08，v5.0.7）**——账号池可视化与 CC 额度条此前已在面板；
+      WorkBuddy 积分条本轮补齐：每号余量进度条（≤10% rose / ≤30% amber，带 `role="progressbar"` + `aria-valuenow`）、
+      「即将过期」单列、「暂停/停用/冷却中」三态徽章、「刷新积分」按钮（`POST /api/upstreams/workbuddy/balance/refresh`）。
+      两条语义红线在渲染层落实：**未知 ≠ 0**（`credits`/`creditsTotal` 缺失或 `<=0` 时**不画进度条**，不把 undefined
+      当 0 算成「已用光」）；**degraded === true 显式标红**并带出 `degradedReason`。
+      取证：`tests/workbuddy-f07-balance-panel.test.ts` 17 例（其中 8 例用 `new Function` **真跑渲染函数**做运行时断言）
     - [ ] 100 并发 WB 池无惊群 P99<2s：**BLOCKED —— 需池内有真实账号**（空池只会立即 503，测不出真实数据面）；
       参考值：P0-PORT-F 阶段 CommandCode 50 并发 P99 126ms、T310 之前 100 并发无惊群项尚无 WB 实测
   - BLOCKED（更新于 2026-10-08）：Go 工具链与 sidecar 二进制**已解决**；剩余受阻项为
-    **真实 WorkBuddy 账号（OAuth 人工授权 + 压测前提）**、**`FREEBUFF_TOKENS`（F03 FB 侧视觉矩阵）**、**F07 积分条 UI 小卡**
+    **真实 WorkBuddy 账号（OAuth 人工授权 + 压测前提）**、**`FREEBUFF_TOKENS`（F03 FB 侧视觉矩阵）**
+    （**F07 积分条 UI 小卡已于 v5.0.7 收口，不再受阻**）
   - **DECISION: continue**（✅ 2026-10-08 项目负责人签字确认；本阶段自动化验收项全绿，外部依赖项经授权安装 Go 工具链后继续闭环）
-  - 说明：按 §0.4「Gate 不过不得开始下一阶段」，P3（T401 起）在 F06/F07/并发项闭环前**不得开工**
+  - 说明：按 §0.4「Gate 不过不得开始下一阶段」，P3（T401 起）在 F06/并发项闭环前**不得开工**
+    （F07 已闭环，剩余两项均卡外部依赖：真实 WorkBuddy 账号、`FREEBUFF_TOKENS`）
 - [ ] T309（基准方案中不存在此卡，疑为笔误）/ T401~T406 / T501~T505（见执行依据方案）
 
 ## 4. 阶段记录
@@ -666,7 +672,7 @@ Release 由 workflow 自动创建。门禁：`verify` **80 文件 / 1003 用例�
 - F04 strict/auto/same-model —— `routing-advanced.test.ts` + `t214-strict-degradation.test.ts`
 - F05 X-Upstream-Account + 审计留痕 —— `routing-advanced.test.ts`（`x-upstream-account` → 审计 `accountId`）
 - F06 WB OAuth 全流程 —— `workbuddy-t301.test.ts`（mock）；真机演练 ⛔
-- F07 账号池可视化 + 积分条 —— 账号池与 CC 额度条在面板；WB 积分条 UI 未接线 ⛔
+- F07 账号池可视化 + 积分条 —— 「WB 积分条 UI 未接线 ⛔」**已于 v5.0.7 收口**（见文末「追加记录 — F07 收口」）
 - F08 Freebuff 等待室 —— `freebuff-waiting-room.test.ts`
 - F09 级联防护（ramp/摘除/队列/首字节）—— `degradation.test.ts`
 
@@ -706,3 +712,41 @@ sidecar 日志 `listening on 127.0.0.1:8788` + 管理面板 `http://127.0.0.1:87
 **T310 三项受阻项的现状**：① **sidecar 构建/拉起已解除**（真机 `/status` 200，面板与 Bearer 链路可用）；
 ② F06 只差**人工 OAuth 授权**（需真实 WorkBuddy 账号在浏览器完成）；③ 100 并发 WB 池压测与 F03 的 FB 侧
 分别需要**池内真实账号**与 **`FREEBUFF_TOKENS`**。F07 积分条面板 UI 仍为独立小卡。
+
+## 追加记录 — F07 收口（2026-10-08，v5.0.7）
+
+**做了什么**：把 T302 已交付、却一直没被面板消费的 WorkBuddy 积分镜像接到 UI 上。T302 的交付物是
+`data/state.json` 持久化 + `GET /api/upstreams/workbuddy/balance` 只读镜像（真正的刷新执行者是 sidecar，
+网关只做镜像 + 原子持久化），面板侧当时未渲染 —— 于是运维能看出「账号在不在」，看不出「还剩多少积分」。
+
+**改动**：`public/js/accounts.js`（唯一生产文件）新增 `formatCredits` / `creditsBar` / `poolStateBadges` /
+`workbuddyBalancePanel` / `refreshWorkBuddyBalance`，并接入三处：`loadMultiSourceAccounts`（`Promise.all`
+并行取 `tokens` + `balance`，镜像失败只降级不阻塞账号列表）、`bindWorkBuddyActionsOnce`（`data-wb-action`
+事件委托新增 `refresh-balance` 分支）、parts 模板（WorkBuddy 卡片底部插入积分面板）。
+
+**两条语义红线**（`src/providers/workbuddy/balance-watch.ts` 源码注释里明写的口径，本轮在渲染层落实）：
+
+| 红线 | 违反后果 | 本轮做法 |
+|---|---|---|
+| **未知 ≠ 0** | 把缺失的 `credits` 当 0 渲染成「0 积分 / 已用光」，误导运维立刻去充值 | `credits` 或 `creditsTotal` 非有限数、或 `creditsTotal <= 0` 时**不画进度条**，退化为纯文本余量（本身也可能是 `—`） |
+| **degraded 必须显式标红** | 镜像不可信（从未成功 / 连续失败 / 损坏未重建）时把「最后一次已知值」当实时余额展示 | `degraded === true` 时面板顶部红色告警行 + 带出 `degradedReason` |
+
+**取证**：`tests/workbuddy-f07-balance-panel.test.ts` 17 例全绿，其中 **8 例为运行时求值** —— 复用
+`spa-search-functions.test.ts` 的 `extractFn` / `extractArrowConst` 手法，把面板渲染函数与 `esc` 一起塞进
+`new Function` **真跑**，直接对「未知不画进度条」「`creditsTotal=0` 不画进度条」「正常余量出
+`aria-valuenow="25"`」「degraded 标红且 `<img src=x>` 被转义」「三态徽章各出一枚」「空池/非法入参返回 `''`
+不崩」做可执行断言。理由：**静态正则改不动行为，运行时断言可以**（本轮就靠它抓到一次假阳性——用 `[`
+计徽章会被 Tailwind 的 `text-[10px]` 干扰，改为 `{{` 计数后通过）。
+
+**同时修复**：`tests/usage-surfacing.test.ts` 的 `beforeAll` 满负载假红 —— 该 hook 串行发 205 次完整请求 +
+轮询落库，隔离跑 6.3s，vitest 默认 `hookTimeout` 10s，整机被其余 93 个文件（或并跑的 `tsc`/`eslint`）抢满时
+报 `Hook timed out in 10000ms` 并把同文件用例连带标 skipped（单跑 3/3 绿，判定为抖动）。现显式给到 60s。
+
+**门禁（本轮后）**：`npm run verify` **94 文件 / 1148 用例全绿（1 skipped，共 1149）**；`typecheck` 双工程
+0 错误；`lint` 零输出；`npm audit --omit=dev` **0 vulnerabilities**。运行中的 9090 服务**无需重启**
+即对外提供新 `accounts.js`（静态资源直接来自磁盘，实测 `curl http://127.0.0.1:9090/js/accounts.js` → 200
+且含 `data-wb-action="refresh-balance"`）。
+
+**T310 剩余受阻项（未变）**：① F06 只差**人工 OAuth 授权**（需真实 WorkBuddy 账号在浏览器完成）；
+② 100 并发 WB 池压测需**池内真实账号**；③ F03 的 FB 侧视觉矩阵需 **`FREEBUFF_TOKENS`**。
+**P3 仍不开工**（按 §0.4，Gate 未全过）。

@@ -83,7 +83,9 @@ beforeAll(async () => {
   while (getUsageHistory().length < RECORDS && Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 50));
   }
-});
+  // 这个 hook 要串行发 205 次完整请求再等落库，隔离跑就 6.3s；默认 10s hookTimeout 在整机满负载
+  // （其余 93 个测试文件并行、还可能同时跑 tsc/lint）时会误判成失败——2026-10-08 实测过一次假红。
+}, 60_000);
 
 afterAll(async () => {
   await app?.close();
