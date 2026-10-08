@@ -4,6 +4,36 @@
 
 ## [Unreleased]
 
+## [5.0.6] - 2026-10-08
+
+> 补丁版：P1 收口（T301~T308）与 T203/T302 遗留一并发布，并修复 WorkBuddy sidecar 与**真实 Go 二进制**
+> 之间两处契约断点（真机演练发现，mock 单测掩盖）。本版之后 **P3 仍不开工** —— T310 阶段门尚有
+> 外部依赖项受阻（真实 WorkBuddy 账号 / `FREEBUFF_TOKENS`）。
+
+### 🐛 修复
+
+- **WorkBuddy sidecar 启动参数与真实二进制脱节（真机演练发现，两处契约断点）** —— T310 的「OAuth 全链路
+  演练」首次用真实 Go 二进制（`workbuddy2api-panel`）拉起 sidecar，立刻暴露两个问题；此前单测全用假
+  sidecar，**mock 掩盖了真实 CLI 契约**：
+  1. **启动参数不被识别**：网关原先传 `--listen/--auth-dir/--api-key`，而二进制只认 `-config <path>`
+     （Go `flag` 包遇未知标志直接 usage + `exit 2`），故网关拉起的 sidecar 立刻崩、OAuth 演练根本进不去。
+     现改为**由网关落盘配置文件**（新增 `WORKBUDDY_SIDECAR_CONFIG` 与 `sidecar.configPath`）：默认落在状态
+     文件同级的 `workbuddy-sidecar/config.json`，写入 `listen` / `api_key` / `auth_dir` / `state_file`
+     四个受管键，**深合并保留面板可热改的既有键**（`cooldown` / `custom` / …），临时文件 + rename 原子替换；
+     **配置文件写不进去就不 spawn**（宁可侧车缺席，也不留一个必然崩溃的子进程）。`updateConfig` 热重载时
+     同步刷新该文件，端口/密钥变更在 sidecar 下次重启即生效。
+  2. **空池冷启动被误判为崩溃**：真实二进制的 `/healthz` 契约是「200 = 可服务 / 503 = 池不可服务」，而
+     **零账号是冷启动的正常稳态**（第一步就是去授权）。旧逻辑把「15s 内没拿到 200」一律判 `crashed`，且
+     `health()` 对非 `running` 状态直接返回 `false`，导致空池冷启的 provider **被永久判死**——用户完成
+     OAuth 补进账号后也不会恢复。现将探活改为三态（`200` 可服务 / `503` 已就绪但池不可服务 / 连不上），
+     HTTP 有响应即置 `running`、`healthy=false` 并如实记录原因，池补齐后由下一次探活自然转健康。
+  - 测试：`tests/workbuddy-sidecar-launch.test.ts` 7 例（参数只有 `-config`、配置字段口径、env 覆盖、
+    显式 `authDir`、深合并保留既有键、`WORKBUDDY_SIDECAR_CONFIG` 落点、落点不可写则不 spawn）+
+    `tests/workbuddy-sidecar.test.ts` 新增 2 例（503 → `running`+不健康；补号后探活转绿）。
+  - 新增真机自检脚本 `scripts/probe-workbuddy-live.ts`：用真实二进制走「配置落盘 → spawn → 探活」全路径，
+    输出进程状态、落盘配置与 `/healthz` 原文，供部署前环境自检（已实测：监听 8788、`/status` 200、
+    `/healthz` 503、网关 `running`+`healthy:false`）。
+
 ### 新增
 
 - **Freebuff 配置热重载可参保新 Token**（收口 T203 遗留「`updateConfig` 不热改 Token」）——
@@ -119,7 +149,7 @@
   （远超 ≥55% 门槛）；5 分钟自动化泄漏监控（`scripts/soak.mjs` 400 请求，RSS 净降 31.9MB）
   与 CommandCode / Freebuff 快照测试全部通过。
 
-### 🐛 修复
+### 🐛 修复（合并复核与门禁）
 
 - **「系统设置」页点一次就弹回概览（hash 路由白名单漏项，与 v5.0.5 修掉的「上游」页同形）** ——
   T307 新增了 `#/settings` 页签与面板，但 `public/js/core.js` 的 `ROUTES` 白名单没同步加名；
@@ -135,6 +165,15 @@
 - **`src/utils/state-store.ts` 两处门禁问题** —— `parsed.error` 在 `tsconfig.test.json`（`strict: false`）
   下无法按布尔判别式收窄（布尔字面量被加宽为 `boolean`），改用 `'error' in parsed` 收窄；
   `withFileLock` 里 `let stale = false` 的初值从未被读取，触发 `no-useless-assignment`，改为直接取 `mtimeMs`。
+- **`spa-logs` / `spa-settings` 两个测试文件写到了真实用户的用量历史（并发抢同一文件导致全量跑偶发红）** ——
+  两个文件都调 `recordCompletion` / `/api/usage/clear`，却没有隔离 `USAGE_HISTORY_PATH`，于是
+  ① 每跑一次全量测试就**污染真实用户的 `~/.commandcode/usage-history.jsonl`**（仓库里那个
+  `purge-test-usage.mjs` 正是为此存在）；② 并行 worker 下 spa-logs 的追加会插进 spa-settings
+  「clear 之后、断言之前」的窗口，断言 `getUsageHistory().length === 0` 偶发翻成 1（`expected 1 to be +0`）。
+  修复：两文件用 **`vi.hoisted` 在 import 之前**把 `USAGE_HISTORY_PATH`（spa-settings 另加
+  `AUDIT_LOG_PATH`）指到临时目录 —— 用量落点在**模块加载期**就被 store 捕获
+  （`storage-backend.ts` 的 `USAGE_FILE_PATH`），写在 `beforeEach` 里已经太晚，`vi.hoisted` 的回调先于
+  import 求值，是唯一能生效的位置；`afterAll` 清理临时文件。
 
 ### 变更说明
 
@@ -156,6 +195,11 @@
 - 追加 T302 后重跑全量门禁：`npm run verify` **92 文件 / 1122 用例通过（1 skipped，共 1123）**；
   `npm run typecheck`（src + tests 双工程）**0 错误**；`npm run lint` **零输出**；
   `npm audit --omit=dev` **0 vulnerabilities**。
+- 追加 sidecar 真机契约修复后重跑全量门禁：`npm run verify` **93 文件 / 1131 用例通过（1 skipped，共 1132）**；
+  `npm run typecheck` 双工程 **0 错误**；`npm run lint` **零输出**；`npm audit --omit=dev` **0 vulnerabilities**。
+  真机取证：`npx tsx scripts/probe-workbuddy-live.ts <sidecar.exe> 8788` → 网关 `state=running`、
+  `/status` **200**、`/healthz` **503**（空池稳态）、落盘配置含 `listen`/`api_key`/`auth_dir`/`state_file`、
+  `destroy()` 干净回收子进程。
 - 本分支（`feat/p0-port`）提交序列：`b8b0c37`（T301 WorkBuddy OAuth 设备授权与令牌看护）→
   `4e8e2ee`（T304 路由策略高级配置）→ `49c4f65`（T303 健康探测 + 自动降级 + 级联防护）→
   `bd27fe0`（T305 Freebuff 等待室与队列）→ `b5b3b1e`（T308 WorkBuddy Anthropic 桥）→

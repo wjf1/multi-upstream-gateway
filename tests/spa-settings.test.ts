@@ -12,14 +12,33 @@
 //    POST /api/settings 合法参数保存成功并热生效；
 //    POST /api/usage/clear 触发清空并记录管理面审计日志。
 // =============================================================================
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
+import { readFileSync, existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { dashboardRoutes } from '../src/routes/dashboard.js';
 import { ADMIN_TOKEN } from '../src/utils/admin-guard.js';
 import { getAuditLogPath, readAuditEntries } from '../src/utils/audit-log.js';
 import { getUsageHistory, recordCompletion } from '../src/utils/usage-store.js';
+
+// 用量历史与审计日志的落点在**模块加载期**就被 store 捕获（storage-backend.ts 的
+// `USAGE_FILE_PATH` / `new JsonlUsageBackend(USAGE_FILE_PATH)`），所以在 describe 的 beforeEach 里
+// 改 env 已经太晚 —— `vi.hoisted` 的回调先于 import 求值，是这里唯一能生效的位置。
+// 不隔离的后果有两层：① 本文件的 `recordCompletion` / `/api/usage/clear` 会直接写、清
+// **真实用户**的 `~/.commandcode/usage-history.jsonl`；② 并行 worker 里的 spa-logs.test.ts 也在写
+// 同一个真实文件，于是 clear 与读取之间被插进一行，全量跑偶发 `expected 1 to be +0`。
+const isolated = vi.hoisted(() => {
+  const tmp = process.env.TEMP || process.env.TMP || '/tmp';
+  const usage = `${tmp}/ccproxy-test-spa-settings-usage.jsonl`;
+  const audit = `${tmp}/ccproxy-test-spa-settings-audit.jsonl`;
+  process.env.USAGE_HISTORY_PATH = usage;
+  process.env.AUDIT_LOG_PATH = audit;
+  return { usage, audit };
+});
+
+afterAll(() => {
+  for (const f of [isolated.usage, isolated.audit]) rmSync(f, { force: true });
+});
 
 const root = path.resolve(__dirname, '..');
 const html = readFileSync(path.join(root, 'public', 'index.html'), 'utf-8');

@@ -344,16 +344,21 @@
       DNS rebinding（`dns-rebinding`）、全路径日志脱敏（`log-redaction`：Bearer / api-key / sk- / query 参数）、
       出站重定向（`upstream-redirect`）—— 8 文件 / **88 用例全绿**
     - [x] 第 6 章 A-F 组 P2 部分：F01/F02/F03/F04/F05/F08/F09 有自动化取证（测试文件映射见阶段记录）
+    - [x] **sidecar 真机启动链路（本次新增，演练直接产出）**：授权安装 Go 工具链并构建真实二进制后，
+      首次真机拉起即暴露两处**假 sidecar 单测掩盖的契约断点**（启动参数 `--listen` 族 → 实际只认 `-config`；
+      空池 `/healthz` 503 被误判 `crashed` 并永久判死）——均已修复并有真机证据
+      （`scripts/probe-workbuddy-live.ts`：监听 8788、`/status` 200、`/healthz` 503、网关 `running`+`healthy:false`）
     - [ ] F03 视觉（CC 必过）：由 `tool-image-and-params.test.ts` 覆盖 CC 侧；**FB/WB 按矩阵未演练**（同下 blocked）
-    - [ ] F06 WB OAuth 全流程 + 预刷 + 待刷新态：**真机全链路演练 BLOCKED** —— 本机无 Go 工具链
-      （`go: command not found`）且 `F:/AI/Qdor/review/workbuddy2api-panel` 无预编译二进制，无法构建 sidecar；
-      编排逻辑已由 `workbuddy-t301.test.ts`（mock sidecar）覆盖
+    - [ ] F06 WB OAuth 全流程 + 预刷 + 待刷新态：**sidecar 真机链路已打通**（拉起 / 配置落盘 / `/status` 200 /
+      `/healthz` 语义正确），**仍待人工步骤**——需真实 WorkBuddy 账号在浏览器完成 OAuth 授权（授权编排逻辑
+      已由 `workbuddy-t301.test.ts` 覆盖）
     - [ ] F07 账号池可视化 + 积分条：账号池可视化与 CC 额度条已在面板；**WorkBuddy 积分条 UI 未接线**
       （T302 交付的是 `data/state.json` 持久化与 `/api/upstreams/workbuddy/balance` 只读镜像，未加面板渲染）
-    - [ ] 100 并发 WB 池无惊群 P99<2s：**BLOCKED** —— 同上，无 sidecar 可压测；参考值：P0-PORT-F 阶段
-      CommandCode 50 并发 P99 126ms、T310 之前 100 并发无惊群项尚无 WB 实测
-  - BLOCKED: 无 Go 工具链与 WorkBuddy sidecar 二进制 → F06 真机 OAuth 演练、100 并发 WB 池压测、F03 FB/WB 视觉矩阵无法执行
-  - **DECISION: continue**（提案，待项目负责人签字；本阶段自动化验收项全绿，仅外部依赖项受阻）
+    - [ ] 100 并发 WB 池无惊群 P99<2s：**BLOCKED —— 需池内有真实账号**（空池只会立即 503，测不出真实数据面）；
+      参考值：P0-PORT-F 阶段 CommandCode 50 并发 P99 126ms、T310 之前 100 并发无惊群项尚无 WB 实测
+  - BLOCKED（更新于 2026-10-08）：Go 工具链与 sidecar 二进制**已解决**；剩余受阻项为
+    **真实 WorkBuddy 账号（OAuth 人工授权 + 压测前提）**、**`FREEBUFF_TOKENS`（F03 FB 侧视觉矩阵）**、**F07 积分条 UI 小卡**
+  - **DECISION: continue**（✅ 2026-10-08 项目负责人签字确认；本阶段自动化验收项全绿，外部依赖项经授权安装 Go 工具链后继续闭环）
   - 说明：按 §0.4「Gate 不过不得开始下一阶段」，P3（T401 起）在 F06/F07/并发项闭环前**不得开工**
 - [ ] T309（基准方案中不存在此卡，疑为笔误）/ T401~T406 / T501~T505（见执行依据方案）
 
@@ -516,7 +521,7 @@ CommandCode（D2）两个 Provider 均已具备 IProvider 外壳，但**都尚�
 **T214 剩余外部 Blocker 状态记录**：
 1. **Freebuff 线上真实 Token**：环境变量 `FREEBUFF_TOKENS` 待用户配置真实可用密钥。
 2. **WorkBuddy sidecar 真实通信**：环境中缺少 Go 编译工具链与预构建二进制（sidecar），单元契约与 Provider 契约均已全绿，端到端需环境具备 Go 运行时。
-3. **master-plan §0.4 决议行**：`DECISION: continue | pause | pivot-federated` 待项目负责人确认签字。
+3. **master-plan §0.4 决议行**：`DECISION: continue` —— ✅ 2026-10-08 项目负责人签字确认（`continue`）。
 
 
 **T213 收口项（D2 登记，未实施）**：
@@ -665,11 +670,39 @@ Release 由 workflow 自动创建。门禁：`verify` **80 文件 / 1003 用例�
 - F08 Freebuff 等待室 —— `freebuff-waiting-room.test.ts`
 - F09 级联防护（ramp/摘除/队列/首字节）—— `degradation.test.ts`
 
-**受阻根因（同一根因）**：本机 **无 Go 工具链**（`go: command not found`）且 `F:/AI/Qdor/review/workbuddy2api-panel`
+**受阻根因（当时的记录）**：本机 **无 Go 工具链**（`go: command not found`）且 `F:/AI/Qdor/review/workbuddy2api-panel`
 **无预编译二进制**，因此 WorkBuddy sidecar 无法构建/拉起 → F06 真机 OAuth 演练、100 并发 WB 池压测、
-F03 的 FB/WB 视觉矩阵三项**无法在本机执行**。解除条件：安装 Go 并构建 sidecar（或取得预编译二进制），
-另需 **Freebuff Token（`FREEBUFF_TOKENS`）** 才能跑 FB 侧演练。
+F03 的 FB/WB 视觉矩阵三项**无法在本机执行**。
 
-**DECISION: continue**（提案）—— 本阶段可自动化的验收项**全部为绿**（回归 / 覆盖率 / audit / typecheck / lint /
-安全复测均已闭环），仅剩外部环境依赖项受阻；建议按 §0.4 由项目负责人签字确认 `continue` 后再开工 P3。
-在签字与受阻项闭环之前，**P3（T401 起）保持不开工**。
+> **该根因已于同日（2026-10-08）解除**：授权安装 Go 1.27.0 并构建真实二进制后，首次真机拉起即暴露两处
+> 契约断点并已修复（见文末「追加记录 — sidecar 真机链路打通」）。现状：sidecar 真机链路已通
+> （拉起 / 配置落盘 / `/status` 200 / `/healthz` 语义正确），剩余受阻为**真实 WorkBuddy 账号**
+> （OAuth 人工授权与压测前提）与 **`FREEBUFF_TOKENS`**（F03 的 FB 侧）。
+
+**DECISION: continue**（✅ 2026-10-08 项目负责人签字确认）—— 本阶段可自动化的验收项**全部为绿**（回归 / 覆盖率 / audit /
+typecheck / lint / 安全复测均已闭环），仅剩外部环境依赖项受阻。签字后：授权安装 Go 工具链以构建 sidecar，
+继续闭环 F06 真机 OAuth 演练、100 并发 WB 池压测与 F03 的 FB/WB 视觉矩阵；F07 积分条面板 UI 另作小卡跟进。
+
+## 追加记录 — sidecar 真机链路打通（2026-10-08，签字后第一轮）
+
+**做了什么**：按签字结论安装 Go 工具链（winget `GoLang.Go` → `go1.27.0 windows/amd64`），
+从 `F:/AI/Qdor/review/workbuddy2api-panel` 构建真实二进制 `workbuddy-sidecar.exe`（14,607,360 字节），
+然后**用真机跑网关自己的启动代码路径**——这一步直接推翻了两处「假 sidecar 单测全绿」的假象。
+
+| 缺陷 | 症状（真机） | 根因 | 修复 |
+|---|---|---|---|
+| 启动参数不被识别 | `--listen 127.0.0.1:8787 --api-key k` → `flag provided but not defined: -listen`，`EXIT=2` | 二进制只认 `-config <path>`（Go `flag` 包遇未知标志即 usage + 退出） | 网关改**自行落盘配置文件**（`materializeSidecarConfig`）：默认 `‹状态文件目录›/workbuddy-sidecar/config.json`，写 `listen`/`api_key`/`auth_dir`/`state_file`，深合并保留面板可热改键，临时文件 + rename，**写不进就不 spawn** |
+| 空池冷启动被判死 | 零账号时 `/healthz` 恒 **503** → 旧逻辑 15s 超时判 `crashed`，`health()` 对非 running 一律 false → **永久判死**（授权成功后也不恢复） | 把「池不可服务」误当「进程没起来」 | 探活改三态（`servable` / `503 degraded` / `unreachable`）：HTTP 有响应即 `running` + `healthy=false`，池补齐后自然转健康；连不上仍按超时判失败 |
+
+**真机证据**（`npx tsx scripts/probe-workbuddy-live.ts <exe> 8788`）：`state=running`（pid 28300）、
+落盘配置 `{listen:"127.0.0.1:8788",api_key:"",auth_dir:…\workbuddy-sidecar\auths,state_file:…\state.json}`、
+sidecar 日志 `listening on 127.0.0.1:8788` + 管理面板 `http://127.0.0.1:8788/panel/`、
+`/healthz` → 503 `{"healthy":0,"total":0}`、`/status` → **200**、网关 `health()` → `{healthy:false,total:0}`、`destroy()` 干净收尾。
+
+**门禁（本轮后）**：`npm run verify` **93 文件 / 1131 用例全绿（1 skipped，共 1132）**；`typecheck` 双工程 0 错误；
+`lint` 零输出；`npm audit --omit=dev` **0 vulnerabilities**。新增测试：`workbuddy-sidecar-launch.test.ts` 7 例 +
+`workbuddy-sidecar.test.ts` 新增 2 例（503 → running 不健康；补号后探活转绿）。
+
+**T310 三项受阻项的现状**：① **sidecar 构建/拉起已解除**（真机 `/status` 200，面板与 Bearer 链路可用）；
+② F06 只差**人工 OAuth 授权**（需真实 WorkBuddy 账号在浏览器完成）；③ 100 并发 WB 池压测与 F03 的 FB 侧
+分别需要**池内真实账号**与 **`FREEBUFF_TOKENS`**。F07 积分条面板 UI 仍为独立小卡。

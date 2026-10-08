@@ -9,13 +9,28 @@
 // 3. 后端 /api/logs 与 /api/logs/request/:id 端点集成测试：
 //    参数化过滤可用，按 requestId/traceId 能正确查回请求模型、状态、耗时与关联日志。
 // =============================================================================
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
+import { readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { dashboardRoutes } from '../src/routes/dashboard.js';
 import { logger } from '../src/utils/logger.js';
 import { recordCompletion } from '../src/utils/usage-store.js';
+
+// 用量历史落点在模块加载期就被 store 捕获（见 storage-backend.ts），故 env 必须用 `vi.hoisted`
+// 在 import 之前落 —— 否则本文件的 `recordCompletion` 写的是**真实用户**的
+// `~/.commandcode/usage-history.jsonl`，并与并行的 spa-settings.test.ts 抢同一个文件
+// （那边 `/api/usage/clear` 之后断言长度为 0，全量跑偶发被本文件插进的一行打红）。
+const isolatedUsagePath = vi.hoisted(() => {
+  const tmp = process.env.TEMP || process.env.TMP || '/tmp';
+  const usage = `${tmp}/ccproxy-test-spa-logs-usage.jsonl`;
+  process.env.USAGE_HISTORY_PATH = usage;
+  return usage;
+});
+
+afterAll(() => {
+  rmSync(isolatedUsagePath, { force: true });
+});
 
 const root = path.resolve(__dirname, '..');
 const html = readFileSync(path.join(root, 'public', 'index.html'), 'utf-8');

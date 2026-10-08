@@ -34,6 +34,9 @@ import type {
 } from '../core/interface.js';
 import { logger } from '../../utils/logger.js';
 import { ErrorCode, ProxyError, codeForStatus, toProxyError } from '../../utils/errors.js';
+import { STATE_PATH_ENV, resolveConfiguredStatePath } from '../../utils/state-store.js';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import {
   WorkBuddySidecar,
   type SidecarStatus,
@@ -64,13 +67,15 @@ export const WORKBUDDY_SIDECAR_BIN_ENV = 'WORKBUDDY_SIDECAR_BIN';
 export const WORKBUDDY_SIDECAR_PORT_ENV = 'WORKBUDDY_SIDECAR_PORT';
 export const WORKBUDDY_SIDECAR_KEY_ENV = 'WORKBUDDY_SIDECAR_KEY';
 export const WORKBUDDY_AUTH_DIR_ENV = 'WORKBUDDY_AUTH_DIR';
+/** 显式指定 sidecar 配置文件落点（缺省落在状态文件同级的 `workbuddy-sidecar/config.json`）。 */
+export const WORKBUDDY_SIDECAR_CONFIG_ENV = 'WORKBUDDY_SIDECAR_CONFIG';
 
 export interface WorkBuddyConfig {
   enabled: boolean;
   authDir?: string;
   rewriteMode: 'full' | 'passthrough';
   pointsPerUsdRate: number | null;
-  sidecar: { binPath?: string; port: number };
+  sidecar: { binPath?: string; port: number; configPath?: string };
   /** sidecar Bearer 密钥（空 = sidecar 不鉴权，回环部署默认）。 */
   apiKey: string;
 }
@@ -96,6 +101,23 @@ function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** 真实 sidecar 二进制的启动参数：只有 `-config <path>`（Go flag 包不接受其它标志）。 */
+function buildSidecarArgs(configPath: string): string[] {
+  return ['-config', configPath];
+}
+
+/** 读 sidecar 既有配置；缺失或损坏都当作空对象（重写时以网关受管键为准）。 */
+async function readJsonIfExists(file: string): Promise<Record<string, unknown>> {
+  try {
+    const parsed: unknown = JSON.parse(await fsp.readFile(file, 'utf8'));
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 function truncate(text: string, limit = ERROR_TEXT_LIMIT): string {
   const t = text.trim();
   return t.length > limit ? `${t.slice(0, limit)}…` : t;
@@ -113,6 +135,10 @@ function resolveWorkBuddyConfig(raw: unknown, env: NodeJS.ProcessEnv): WorkBuddy
   const port =
     num(sidecar.port) ??
     (Number.isFinite(portFromEnv) && portFromEnv > 0 ? portFromEnv : DEFAULT_SIDECAR_PORT);
+  const configPath =
+    (typeof sidecar.configPath === 'string' && sidecar.configPath.trim() !== ''
+      ? sidecar.configPath.trim()
+      : undefined) ?? (env[WORKBUDDY_SIDECAR_CONFIG_ENV]?.trim() || undefined);
 
   return {
     enabled: o.enabled !== false,
@@ -121,7 +147,7 @@ function resolveWorkBuddyConfig(raw: unknown, env: NodeJS.ProcessEnv): WorkBuddy
       (env[WORKBUDDY_AUTH_DIR_ENV]?.trim() || undefined),
     rewriteMode: o.rewriteMode === 'passthrough' ? 'passthrough' : 'full',
     pointsPerUsdRate: typeof o.pointsPerUsdRate === 'number' ? o.pointsPerUsdRate : null,
-    sidecar: { binPath, port },
+    sidecar: { binPath, port, configPath },
     apiKey: env[WORKBUDDY_SIDECAR_KEY_ENV] ?? '',
   };
 }
@@ -198,10 +224,22 @@ export class WorkBuddyProvider implements IProvider {
         );
         return;
       }
+      // 真实二进制（workbuddy2api-panel）**只认 `-config <path>`**，其余标志一律 usage + exit 2。
+      // 因此监听端口/密钥/授权目录都要写进配置文件，写不进去就不 spawn——宁可侧车缺席，
+      // 也不留一个必然崩溃的子进程（§3.11 面板会显示该 provider 不可用）。
+      let sidecarConfigPath: string;
+      try {
+        sidecarConfigPath = await this.materializeSidecarConfig(cfg);
+      } catch (err) {
+        logger.warn(
+          `[PVD:workbuddy] sidecar config not writable, skipping spawn: ${messageOf(err)}`,
+        );
+        return;
+      }
       const opts: WorkBuddySidecarOptions = {
         binPath: cfg.sidecar.binPath,
         port: cfg.sidecar.port,
-        args: this.buildSidecarArgs(cfg),
+        args: buildSidecarArgs(sidecarConfigPath),
       };
       this.sidecar = this.deps.createSidecar ? this.deps.createSidecar(opts) : new WorkBuddySidecar(opts);
     }
@@ -584,11 +622,18 @@ export class WorkBuddyProvider implements IProvider {
     return this.enabled;
   }
 
-  /** 热重载：只应用非凭据增量；sidecar 二进制/端口变更需重新 initialize。 */
+  /** 热重载：只应用非凭据增量；sidecar 二进制变更需重新 initialize。 */
   updateConfig(config: unknown): void {
     const next = resolveWorkBuddyConfig(config, this.env);
     this.cfg = next;
     this.enabled = next.enabled;
+    // 端口/密钥/授权目录改了而进程已在跑：同步配置文件，等 sidecar 下次重启即生效。
+    // 未起过 sidecar 时不落盘——避免为一个从未启用的 provider 凭空写文件。
+    if (this.sidecar) {
+      void this.materializeSidecarConfig(next).catch((err: unknown) => {
+        logger.warn(`[PVD:workbuddy] sidecar config refresh failed: ${messageOf(err)}`);
+      });
+    }
   }
 
   /** sidecar 进程状态（面板上游卡片的直读数据源，§3.11-4）。 */
@@ -607,11 +652,40 @@ export class WorkBuddyProvider implements IProvider {
     }
   }
 
-  private buildSidecarArgs(cfg: WorkBuddyConfig): string[] {
-    const args = [`--listen`, `127.0.0.1:${cfg.sidecar.port}`];
-    if (cfg.authDir) args.push('--auth-dir', cfg.authDir);
-    if (cfg.apiKey) args.push('--api-key', cfg.apiKey);
-    return args;
+  /**
+   * 把网关侧的监听/密钥/授权目录落成 sidecar 认识的配置文件（真实二进制的唯一入口）。
+   *
+   * 落点优先级：显式 `sidecar.configPath` > `WORKBUDDY_SIDECAR_CONFIG` > 状态文件同级的
+   * `workbuddy-sidecar/config.json`。**深合并**写回：面板可在 sidecar 里热改的键
+   * （`cooldown` / `custom` / …）在网关重写时被保留，只覆盖网关自己管的四个键。
+   * 返回实际写入的配置路径；任何一步失败都抛出（调用方据此放弃 spawn）。
+   */
+  private async materializeSidecarConfig(cfg: WorkBuddyConfig): Promise<string> {
+    const configPath = await this.resolveSidecarConfigPath(cfg);
+    const dir = path.dirname(configPath);
+    await fsp.mkdir(dir, { recursive: true });
+
+    const existing = await readJsonIfExists(configPath);
+    const managed = {
+      listen: `127.0.0.1:${cfg.sidecar.port}`,
+      api_key: cfg.apiKey,
+      auth_dir: cfg.authDir ?? path.join(dir, 'auths'),
+      state_file: path.join(dir, 'state.json'),
+    };
+
+    // 临时文件 + rename：避免 sidecar 恰好读到半截 JSON。
+    const tmp = `${configPath}.tmp`;
+    await fsp.writeFile(tmp, `${JSON.stringify({ ...existing, ...managed }, null, 2)}\n`, 'utf8');
+    await fsp.rename(tmp, configPath);
+    return configPath;
+  }
+
+  private async resolveSidecarConfigPath(cfg: WorkBuddyConfig): Promise<string> {
+    if (cfg.sidecar.configPath) return path.resolve(cfg.sidecar.configPath);
+    // 状态文件路径先看注入的 env（测试与分片部署都靠它隔离），再走共享解析器。
+    const fromEnv = this.env[STATE_PATH_ENV]?.trim();
+    const statePath = fromEnv ? path.resolve(fromEnv) : await resolveConfiguredStatePath();
+    return path.join(path.dirname(statePath), 'workbuddy-sidecar', 'config.json');
   }
 
   private async getJson<T>(path: string): Promise<T | null> {

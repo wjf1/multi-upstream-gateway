@@ -49,8 +49,10 @@ Freebuff 模块已移植入树但**尚未接入运行时**，详见[项目状态
 ## 🚦 项目状态
 <a id="status"></a>
 
-**当前版本：v5.0.4**（2026-10-08）—— 版本线自 v5.0.0 起另起产品序列，勿与上游 `commandcode-proxy` 的
+**当前版本：v5.0.6**（2026-10-08）—— 版本线自 v5.0.0 起另起产品序列，勿与上游 `commandcode-proxy` 的
 v4.22.x 混用；完整发布记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/wjf1/multi-upstream-gateway/releases)。
+本版为补丁版：收口 P1 任务卡（T301~T308）与 T203/T302 遗留，并修复 WorkBuddy sidecar 与真实 Go
+二进制之间的启动契约断点（启动参数只认 `-config`、空池 `/healthz` 503 不再被误判为崩溃）。
 
 **P0 语义移植（Phase A~F）已完成并部署**（2026-10-07）：
 
@@ -159,11 +161,13 @@ P1 剩余：T214（P1 阶段门，自动化项已全绿，剩 3 项外部 blocke
 - **WorkBuddy OAuth 授权与令牌看护（T301）** — 账号页 WorkBuddy 卡片可直接完成 **OAuth 授权加号**（选国内版 / 国际版 → 面板内开窗授权 → 自动轮询至完成），无需离开网关面板。授权走腾讯自建 state 两段式（非 RFC 8628），由 sidecar 原生面板 API 承接；**网关侧只取 `uid/nickname/realm/credits`，永不持有 OAuth token**（响应类型层面无 token 字段）。
   令牌**提前 1 小时**进入预刷（Go sidecar 原为硬编码 10 分钟），刷新失败按 **1s → 2s → 4s 指数退避重试**，最终仍失败则把账号标为**「待刷新」**并在账号行显示红色徽章、同时推送一次 Webhook 告警——把 sidecar 侧的「静默失效」变成显式可见状态。只读视图与授权编排暴露为 `GET /api/upstreams/workbuddy/tokens`、`POST /api/upstreams/workbuddy/login/start`、`GET /api/upstreams/workbuddy/login/poll?state=`。
 - **余额刷新与池状态持久化（T302）** — WorkBuddy 的账号积分余额（含可过期额度与最早到期时间）与**池状态**（暂停 / 禁用 / 冷却）经 `data/state.json` 持久化：内存样本每次刷新都更新，**落盘按 5 分钟节流**（不新增常驻定时器）；写入走**临时文件 + rename 原子替换**并加文件锁（`open(...,'wx')` 抢占 + 残留锁超时兜底），**锁内不做 IO**。进程 `kill -9` 后重启，账本从文件水合、逐字段一致。文件损坏（非 JSON / 版本不符）时**不覆盖原文件**并把状态标为降级 + 告警，随后从 sidecar `/status` 重建（usage 记录里只有消费侧原生量，反推不出剩余余额，故不作重建源）。余额读不到时**绝不清零账本**（读不到 ≠ 余额为 0），失败只记计数并在恢复后解除。管理面暴露 `GET /api/upstreams/workbuddy/balance`（只读镜像）与 `POST /api/upstreams/workbuddy/balance/refresh`（强制刷新，sidecar 不可用时返回 `503` 而非谎报成功）。
+- **WorkBuddy sidecar 启动契约（真实二进制对齐）** — 网关不再向 sidecar 传 `--listen/--auth-dir/--api-key`（真实 Go 二进制只认 `-config <path>`，未知标志会直接 `exit 2`），而是**自己落盘配置文件**：默认落在状态文件同级的 `workbuddy-sidecar/config.json`（可用 `WORKBUDDY_SIDECAR_CONFIG` 或 `providers.workbuddy.sidecar.configPath` 指定），写入 `listen` / `api_key` / `auth_dir` / `state_file`，**深合并保留面板可热改的其它键**，临时文件 + rename 原子替换；**写不进去就不 spawn**。另按真实 `/healthz` 语义（`200` 可服务 / `503` 池不可服务）把探活改为**三态**：**空池冷启动不再被判崩溃**（否则 provider 会被永久判死，用户授权成功后也不恢复），HTTP 有响应即置 `running`、`healthy=false`，池补齐后自动转健康。部署前可用 `npx tsx scripts/probe-workbuddy-live.ts <sidecar.exe> [port]` 做真机自检（配置落盘 → spawn → 探活全路径）。
 
 ---
 
 ## 🚀 快速开始
 <a id="quickstart"></a>
+
 
 ```bash
 npm install
@@ -477,9 +481,12 @@ with a built-in Chinese dashboard, usage & cost analytics, multi-account quota r
 
 ### <a id="status-en"></a>Project status
 
-**Current version: v5.0.4** (2026-10-08) — the product version line starts at v5.0.0; do not mix it with the
+**Current version: v5.0.6** (2026-10-08) — the product version line starts at v5.0.0; do not mix it with the
 upstream `commandcode-proxy` v4.22.x. Full release history: [CHANGELOG](CHANGELOG.md) and
-[Releases](https://github.com/wjf1/multi-upstream-gateway/releases).
+[Releases](https://github.com/wjf1/multi-upstream-gateway/releases). This is a patch release: it lands the
+P1 task cards (T301~T308) plus the T203/T302 leftovers, and fixes the launch contract between the gateway
+and the **real** WorkBuddy Go sidecar binary (the binary only accepts `-config <path>`, and an empty-pool
+`/healthz` 503 is no longer mistaken for a crashed process).
 
 **The P0 semantic port (Phases A–F) is complete and deployed** (2026-10-07): engineering base, audit-batch-B security semantics,
 new modules (provider contract layer, unified config, credential encryption, rate limiting, risk gate, Freebuff), seam wiring,
@@ -532,6 +539,7 @@ sidecar binary, and owner sign-off).
 - **WorkBuddy OAuth authorization & token watch (T301)** — the WorkBuddy card on the accounts page now performs **OAuth account onboarding** in place (pick the China / global realm → the panel opens the authorization window → polls until complete), so you never leave the gateway dashboard. Authorization uses Tencent's own two-step `state` flow (not RFC 8628) served by the sidecar's native panel API; **the gateway keeps only `uid/nickname/realm/credits` and never holds an OAuth token** (no token field exists in the response type).
   Tokens enter **pre-refresh 1 hour ahead** of expiry (the Go sidecar hard-coded 10 minutes), failures retry with **exponential backoff 1s → 2s → 4s**, and an account that still fails is flagged **"pending refresh"** with a red badge on its row plus a single Webhook alert — turning what used to be a silent failure on the sidecar side into an explicit, visible state. The read-only view and the authorization flow are exposed as `GET /api/upstreams/workbuddy/tokens`, `POST /api/upstreams/workbuddy/login/start`, and `GET /api/upstreams/workbuddy/login/poll?state=`.
 - **Balance refresh & pool-state persistence (T302)** — WorkBuddy account credits (including expiring allowance and earliest expiry) and **pool state** (paused / disabled / cooling) are persisted to `data/state.json`: the in-memory sample is updated on every refresh while **disk writes are throttled to every 5 minutes** (no extra resident timer). Writes use a **temp-file + rename atomic replace** guarded by a file lock (`open(...,'wx')` acquisition with a stale-lock timeout fallback), and **no IO happens inside the lock**. After a `kill -9` the ledger hydrates from the file on restart and matches field for field. If the file is corrupt (not JSON / version mismatch) the **original file is not overwritten**: the state is marked degraded, an alert fires, and the ledger is rebuilt from the sidecar `/status` (usage records hold only the consumption-side native amount and cannot back out a remaining balance, so they are not used as a rebuild source). When the balance cannot be read the **ledger is never zeroed** ("unreadable" ≠ "zero balance"): the failure only bumps a counter, cleared on recovery. The admin plane exposes `GET /api/upstreams/workbuddy/balance` (read-only mirror) and `POST /api/upstreams/workbuddy/balance/refresh` (force refresh; returns `503` rather than reporting a false success when the sidecar is unavailable).
+- **WorkBuddy sidecar launch contract (aligned with the real binary)** — the gateway no longer passes `--listen/--auth-dir/--api-key` to the sidecar (the real Go binary only accepts `-config <path>` and exits 2 on any unknown flag); instead it **writes the config file itself**, defaulting to `workbuddy-sidecar/config.json` next to the state file (override with `WORKBUDDY_SIDECAR_CONFIG` or `providers.workbuddy.sidecar.configPath`). It sets `listen` / `api_key` / `auth_dir` / `state_file`, **deep-merges so hot-editable keys survive** (temp file + rename), and **skips spawning entirely if the config cannot be written**. Probing is now **three-state**, matching the real `/healthz` contract (`200` = servable, `503` = pool not servable): an **empty-pool cold start is no longer mistaken for a crash** (which used to leave the provider permanently dead even after a successful OAuth login), so an HTTP response marks the process `running` with `healthy=false`, and it turns healthy automatically once the pool fills. Verify a deployment end to end with `npx tsx scripts/probe-workbuddy-live.ts <sidecar.exe> [port]` (config write → spawn → probe).
 
 **Dashboard & usage insight**
 
