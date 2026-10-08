@@ -245,7 +245,8 @@ Anthropic 出口（`/v1/messages`）：
 | `INVALID_CREDENTIAL` | 401 | Key 失效或被吊销 |
 | `PROXY_AUTH_REQUIRED` | 401 | 未携带匹配的 `PROXY_API_KEY` |
 | `RATE_LIMIT` | 429 | 5 小时/周额度耗尽，或余额不足 |
-| `MODEL_NOT_IN_PLAN` | 403 | 模型超出当前套餐档位 |
+| `MODEL_NOT_IN_PLAN` | 403 | 模型超出当前套餐档位，或被网关的模型访问策略拒绝（`config.json` 的 `modelAccess` 分片 / `MODEL_ALLOWLIST`，精确匹配） |
+| `MODEL_ACCESS_DENIED` | 403 | 被网关的模型访问策略拒绝（`MODEL_ACCESS_ALLOW` / `MODEL_ACCESS_BLOCK` 环境变量，支持 `glm-5*` 尾部通配） |
 | `MODEL_NOT_FOUND` | 404 | 模型 id 不存在（刷新目录后重试） |
 | `UNSUPPORTED_OPTION` / `UNSUPPORTED_CONTENT` | 400 | 请求形态或内容无法翻译到上游 wire |
 | `REQUEST_TIMEOUT` / `STREAM_IDLE_TIMEOUT` | 504 | 请求超时 / 流中途静默被看门狗中止 |

@@ -16,6 +16,11 @@
 
 ### 变更说明
 
+- 新增评审材料 `docs/review/decision-path-unification.md`（判"谁能用哪个模型 / 请求是否超限"的
+  **两套执行路径**现状对比、三条真实风险与三个候选方案）—— 把 PLAN-STATE 里一句"待独立评审"
+  变成可决策的材料，**不改任何行为**。
+- 顺带补上一个纯文档缺口：README 错误码表缺 `MODEL_ACCESS_DENIED`（走全局 preHandler 被拦的请求
+  会返回该码，此前文档里查不到），同时把 `MODEL_NOT_IN_PLAN` 的描述补全为"套餐档位**或**模型访问策略"。
 - 记录一处调用约定（本轮写测试时踩到）：热重载的入参必须是**完整分片** —— `resolveFreebuffConfig`
   对缺失字段回落默认值，传空对象会把 `apiBase` 重置为官方默认 `www.codebuff.com`，现象上像
   "热重载把上游地址改坏了"。调用方（配置热重载接线）应传与 `initialize` 相同的分片。

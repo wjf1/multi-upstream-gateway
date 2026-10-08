@@ -206,6 +206,9 @@
     （security-guard preHandler 的 `MODEL_ACCESS_ALLOW/BLOCK` 通配 vs 路由级守卫的
     `MODEL_ALLOWLIST` 精确）与两条限流路径（security-guard 全局+per-provider vs 路由级全局）；
     配置源已统一为 store 优先，执行路径合一会改错误码/环境变量语义，需独立评审。
+    **2026-10-08 更新：评审材料已备** —— `docs/review/decision-path-unification.md`
+    （现状事实表 / 三条真实风险 R1~R3 / 三个候选方案与建议），待负责人裁决；同轮已就地补上
+    R3 里那个纯文档缺口（README 错误码表补 `MODEL_ACCESS_DENIED`）。
 - [ ] T214 P1 阶段门（自动化项全绿，剩余 3 项外部 blocker 挂起待办）
   - deps: T201~T213（全部完成）
   - 范围：三源 E2E、面板逐页验收、错误注入降级（strict 语义）、5 分钟泄漏监控
