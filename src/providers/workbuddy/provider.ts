@@ -50,6 +50,10 @@ import {
   type WorkBuddyRealm,
 } from './oauth.js';
 import { notifyWebhook } from '../../utils/webhook-alerts.js';
+import {
+  WorkBuddyBalanceWatch,
+  type BalanceSnapshot,
+} from './balance-watch.js';
 
 const PROVIDER_NAME: ProviderName = 'workbuddy';
 const DEFAULT_SIDECAR_PORT = 8787;
@@ -132,6 +136,8 @@ export interface WorkBuddyProviderDeps {
   tokenWatch?: WorkBuddyTokenWatch;
   /** T301：注入授权客户端（测试可完全离线）。 */
   oauthClient?: WorkBuddyOAuthClient;
+  /** T302：注入余额镜像（测试可注入临时 state.json 路径与假时钟）。 */
+  balanceWatch?: WorkBuddyBalanceWatch;
 }
 
 /**
@@ -151,6 +157,7 @@ export class WorkBuddyProvider implements IProvider {
   private pool: PoolSnapshot | null = null;
   private oauth: WorkBuddyOAuthClient | null;
   private tokenWatch: WorkBuddyTokenWatch | null;
+  private balanceWatch: WorkBuddyBalanceWatch | null;
 
   private readonly deps: WorkBuddyProviderDeps;
   private readonly fetchFn: typeof fetch;
@@ -163,6 +170,7 @@ export class WorkBuddyProvider implements IProvider {
     this.sidecar = deps.sidecar ?? null;
     this.oauth = deps.oauthClient ?? null;
     this.tokenWatch = deps.tokenWatch ?? null;
+    this.balanceWatch = deps.balanceWatch ?? null;
   }
 
   // ─── 生命周期 ───────────────────────────────────────────────────────────────
@@ -172,6 +180,15 @@ export class WorkBuddyProvider implements IProvider {
     this.cfg = cfg;
     this.enabled = cfg.enabled;
     this.initialized = true;
+
+    // T302：载入本地余额/池状态镜像。**先于 sidecar 分支**——即便没配 sidecar 二进制，
+    // 也应有基线落盘与损坏告警（状态文件属于网关自身，不依赖 sidecar 是否起得来）。
+    // 失败不阻断启动：镜像降级，sidecar 与探活面照常工作。
+    try {
+      await this.balanceWatcher().initialize();
+    } catch (err) {
+      logger.warn(`[PVD:workbuddy] balance state init failed: ${messageOf(err)}`);
+    }
 
     if (!this.sidecar) {
       if (!cfg.sidecar.binPath) {
@@ -201,6 +218,12 @@ export class WorkBuddyProvider implements IProvider {
     this.enabled = false;
     this.initialized = false;
     this.pool = null;
+    // T302：把排队中的落盘等完再停 sidecar——否则最后一次余额写入可能被进程退出截断。
+    try {
+      await this.balanceWatch?.drain();
+    } catch (err) {
+      logger.warn(`[PVD:workbuddy] balance state drain failed: ${messageOf(err)}`);
+    }
     if (this.sidecar) {
       await this.sidecar.stop();
     }
@@ -407,13 +430,20 @@ export class WorkBuddyProvider implements IProvider {
   /** 刷新池快照（面板与 health() 的数据源）。 */
   async refreshPool(): Promise<PoolSnapshot | null> {
     const status = await this.getJson<Record<string, unknown>>('/status');
-    if (!status) return null;
+    if (!status) {
+      // T302：sidecar 读不到时也告诉余额镜像一声——它会记一次失败并保留上次已知余额
+      // （绝不能把「读不到」写成「余额清零」）。
+      await this.balanceWatcher().observe(null);
+      return null;
+    }
     this.pool = mapPoolSnapshot(status);
     // T301：把最新账号集合（含 expiresAt）对齐到令牌看护；账号消失时其待刷新标记
     // 一并清除（sync 保留既有 pendingRefresh/lastError/attempts）。
     this.tokenWatcher().sync(
       this.pool.accounts.map((a) => ({ id: a.id, ...(a.expiresAt !== undefined ? { expiresAt: a.expiresAt } : {}) })),
     );
+    // T302：复用**同一次** `/status` 响应推进余额镜像（零额外 IO）；落盘按 5min 节流。
+    await this.balanceWatcher().observe(status);
     return this.pool;
   }
 
@@ -471,9 +501,38 @@ export class WorkBuddyProvider implements IProvider {
     return this.tokenWatcher().runTick();
   }
 
+  // ─── T302：余额镜像与池状态持久化 ───────────────────────────────────────────
+
+  /** 余额/池状态镜像的只读视图（`GET /api/upstreams/workbuddy/balance` 数据源）。 */
+  balanceStatus(): BalanceSnapshot {
+    return this.balanceWatcher().snapshot();
+  }
+
+  /** 主动刷新一次余额（不等 5min 窗口）；也用于损坏后从 sidecar 重建。 */
+  refreshBalance(): Promise<{ ok: boolean; persisted: boolean; accounts: number; refreshedAt: number }> {
+    return this.balanceWatcher()
+      .refresh({ force: true })
+      .then((r) => ({ ok: r.ok, persisted: r.persisted, accounts: r.accounts, refreshedAt: r.refreshedAt }));
+  }
+
+  /** 懒构造余额镜像：只拉 `/status`（sidecar 才是刷新执行者，网关不碰上游凭据）。 */
+  private balanceWatcher(): WorkBuddyBalanceWatch {
+    if (!this.balanceWatch) {
+      this.balanceWatch = new WorkBuddyBalanceWatch({
+        fetchStatus: () => this.getJson<Record<string, unknown>>('/status'),
+        onAlert: (alert) => notifyWebhook('workbuddy.balance', {
+          kind: alert.kind,
+          message: alert.message,
+          at: alert.at,
+          ...(alert.detail ?? {}),
+        }),
+      });
+    }
+    return this.balanceWatch;
+  }
+
   /** 懒构造：sidecar baseUrl/密钥在 initialize 后才确定。 */
-  private oauthClient(): WorkBuddyOAuthClient {
-    if (!this.oauth) {
+  private oauthClient(): WorkBuddyOAuthClient {    if (!this.oauth) {
       if (!this.sidecar) {
         throw new ProxyError(ErrorCode.NO_PROVIDER_AVAILABLE, 'WorkBuddy sidecar is not available');
       }

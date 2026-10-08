@@ -53,6 +53,30 @@
   账号行渲染「待刷新」徽章；
   配套 `tests/workbuddy-t301.test.ts` 19 例 + `tests/workbuddy-t301-routes.test.ts` 8 例全绿。
 
+- **T302：余额刷新与池状态持久化** —— 5min 积分余额刷新 + `state.json` 原子写/锁/损坏重建：
+  余额镜像：新增 `src/providers/workbuddy/balance-watch.ts`（`WorkBuddyBalanceWatch`），把 sidecar `/status`
+  的账号余额（`credits`/`creditsTotal`/`creditsExpiring`/`earliestExpiry`/`earliestRemaining`）与**池状态**
+  （`paused`/`disabled`/`cooling`）归一化落账；字段名走驼峰 + 下划线别名表，时间戳兼容秒/毫秒；
+  **5min 节流落盘**：内存每次都更新、落盘按 `intervalMs`（默认 `DEFAULT_BALANCE_INTERVAL_MS = 5min`）节流，
+  `refresh({force})` / `drain()` 可强制落盘，**不新增常驻定时器**；
+  原子持久化：复用 `utils/state-store.ts` 的 `JsonStateStore`（临时文件 + rename）与 `withFileLock`
+  （`open(...,'wx')` 原子抢占 + `staleMs` 兜底残留锁），路径经 `resolveConfiguredStatePath` 解析，**锁内不做 IO**；
+  损坏恢复：非 JSON / 版本不符 / `accounts` 非对象 → 判损坏，`initialize()` **不写盘**（保住尚可抢救的原文）
+  + `state-corrupted` 告警 + `pendingRebuild`；`refresh()` 从 sidecar 重建后发 `state-rebuilt`，重建前拒写；
+  失败语义：`observe(null)` 只记 `consecutiveFailures` + 首次失败告警，**绝不清零账本**（读不到 ≠ 余额为 0），
+  恢复后发 `refresh-recovered`；`snapshot().degradedReason` 按 pendingRebuild > failures > 未首刷 分级；
+  Provider 接线：`initialize()` 先载镜像、`refreshPool()` 复用同一次 `/status` 推进（零额外 IO）、`destroy()` 前
+  `drain()`，新增 `balanceStatus()` / `refreshBalance()`，告警经 `notifyWebhook('workbuddy.balance', ...)`；
+  路由：`GET /api/upstreams/workbuddy/balance`（只读镜像）、`POST /api/upstreams/workbuddy/balance/refresh`
+  （强制刷新，sidecar 不可用时 503 不谎报成功）；
+  `.gitignore` 排除 `data/state.json`（含账号 uid/昵称）及其 `.lock` / `*.tmp` 残留；
+  **偏差登记**：§3.4 字面为「损坏时从 usage 记录重建」，实际改为**从 sidecar `/status` 重建** —— usage 里
+  WorkBuddy 只有消费侧原生量（`native.points`），反推不出剩余余额，拿它当重建源会写出「看似成功实则错误」的
+  账本；sidecar 才是余额的真正持有者（其不可用时保持降级且永不写盘）；
+  配套 `tests/workbuddy-t302.test.ts` 15 例 + `tests/workbuddy-t302-routes.test.ts` 4 例全绿（三条 DoD 各有
+  可执行取证：5min 节流用内存/磁盘分离断言、kill -9 后重启由新实例读同一文件逐字段相等、损坏恢复断言原文件
+  未被覆盖 → 从 sidecar 重建 → 可解析）。
+
 - **T305：Freebuff 等待室与队列** —— 高负载等待室排队与位置推进机制：
   等待室轮询机：`free-session.ts` 实现 `pollWaitingRoomUntilActive`，按上游 `pollAt` 延迟周期轮询并更新宿主会话，
   捕获排队位置推进直至 active 获得实例；超限抛出 `WaitingRoomTimeoutError`；支持 AbortSignal 客户端主动打断；
@@ -129,10 +153,13 @@
   **90 文件 / 1103 用例通过（1 skipped，共 1104）**；`npm run typecheck`（src + tests 双工程）
   **0 错误**；`npm run lint` **零输出**；`npm audit --omit=dev` **0 vulnerabilities**。
   合并后连跑两轮 verify 均全绿（首轮暴露的 2 例失败已定位并修复，见 `### 🐛 修复`）。
+- 追加 T302 后重跑全量门禁：`npm run verify` **92 文件 / 1122 用例通过（1 skipped，共 1123）**；
+  `npm run typecheck`（src + tests 双工程）**0 错误**；`npm run lint` **零输出**；
+  `npm audit --omit=dev` **0 vulnerabilities**。
 - 本分支（`feat/p0-port`）提交序列：`b8b0c37`（T301 WorkBuddy OAuth 设备授权与令牌看护）→
   `4e8e2ee`（T304 路由策略高级配置）→ `49c4f65`（T303 健康探测 + 自动降级 + 级联防护）→
   `bd27fe0`（T305 Freebuff 等待室与队列）→ `b5b3b1e`（T308 WorkBuddy Anthropic 桥）→
-  `307d751`（T307 面板系统设置页）→ `504d70d`（T306 面板运行日志页）。
+  `307d751`（T307 面板系统设置页）→ `504d70d`（T306 面板运行日志页）→（T302 余额刷新与池状态持久化）。
 - 本地历史中用到的 `preferredAccountId` / `onRetry` 透传语义与云端 `X-Upstream-Account` 接线
   **合并为一处实现**（`src/routes/provider-dispatch.ts` 的 `chatOpts`，`decision.preferredAccountId`
   优先、`args.preferredAccountId` 回落）。

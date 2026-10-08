@@ -303,7 +303,38 @@
     - 面板（`public/js/accounts.js`）：WorkBuddy 卡片增 realm 下拉 + 「添加账号（授权）」入口（面板内完成 start → 开窗 → 3s 轮询至 done，404 视为会话过期），账号行按 `/tokens` 渲染「待刷新」徽章
   - 测试：新增 `tests/workbuddy-t301.test.ts` 19 例 + `tests/workbuddy-t301-routes.test.ts` 8 例全绿（授权编排含 404/500/缺 url-state、4 次尝试与 1s/2s/4s 退避、待刷新不重复告警、中途成功清标记、runTick 只打窗口内、sync 保标记与账号消失清理、notify 抛错不外泄、parseTokenExpiry 各口径、Provider 接线与响应无凭据泄漏、三条路由 401/400/404/503、面板端点接线）
   - 门禁：全量 **86 文件 / 1061 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
-- [ ] T302 / T309~T310 / T401~T406 / T501~T505（见执行依据方案）
+- [x] T302 余额刷新与池状态持久化（2026-10-08 完成）
+  - deps: T301
+  - 范围：5min 积分余额刷新；`state.json` 原子写 + 锁 + 损坏重建
+  - 交付：
+    - 余额镜像：新增 `src/providers/workbuddy/balance-watch.ts`（`WorkBuddyBalanceWatch`）—— `observe(status)`
+      把 sidecar `/status` 的账号余额（`credits`/`creditsTotal`/`creditsExpiring`/`earliestExpiry`/
+      `earliestRemaining`）与**池状态**（`paused`/`disabled`/`cooling`）归一化落账；字段名走别名表
+      （驼峰 + 下划线双写兼容），时间戳 `normalizeEpoch` 兼容秒/毫秒
+    - **5min 节流落盘**：内存每次都更新，落盘按 `intervalMs`（默认 `BALANCE_INTERVAL_MS = 5min`）节流，
+      **不新增常驻定时器**（Bash 硬约束）；`refresh({force:true})` 与 `drain()` 可强制落盘
+    - 原子持久化：复用 `utils/state-store.ts` 的 `JsonStateStore`（临时文件 + rename）+ `withFileLock`
+      （`open(...,'wx')` 原子抢占、`staleMs` 兜底残留锁）；路径由 `resolveConfiguredStatePath` 解析
+      （`COMMANDCODE_STATE_PATH` > explicit > `data/state.json`）；**锁内不做 IO**（§3.4）
+    - 损坏恢复：文件非 JSON / 版本不符 / `accounts` 非对象 → 判定损坏，`initialize()` **不写盘**
+      （保住尚可抢救的原文件）+ 发 `state-corrupted` 告警 + `pendingRebuild=true`；`refresh()` 从 sidecar
+      `/status` 重建后发 `state-rebuilt`；重建前 `persistIfDue` 一律拒写
+    - 失败语义：`observe(null)` 只记 `consecutiveFailures` + 首次失败告警，**绝不清零账本**（读不到 ≠ 余额为 0）；
+      恢复后发 `refresh-recovered`；`snapshot().degradedReason` 按 pendingRebuild > failures > 未首刷 分级
+    - Provider 接线（`src/providers/workbuddy/provider.ts`）：`initialize()` 先载入镜像（失败仅 warn 不阻断）、
+      `refreshPool()` **复用同一次 `/status` 响应**推进镜像（零额外 IO）、`destroy()` 前 `drain()`；
+      新增 `balanceStatus()` / `refreshBalance()`；告警经 `notifyWebhook('workbuddy.balance', ...)`
+    - 路由（`src/routes/dashboard.ts`）：`GET /api/upstreams/workbuddy/balance`（只读镜像，未装配 404）、
+      `POST /api/upstreams/workbuddy/balance/refresh`（强制刷新，失败 503 不谎报成功）
+    - 卫生：`.gitignore` 排除 `data/state.json`（含账号 uid/昵称）及其 `.lock` / `*.tmp` 残留
+  - **已登记偏差**：§3.4 字面为「损坏时**从 usage 记录重建**」；实际改为**从 sidecar `/status` 重建**——
+    usage 里 WorkBuddy 只有消费侧原生量（`native.points`），反推不出剩余余额，拿它当重建源会写出
+    「看似成功实则错误」的账本；sidecar 才是余额的真正持有者。sidecar 亦不可用时保持降级且永不写盘。
+  - 测试：新增 `tests/workbuddy-t302.test.ts` 15 例 + `tests/workbuddy-t302-routes.test.ts` 4 例全绿
+    （三条 DoD 各有可执行取证：5min 节流用「内存更新 vs 磁盘不变」分离断言；kill -9 后重启由新实例读同一
+    文件逐字段相等；损坏恢复断言原文件未被覆盖 → 从 sidecar 重建 → 可解析）
+  - 门禁：全量 **92 文件 / 1122 用例全绿**（1 skipped，共 1123）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [ ] T309~T310 / T401~T406 / T501~T505（见执行依据方案）
 
 ## 4. 阶段记录
 
@@ -561,4 +592,27 @@ Release 由 workflow 自动创建。门禁：`verify` **80 文件 / 1003 用例�
 
 **教训（新增验收方法，已写入 HANDOFF §4）**：面板这类"交互之后落到哪个状态"的缺陷，静态文本断言测不出来，
 **必须真点一次**；而 Windows 专用分支的缺陷只有 `windows-latest` 能暴露 —— 判断门禁是否真绿要看**两个平台**。
+
+## 阶段记录 — T302 余额刷新与池状态持久化完成（2026-10-08）
+
+**结果：三条 DoD 全部有可执行取证，四条门禁全绿。**
+
+- DoD「积分按期刷新」：内存样本每次都更新，落盘按 5min 节流；测试用「+30s 内存变、磁盘不变 →
+  推过 `BALANCE_INTERVAL_MS` 后落盘且磁盘为最新值」分离断言。
+- DoD「kill -9 后重启状态一致」：`before` 实例 observe 后 `drain()`（不调 destroy），`after` 读同一
+  `state.json`，逐字段 `toEqual` 相等。
+- DoD「损坏文件恢复」：写入 `'NOT JSON {{{'` → `initialize()` 判损坏**且断言原文件内容未被覆盖** →
+  `refresh()` 从 sidecar `/status` 重建 → `state-rebuilt` 告警 → 文件可解析。
+
+**关键设计抉择与偏差登记**：§3.4 字面要求「损坏时从 usage 记录重建」。实测 usage 里 WorkBuddy 只有消费侧
+原生量（`native.points`），反推不出剩余余额 —— 拿它当重建源会写出**看似成功实则错误**的账本。故重建源
+改为 sidecar `/status`（余额的真正持有者）；sidecar 亦不可用时保持降级且**永不写盘**。该偏差已登记在
+`balance-watch.ts` 文件头与 CHANGELOG。
+
+**不新增依赖**（沿用 §3.4 自实现路线）：复用永在树的 `JsonStateStore` + `withFileLock`，未引入
+`async-mutex` / `proper-lockfile`；余额落盘同样不新增常驻定时器，复用 T303 既有 30s `probe()` 与
+`refreshPool()` 的同一次 `/status` 响应推进（零额外 IO）。
+
+**门禁**：`npm run verify` **92 文件 / 1122 用例全绿（1 skipped，共 1123）**；`typecheck` 双工程 0 错误；
+`lint` 零输出；`npm audit --omit=dev` 0 漏洞。
 

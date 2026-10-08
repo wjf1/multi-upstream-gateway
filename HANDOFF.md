@@ -50,10 +50,12 @@
     T306 面板运行日志页（`504d70d`）/ T307 面板系统设置页（`307d751`）/ T308 WorkBuddy Anthropic 桥（`b5b3b1e`）/
     T305 Freebuff 等待室与队列（`bd27fe0`）/ T303 健康探测 + 自动降级 + 级联防护（`49c4f65`）/
     T304 路由策略高级配置（strict / auto / same-model + 强制账号 + 规则热生效）（`4e8e2ee`）/
-    T301 WorkBuddy OAuth 设备授权与令牌看护（`b8b0c37`）。
-  - **当前门禁**：**合并云端 `origin/main` 后 90 文件 / 1103 用例全绿（1 skipped，共 1104）**；`typecheck` 双工程
-    0 错误、`lint` 零输出、`npm audit --omit=dev` 0 漏洞；合并后连跑两轮 verify 均全绿。
-    合并前：本分支 T301 交付后 86 文件 / 1061 用例；云端 `origin/main` 在 v5.0.4 发布时 80 文件 / 1002 用例。
+    T301 WorkBuddy OAuth 设备授权与令牌看护（`b8b0c37`）/
+    T302 余额刷新与池状态持久化（本地未提交，见 §4 首条）。
+  - **当前门禁**：**T302 交付后 92 文件 / 1122 用例全绿（1 skipped，共 1123）**；`typecheck` 双工程
+    0 错误、`lint` 零输出、`npm audit --omit=dev` 0 漏洞。
+    T302 之前：合并云端 `origin/main` 后 90 文件 / 1103 用例；合并前：本分支 T301 交付后 86 文件 / 1061 用例；
+    云端 `origin/main` 在 v5.0.4 发布时 80 文件 / 1002 用例。
     首轮合并复核暴露 2 例失败（`spa-upstream` 的 settings 白名单漏项、`state-store` 的 locks 顺序断言），均已修复（详见 §4）。
   - **当前远端（2026-10-08）**：产品仓库为 **PUBLIC**（`wjf1/multi-upstream-gateway`）；`main` 与 `feat/p0-port`
     已快进合并并推送（远端两者同点 `bd04489`）。**`v5.0.4` 已发布**（annotated tag + GitHub Release，Release 标题与
@@ -78,7 +80,7 @@
   **`@yao-pkg/pkg` 6.22.0**（维护中的 pkg fork——此前担忧的 "vercel/pkg 停维护" 风险在本线已解决，`build:win` 目标已是 node22）。
 - 依赖策略：全部精确版本（本次 Phase A 已去 `^`/`~`）。
 - **门禁三件套**：`npm run verify`（build + test）、`npm run typecheck`（src+tests 双工程，经 `tsconfig.test.json`）、`npm run lint`（零输出）。
-- 测试基线：**86 文件 / 1061 用例全绿（1 skipped）**（T301 WorkBuddy OAuth 设备授权与令牌看护交付后；此前 84/1034、83/1027、82/1022、81/1017、80/1010、79/997、78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
+- 测试基线：**92 文件 / 1122 用例全绿（1 skipped）**（T302 余额刷新与池状态持久化交付后；此前 T301 后 86/1061、84/1034、83/1027、82/1022、81/1017、80/1010、79/997、78/984、64/801、63/793、61/777、60/767、58/754、v5.0.2 为 55/713、v5.0.1 为 51/667、v5.0.0 为 50/658、v4.22.4 原始基线 48/626；红线只升不降）。
 - 其它脚本：`npm run dev` / `start` / `build:win` / `setup`（启动向导，移植自 P0）/ `test:coverage`。
 
 ## 3. 核心架构与文件拓扑
@@ -96,6 +98,36 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+
+- **T302 余额刷新与池状态持久化（2026-10-08，本次会话）**：
+  - **范围**：5min 积分余额刷新 + `data/state.json` 原子写/锁/损坏重建（DoD 三条闭环）。
+  - **余额镜像**：新增 `src/providers/workbuddy/balance-watch.ts`（`WorkBuddyBalanceWatch`）——`observe(status)`
+    把 sidecar `/status` 的账号余额与**池状态**（`paused`/`disabled`/`cooling`）归一化落账；字段名走驼峰 +
+    下划线别名表（`credits`/`points`/`balance`…、`creditsExpiring`/`credits_expiring`…），`normalizeEpoch`
+    兼容秒/毫秒时间戳；`snapshot()` 暴露 `degraded` / `degradedReason`（分级：pendingRebuild > 失败计数 > 未首刷）。
+  - **5min 节流落盘（不新增常驻定时器）**：内存样本每次更新，落盘按 `intervalMs`（默认
+    `DEFAULT_BALANCE_INTERVAL_MS = 5min`）节流；`refresh({force:true})` 与 `drain()` 强制落盘。落盘走
+    `utils/state-store.ts` 的 `JsonStateStore`（临时文件 + rename 原子替换）与 `withFileLock`（`open(...,'wx')`
+    原子抢占 + `staleMs` 兜底残留锁），路径由 `resolveConfiguredStatePath` 解析，**锁内不做 IO**（§3.4）。
+  - **损坏恢复**：文件非 JSON / 版本不符 / `accounts` 非对象 → 判损坏，`initialize()` **不写盘**（保住尚可
+    抢救的原文件）+ `state-corrupted` 告警 + `pendingRebuild`；`refresh()` 从 sidecar `/status` 重建后发
+    `state-rebuilt`，重建前 `persistIfDue` 一律拒写。
+  - **失败语义**：`observe(null)` 只记 `consecutiveFailures` + 首次失败告警，**绝不清零账本**（读不到 ≠ 余额为 0）；
+    恢复后发 `refresh-recovered`，避免每 5 分钟刷屏。
+  - **Provider 接线**（`src/providers/workbuddy/provider.ts`）：`initialize()` 先载入镜像（失败仅 warn 不阻断）、
+    `refreshPool()` **复用同一次 `/status` 响应**推进镜像（零额外 IO）、`destroy()` 前 `drain()`；新增
+    `balanceStatus()` / `refreshBalance()`；告警经 `notifyWebhook('workbuddy.balance', …)`。
+  - **路由**（`src/routes/dashboard.ts`）：`GET /api/upstreams/workbuddy/balance`（只读镜像，未装配 404）、
+    `POST /api/upstreams/workbuddy/balance/refresh`（强制刷新，sidecar 不可用 503 不谎报成功）。
+  - **卫生**：`.gitignore` 排除 `data/state.json`（含账号 uid/昵称，属本机运行数据）及其 `.lock` / `*.tmp`。
+  - **偏差登记（重要）**：§3.4 字面为「损坏时**从 usage 记录重建**」；实际改为**从 sidecar `/status` 重建** ——
+    usage 里 WorkBuddy 只有消费侧原生量（`native.points`），反推不出剩余余额，拿它当重建源会写出「看似成功
+    实则错误」的账本；sidecar 才是余额的真正持有者。该偏差已登记在 `balance-watch.ts` 文件头与 CHANGELOG。
+  - **测试与门禁**：新增 `tests/workbuddy-t302.test.ts` 15 例 + `tests/workbuddy-t302-routes.test.ts` 4 例全绿
+    （三条 DoD 各有可执行取证：5min 节流「内存变/磁盘不变」分离断言、kill -9 后重启由新实例读同一文件逐字段
+    相等、损坏恢复断言原文件未被覆盖 → 从 sidecar 重建 → 可解析）；全量 `npm run verify` **92 文件 / 1122 用例
+    全绿（1 skipped）**；`typecheck` 双工程 0 错误；`lint` 零输出；`npm audit --omit=dev` 0 漏洞。
+  - ⚠️ **本次为本地提交，尚未推送**。
 
 - **云端 `origin/main` 同步合并（2026-10-08，本次会话）**：
   - **范围**：把云端 `wjf1/multi-upstream-gateway` 的 `origin/main`（含 v5.0.4 / v5.0.5 两次发布）合并进本地
@@ -579,12 +611,13 @@
 - **当前队列**（严格按 `PLAN-STATE.md` §1 的顺序与 deps）：
   - ✅ `P0-PORT-A~F` **全部完成**（A 基座 / B 批次 B 语义 / C 新增模块 / D1 接线 / D2 薄适配层 / E 面板移植 / F 阶段门），**已部署**。
   - ✅ **P1 已完成七卡**：`T201`、`T202a`、`T202b`、`T203`、`P0-PORT-D2`（`1e011a5`）、`T204'`（`47f8a3a`）、`T205'`（并入）。
-  - ✅ **P2/P3 已完成八卡**：`T213`（阶段 1 `9b98d9d` + 阶段 2 `af6db03`）、`T213b`（`5658065`）、`T303`（`49c4f65`）、
+  - ✅ **P2/P3 已完成十卡**：`T213`（阶段 1 `9b98d9d` + 阶段 2 `af6db03`）、`T213b`（`5658065`）、`T303`（`49c4f65`）、
     `T304`（`4e8e2ee`）、`T305`（`bd27fe0`）、`T306`（`504d70d`）、`T307`（`307d751`）、`T308`（`b5b3b1e`）、
-    `T301` WorkBuddy OAuth 设备授权与令牌看护（本次，见 §4 首条）。
-  - ⬜ **下一张卡**：`T302` 余额刷新与池状态持久化（依赖 T301）—— 5min 积分余额刷新；`state.json` 原子写 + 锁 +
-    损坏文件重建（DoD：积分按期刷新、`kill -9` 后重启状态一致、损坏文件可恢复）。之后是 `T310` P2 阶段门
-    （依赖 T301~T308；DoD：第 6 章 A-F 组 P2 部分全绿、覆盖率 ≥60%）。
+    `T301` WorkBuddy OAuth 设备授权与令牌看护（`b8b0c37`）、`T302` 余额刷新与池状态持久化（本地未提交，见 §4 首条）。
+  - ⬜ **下一张卡**：`T310` P2 阶段门（依赖 T301~T308；DoD：第 6 章 A-F 组 P2 部分全绿、覆盖率 ≥60%）。
+
+  （`T302` 余额刷新与池状态持久化 — 依赖 T301 — 5min 积分余额刷新；`state.json` 原子写 + 锁 + 损坏文件重建
+  （DoD：积分按期刷新、`kill -9` 后重启状态一致、损坏文件可恢复）—— **已完成**，见 §4 首条。）
   - ⬜ **P1 阶段门 `T214`（仍卡外部 blocker）**：三源 E2E 需 **Freebuff Token（`FREEBUFF_TOKENS`）** 与
     **WorkBuddy sidecar Go 二进制**（从 `F:/AI/Qdor/review/workbuddy2api-panel` 构建），另需负责人签字确认 `DECISION` 行；
     自动化项已全绿。CommandCode 源 E2E 无前置。

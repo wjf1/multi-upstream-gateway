@@ -670,6 +670,20 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     return provider;
   };
 
+  /** T302：余额镜像端点的 duck-type（同一套「未装配即优雅降级」处理）。 */
+  const workbuddyT302 = () => {
+    const provider = fastify.providerRuntime?.get('workbuddy') as
+      | {
+          balanceStatus?: () => unknown;
+          refreshBalance?: () => Promise<{ ok: boolean; persisted: boolean; accounts: number; refreshedAt: number }>;
+        }
+      | undefined;
+    if (!provider || typeof provider.balanceStatus !== 'function' || typeof provider.refreshBalance !== 'function') {
+      return null;
+    }
+    return provider;
+  };
+
   fastify.post('/api/upstreams/workbuddy/login/start', async (req: any, reply) => {
     const provider = workbuddyT301();
     if (!provider) return reply.status(404).send({ ok: false, error: 'WorkBuddy provider is not available' });
@@ -706,6 +720,37 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     if (!provider) return reply.status(404).send({ ok: false, error: 'WorkBuddy provider is not available' });
     try {
       return { ok: true, ...(provider.tokenWatchStatus!() as object) };
+    } catch (err: any) {
+      return reply.status(503).send({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
+  // ── T302：WorkBuddy 余额镜像（只读）+ 手动强制刷新 ───────────────────────────
+  // 余额的刷新执行者是 sidecar（联邦裁决 G0-T2），网关只做镜像与原子持久化；
+  // 快照里带 `degraded` / `persistedAt`，便于面板区分「余额没变」与「读不到」。
+
+  fastify.get('/api/upstreams/workbuddy/balance', async (_req, reply) => {
+    const provider = workbuddyT302();
+    if (!provider) return reply.status(404).send({ ok: false, error: 'WorkBuddy provider is not available' });
+    try {
+      return { ok: true, ...(provider.balanceStatus!() as object) };
+    } catch (err: any) {
+      return reply.status(503).send({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
+  fastify.post('/api/upstreams/workbuddy/balance/refresh', async (_req, reply) => {
+    const provider = workbuddyT302();
+    if (!provider) return reply.status(404).send({ ok: false, error: 'WorkBuddy provider is not available' });
+    try {
+      const result = await provider.refreshBalance!();
+      logger.info(
+        `[DASHBOARD] WorkBuddy balance refresh requested (ok=${result.ok}, accounts=${result.accounts})`,
+      );
+      // sidecar 仍不可用时如实回报 503：镜像保持上次已知余额，不谎报成功。
+      return result.ok
+        ? { ...result, snapshot: provider.balanceStatus!() }
+        : reply.status(503).send({ ...result });
     } catch (err: any) {
       return reply.status(503).send({ ok: false, error: err?.message || String(err) });
     }
