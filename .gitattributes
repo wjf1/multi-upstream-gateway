@@ -1,0 +1,21 @@
+# 行尾统一为 LF（仓库内与工作区一致）。
+#
+# 起因：本仓此前没有 .gitattributes，而 Windows 上 `core.autocrlf=true` 会让 git 期望工作区是 CRLF，
+# 偏偏 npm / vitest / tsc 等工具写出的是 LF —— 两边不一致的结果是：每次跑完测试或安装依赖，
+# 被工具重写过的文件（`package-lock.json`、`tests/__snapshots__/*.snap`）都会以
+# `LF will be replaced by CRLF the next time Git touches it` 的形式伪装成"已修改"，
+# 干扰"工作区是否干净"的判断（实测每轮验收都要手动 restore 一次）。
+# `* text=auto eol=lf` 声明后，git 比较工作区内容时会先把 CRLF 归一化成 LF，
+# 与仓库内既有的 LF 一致，噪声随之消失；仓库内容不变（本仓 index 早已是 LF）。
+* text=auto eol=lf
+
+# 二进制文件不做行尾转换（显式声明，避免 auto 规则误判）。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.exe binary

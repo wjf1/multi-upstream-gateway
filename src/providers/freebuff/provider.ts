@@ -288,11 +288,25 @@ export class FreebuffProvider implements IProvider {
       });
     }
 
+    // 指定账号（X-Upstream-Account）只作首轮起点；后续每轮换号由 onRetry 回调决定，
+    // 契约与 commandcode 适配器一致：返回值 = 下一次要用的账号 ID，undefined = 沿用。
+    let preferredAccountId = opts.preferredAccountId;
+    const askNextAccount = async (attempt: number, reason: string): Promise<void> => {
+      if (!opts.onRetry) return;
+      try {
+        const next = await opts.onRetry(attempt, new Error(reason));
+        if (next) preferredAccountId = next;
+      } catch (cbErr) {
+        // 回调是调用方代码：它自己抛错不能连累本次请求的重试决策。
+        logger.warn(`freebuff onRetry callback failed: ${messageOf(cbErr)}`);
+      }
+    };
+
     for (let attempt = 0; attempt < MAX_RUN_ATTEMPTS; attempt++) {
       // 选号 + 预占租约（Round-robin + 冷却跳过；等待室信号透传为 503）。
       let lease: RunLease;
       try {
-        lease = await runs.acquire(agentId);
+        lease = await runs.acquire(agentId, preferredAccountId);
       } catch (err) {
         if (isWaitingRoomError(err)) {
           throw this.waitingRoomProxyError(err, opts.requestId);
@@ -329,12 +343,14 @@ export class FreebuffProvider implements IProvider {
         if (classified.action === 'refresh_session') {
           logger.warn(`${lease.pool.name}: ${classified.reason}, refreshing and retrying`);
           invalidateSession(lease.pool, classified.reason);
+          await askNextAccount(attempt, classified.reason);
           continue;
         }
         // server.go:330 —— run 失效：摘除 run 后重试（下一轮 rotate）。
         if (classified.action === 'rotate_run') {
           logger.warn(`${lease.pool.name}: ${classified.reason} (run ${lease.run.id}), rotating and retrying`);
           runs.invalidate(lease, classified.reason);
+          await askNextAccount(attempt, classified.reason);
           continue;
         }
         // server.go:337 —— token 被上游拒绝：固定冷却并让调用方换号/报错。
@@ -353,6 +369,7 @@ export class FreebuffProvider implements IProvider {
           logger.warn(
             `${lease.pool.name}: ${classified.reason}; cooling down ${Math.round(cooldownMs / 1000)}s and retrying`,
           );
+          await askNextAccount(attempt, classified.reason);
           continue;
         }
 
@@ -510,8 +527,16 @@ export class FreebuffProvider implements IProvider {
   }
 
   /**
-   * 热重载：只应用非凭据增量（apiBase / 超时 / UA / rotation）。
-   * Token 变更需重新 initialize（凭据从环境变量读取，热重载不触碰）。
+   * 热重载：应用非凭据增量（apiBase / 超时 / UA / rotation），并**按当前
+   * `FREEBUFF_TOKENS` 把新增 Token 补进池**。
+   *
+   * Token 的"增"可以热生效：运维改了 `.env` / 环境变量后触发热重载即可参保，
+   * 不必重启进程（此前必须重新 initialize 才认新 Token）。
+   *
+   * Token 的"删"**刻意不在这里做**：池有两个来源 —— 环境变量，以及面板
+   * `addAccount` 落进加密库的账号。若按 env 校准（把不在 env 里的池摘掉），
+   * 一次普通的配置保存就会把面板加的账号一起清掉，属"改配置丢账号"的事故级副作用。
+   * 移除账号只经面板 `removeAccount`（明确的用户动作，另有审计与落库）。
    */
   updateConfig(config: unknown): void {
     const next = resolveFreebuffConfig(config);
@@ -528,6 +553,27 @@ export class FreebuffProvider implements IProvider {
     this.cfg.userAgent = next.userAgent;
     this.cfg.enabled = next.enabled;
     this.enabled = next.enabled;
+
+    // ── Token 增量（只增不删，理由见上）──────────────────────────────────────
+    if (!this.runs) {
+      // 尚未 initialize：把 Token 集合记进 cfg，建池时按它走。
+      this.cfg.tokens = [...next.tokens];
+      return;
+    }
+    const registered = new Set(
+      this.runs.poolNames().map((name) => this.runs!.getPool(name)?.token ?? ''),
+    );
+    for (const token of next.tokens) {
+      if (registered.has(token)) continue;
+      try {
+        const pool = this.runs.addPool(token);
+        this.cfg.tokens.push(token);
+        logger.info(`[PVD:freebuff] token hot-added from config reload: ${pool.name}`);
+      } catch (err) {
+        // addPool 对重复 token 抛错；并发热重载下可能撞上，属无害竞争。
+        logger.warn(`[PVD:freebuff] could not hot-add token: ${messageOf(err)}`);
+      }
+    }
   }
 
   // ─── 内部工具 ──────────────────────────────────────────────────────────────

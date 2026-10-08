@@ -25,7 +25,7 @@ import { ErrorCode, ProxyError, toProxyError } from '../utils/errors.js';
 import { auditRequestStart, auditRequestEnd, accountTail } from '../utils/audit-log.js';
 import { guardRateLimit, recordRequestOutput } from '../utils/rate-limit.js';
 import { guardModelAccess } from '../utils/model-access.js';
-import { respondViaProvider } from './provider-dispatch.js';
+import { respondViaProvider, resolvePreferredAccount } from './provider-dispatch.js';
 import type { RouteDecision } from '../providers/core/router.js';
 
 function fmtNum(n: number): string {
@@ -193,6 +193,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
         reply,
         mode: 'chat',
         startTime,
+        preferredAccountId: resolvePreferredAccount(req.headers as never),
         finalize: (info) => {
           const acc = createUsageAccumulator();
           acc.inputTokens = info.inputTokens;

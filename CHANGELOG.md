@@ -4,53 +4,17 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **Freebuff 配置热重载可参保新 Token**（收口 T203 遗留「`updateConfig` 不热改 Token」）——
+  运维改完 `FREEBUFF_TOKENS` 后触发热重载，新 Token 立即参与调度，不必重启进程（此前必须重新
+  `initialize`）。**"删"刻意不做**：池有两个来源（环境变量 + 面板 `addAccount` 落进加密库），
+  若按 env 校准，一次普通的配置保存就会把面板加的账号一起清掉 —— 属"改配置丢账号"的事故级副作用，
+  故移除账号只经面板 `removeAccount`（明确的用户动作）。
+  测试：`tests/freebuff-config-hotreload.test.ts` 5 例（增量参保 / 新 Token 真的承接请求 /
+  **面板账号不被误删** / 重复热重载幂等 / 非凭据字段热更新通道不受影响）。
+
 ### 新增（P1 任务卡）
-
-- **T213 阶段 1：三源 Provider 运行时接线**（`9b98d9d`）—— `src/providers/runtime.ts`（ProviderRuntime：
-  三源装配 + T104 registry/router 实例 + 按需初始化 + 总闸/状态/registry 刷新）；
-  `GET /api/providers`、`POST /api/providers/:name/enable|disable`、`POST /api/providers/registry/refresh`；
-  `/v1/models` 追加 `freebuff/<id>`、`workbuddy/<id>` 命名空间条目（分片门控，缺省行为不变）。
-  **数据面（chat/messages）刻意不动**，切路由属阶段 2；配套 `tests/provider-{runtime,endpoints}.test.ts` 13 例。
-
-- **P0-PORT-D2：CommandCode Provider 薄适配层**（`1e011a5`）—— 落地 D1 报告决策「不搬家、只做薄包装」
-  （4.22.4 起 `src/adapters/commandcode/` 已模块化，整目录迁移收益低、回归风险高）。
-  新增 `src/providers/commandcode/provider.ts`（`CommandCodeProvider implements IProvider`，18 成员全集），
-  复用既有翻译引擎（CommandCodeAdapter + sendToCC）、配置/账号层、模型注册表与用量采集；
-  `chatCompletion` 产出文本增量、上游 `error` 事件转稳定错误码 ProxyError、无凭据不发请求；
-  `extractUsage` 复用 CC 事件采集器（缓存明细拆分 + provider-metadata 权威 costUsd，无权威值时为 null）；
-  账号面凭据只露尾 4 位。外部依赖全部经 `CommandCodeProviderDeps` 注入（测试不触网、不读写真实 config/.env）。
-  配套 `tests/commandcode-provider.test.ts` 19 例（先红后绿）。
-- **T204'/T205'：WorkBuddy 联邦透传 Provider + Sidecar 管理**（`47f8a3a`）—— 按 G0-T2 联邦裁决
-  （`docs/wb-source-diff-report.md` §7）与 master-plan §3.11 落地：选号/熔断/payload 管线由 Go sidecar 承接，
-  网关只做拉起/看护/透传/账号委托。`src/providers/workbuddy/sidecar.ts`：子进程拉起二进制 + `/healthz`
-  就绪轮询 + 崩溃自动重启（5min 内 3 次，超限置 crashed 面板可见）+ 有意停止 + 随主进程退出；
-  `src/providers/workbuddy/provider.ts`：`chatCompletion` 透传 `/v1/chat/completions`（流式 SSE → 文本增量）、
-  `conversation_id` 原样透传（T207' 网关侧唯一职责）、`rewriteMode` 总开关（full/passthrough 一键回退）、
-  `listModels` 读 sidecar 目录、账号委托（list 读 `/status`，pause/resume/remove 打 `/panel/api/accounts/{uid}/*`，
-  add 明确不支持并提示 OAuth 设备授权属 T301）、`probe` 真实 `/healthz` 并刷新池快照、
-  `extractUsage` 为 `costUsd=null` + `native.points`（§3.9 积分制不参与美元聚合）、
-  `sidecarStatus()` 供面板上游卡片显示进程状态。sidecar 端点为 Go 源码实测口径。
-  配套 `tests/workbuddy-{sidecar,provider}.test.ts` 22 例（先红后绿）。
-
-- **T213 阶段 2：数据面经六步路由分发三 Provider + 默认上游切换**（`af6db03`）——
-  chat/messages 路由接入 T104 路由器：前缀/注册表/显式指定/priority 四路决策，commandcode 走
-  既有通路（零回归），freebuff/workbuddy 经 `routes/provider-dispatch.ts` 渲染双出口
-  （OpenAI chunk / Anthropic 桥块生命周期）；`x-actual-upstream` 响应头；用量按真实来源落库
-  （persistCompletion 增 provider 维度，分发路径为本地估算）；
-  `POST /api/providers/default` 面板切换默认上游（热生效 + routing 分片持久化 + 重启等价读回）。
-  配套 `tests/provider-dispatch.test.ts` 10 例（真实监听端口 + 假 Provider marker，含混合并发 50
-  无跨 Provider 污染与错误注入）。**注意**：缺省部署（无 freebuff/workbuddy 分片）行为与接线前一致。
-
-- **T208~T212：面板五页多源消费面**（`85b0ed9` + `d2611c7`）—— 新增「上游」页签（Provider 卡片、
-  启停总闸热生效、默认上游切换、WorkBuddy sidecar 进程视图）与总览异常横幅（health 异常出现/恢复消失，
-  T213 DoD 收口）；账号页多上游账号分栏（`GET /api/providers/:name/accounts`，凭据脱敏）；模型目录
-  命名空间徽章；用量页分上游口径表（`GET /api/usage/by-provider`，§3.9 不跨上游混加）。
-  配套 `tests/spa-upstream.test.ts` 12 例 + `tests/multi-source-panel.test.ts` 6 例。
-
-- **T213b：配置源收口**（`5658065`）—— UnifiedConfigStore 进程单例装配（热重载）；`rateLimit` /
-  `modelAccess` 分片非空时驱动限流与模型访问守卫（store 优先、env 回退，缺省部署零破坏）；
-  legacy 扁平分支 `syncEnvFile` 在加密库可用时不再写明文 `COMMANDCODE_API_KEY` 并摘除旧行。
-  配套 `tests/config-source-closure.test.ts` 8 例。
 
 - **T303：健康探测 + 自动降级 + 级联防护** —— 完善级联防护体系（§3.6）：
   核心引擎：新增 `src/providers/core/degradation.ts`（`DegradationManager`），管理全局并发在途深度（`queueMaxDepth` 默认 128，超限 503+Retry-After）；提供 30s 定时探活调度器；支持 30s 滑动窗口内 429 达 2 次自动摘除并标记 degraded；支持渐进切换（切换后第 1 分钟 10%，每分钟 +10% 平滑承接，平滑直方图无瞬时尖峰）；
@@ -131,20 +95,225 @@
   （远超 ≥55% 门槛）；5 分钟自动化泄漏监控（`scripts/soak.mjs` 400 请求，RSS 净降 31.9MB）
   与 CommandCode / Freebuff 快照测试全部通过。
 
+### 🐛 修复
+
+- **「系统设置」页点一次就弹回概览（hash 路由白名单漏项，与 v5.0.5 修掉的「上游」页同形）** ——
+  T307 新增了 `#/settings` 页签与面板，但 `public/js/core.js` 的 `ROUTES` 白名单没同步加名；
+  `switchTab('settings')` 写完 hash 后，`hashchange` 处理器把它判成未知路由并回落 `overview`。
+  **该缺陷在云端 v5.0.4/v5.0.5 上同样存在**（v5.0.5 只补了 `upstream` 一项），
+  是本次合并后由 `tests/spa-upstream.test.ts` 的「白名单与页签集合一致」断言拦下的。
+  修复：`ROUTES` 补 `settings`，并把该断言的注释补上本次复现记录。
+- **合并复核发现的测试断言错误（全量并发下偶发红）** —— `tests/state-store.test.ts` 的
+  `withFileLock` 互斥用例断言了「先发起者必先持锁」（`['a-in','a-out','b-in','b-out']`）。
+  两个 `withFileLock` 同时发起时，谁先 `open(..., 'wx')` 落地并不确定，全量并发下会翻成
+  `b` 先进入。契约只保证**临界区不交错**，故断言改为「同一持有者的 in/out 相邻、两个持有者不同」，
+  不再锁定胜出顺序。
+- **`src/utils/state-store.ts` 两处门禁问题** —— `parsed.error` 在 `tsconfig.test.json`（`strict: false`）
+  下无法按布尔判别式收窄（布尔字面量被加宽为 `boolean`），改用 `'error' in parsed` 收窄；
+  `withFileLock` 里 `let stale = false` 的初值从未被读取，触发 `no-useless-assignment`，改为直接取 `mtimeMs`。
+
 ### 变更说明
 
-- 三个 Provider（CommandCode/Freebuff/WorkBuddy）外壳均已就位，但**尚未接入运行时**——
-  接入 `src/index.ts` / `src/routes/` 统一属 T213；T202 卡 DoD「Anthropic SDK 调 /v1/messages 通过」同步定于 T213 收口。
-- 遗留（T213 收口，登记于 PLAN-STATE）：限流/modelAccess 双轨配置源、legacy 扁平分支 `syncEnvFile`
-  的 `COMMANDCODE_API_KEY` 明文行、`saveConfigFile` 旧扁平分支明文回写。
+- 新增评审材料 `docs/review/decision-path-unification.md`（判"谁能用哪个模型 / 请求是否超限"的
+  **两套执行路径**现状对比、三条真实风险与三个候选方案）—— 把 PLAN-STATE 里一句"待独立评审"
+  变成可决策的材料，**不改任何行为**。
+- 顺带补上一个纯文档缺口：README 错误码表缺 `MODEL_ACCESS_DENIED`（走全局 preHandler 被拦的请求
+  会返回该码，此前文档里查不到），同时把 `MODEL_NOT_IN_PLAN` 的描述补全为"套餐档位**或**模型访问策略"。
+- 记录一处调用约定（本轮写测试时踩到）：热重载的入参必须是**完整分片** —— `resolveFreebuffConfig`
+  对缺失字段回落默认值，传空对象会把 `apiBase` 重置为官方默认 `www.codebuff.com`，现象上像
+  "热重载把上游地址改坏了"。调用方（配置热重载接线）应传与 `initialize` 相同的分片。
 
 ### 验证
 
-- 全量 `npm run verify` **84 文件 / 1034 用例全绿（1 skipped）**（此前 83 文件 / 1027 用例）；
-  覆盖率 **Statements 81%+**；
-  `npm audit --omit=dev` **0 vulnerabilities**；
-  `npm run typecheck`（src+tests 双工程）0 错误；`npm run lint` 零输出。
-- 提交序列：`1e011a5`（D2）→ `d879121`（PLAN-STATE）→ `47f8a3a`（T204'/T205'）→ `fe6350c`（PLAN-STATE）→ `304ac6d`（文档）→ `9b98d9d`（T213 阶段 1）→ `fc36e5b`（PLAN-STATE）→ `eb103a3`（文档）→ `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→ `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（P0-PORT 补齐 + T214 取证）→ `504d70d`（T306 面板运行日志页）→ `307d751`（T307 面板系统设置页）→ `b5b3b1e`（T308 WorkBuddy Anthropic 桥）→ `bd27fe0`（T305 Freebuff 等待室与队列）→ `49c4f65`（T303 健康探测 + 自动降级 + 级联防护）→ `4e8e2ee`（T304 路由策略高级配置）→ `b8b0c37`（T301 WorkBuddy OAuth 设备授权与令牌看护）。
+- 合并云端 `origin/main`（v5.0.4 / v5.0.5 发布）后重跑全量门禁：`npm run verify`
+  **90 文件 / 1103 用例通过（1 skipped，共 1104）**；`npm run typecheck`（src + tests 双工程）
+  **0 错误**；`npm run lint` **零输出**；`npm audit --omit=dev` **0 vulnerabilities**。
+  合并后连跑两轮 verify 均全绿（首轮暴露的 2 例失败已定位并修复，见 `### 🐛 修复`）。
+- 本分支（`feat/p0-port`）提交序列：`b8b0c37`（T301 WorkBuddy OAuth 设备授权与令牌看护）→
+  `4e8e2ee`（T304 路由策略高级配置）→ `49c4f65`（T303 健康探测 + 自动降级 + 级联防护）→
+  `bd27fe0`（T305 Freebuff 等待室与队列）→ `b5b3b1e`（T308 WorkBuddy Anthropic 桥）→
+  `307d751`（T307 面板系统设置页）→ `504d70d`（T306 面板运行日志页）。
+- 本地历史中用到的 `preferredAccountId` / `onRetry` 透传语义与云端 `X-Upstream-Account` 接线
+  **合并为一处实现**（`src/routes/provider-dispatch.ts` 的 `chatOpts`，`decision.preferredAccountId`
+  优先、`args.preferredAccountId` 回落）。
+
+## [5.0.5] - 2026-10-08
+
+> 补丁版：修复 v5.0.4 里「上游」页完全打不开的阻塞缺陷（hash 路由白名单漏项），并清掉面板品牌残留、
+> 「新版本」徽章指向另一个仓库、以及通知路径的同步阻塞（后者曾让 Windows CI 偶发判红）。
+
+### 🐛 修复
+
+- **Windows CI 上 `admin-boundary` 用例超时判红（通知路径同步阻塞事件循环）** —— 该用例的写操作正例
+  会真的暂停一次引擎，而引擎暂停会发桌面通知：`notifier.ts` 的通知前置检查用 **`spawnSync`** 同步读注册表
+  与起 PowerShell（其中读系统通知总开关的超时上限原为 **15s**），同步等待位于请求路径的事件循环里。
+  ubuntu 上不触发这条 Windows 专用分支，而 windows-latest runner 上 PowerShell 冷启动实测 **10s+**，
+  把用例拖成超时（实测 10832ms 判红，同一提交在 ubuntu 与本机均通过 —— 属间歇性）。
+  修复：① 读系统通知开关的超时 15s → **3s**，AUMID 注册的 3 处 `reg` 调用补 `timeout: 3000`
+  （超时按"读不到"处理，沿用既有回退逻辑，通知语义不变）；② `admin-boundary` 测试整体关闭通知
+  （`COMMANDCODE_NOTIFY=0`）—— 它验的是鉴权边界，不该真的弹系统通知。
+  这也顺带修掉了审计材料 `docs/review/architecture-review.md` P2-11 登记的"`notifier.ts` 同步阻塞 ≤15s"。
+- **面板「上游」页点不开（阻塞级）** —— `public/js/core.js` 的 hash 路由白名单 `ROUTES` 漏了 T208 新增的
+  `upstream`。`switchTab()` 末尾会把 hash 写成 `#/<tab>`，而 `hashchange` 处理器对不在白名单里的 hash
+  一律回落 `overview` —— 于是**点「上游」页签会被立刻弹回概览，该页完全无法使用**（直链 `#/upstream`
+  也只显示概览）。此前 12 条 `spa-upstream` 断言全是静态文本比对（骨架是否齐备），测不出"点击之后路由
+  落到哪一页"。修复：白名单补齐 6 项，并加注释写明"新增页签必须同步改 `ROUTES`"。
+  回归锁：`tests/spa-upstream.test.ts` 新增一条断言 —— **`ROUTES` 与 `index.html` 的页签集合必须一致**。
+  （由 T214「面板逐页验收」的真实浏览器走查发现：静态断言全绿，真实点一次按钮即复现。）
+- **面板仍用旧品牌名，且「新版本」徽章指向上游仓库** —— `public/index.html` 的 `<title>` 与页头 h1 仍写
+  "CommandCode 代理"，`#updateBadge` 的 href 仍指向 `wjf1/commandcode-proxy/releases`。产品已分化为
+  multi-upstream-gateway，用户点"新版本"会被带到**另一个项目**的发布页（后端 `update-check.ts` 早已指向
+  本仓库，只有这个前端链接漏改）。现改为"多上游 AI 网关" + 本仓库 releases 链接，6 个面板脚本的头部注释
+  一并同步。
+
+### 新增
+
+- **T214 阶段门：「错误注入降级（strict 语义）」验收测试**（`tests/t214-strict-degradation.test.ts`，9 例）——
+  把 master-plan §3.6 的 strict 语义从"文档承诺"变成"可回归锁"：
+  ① 选定上游失败 → 稳定错误码（502 `PROVIDER_PROTOCOL_ERROR`）且**其它 Provider 一次都没被调用**（无跨上游兜底）；
+  ② 流式在首字节之后失败 → 只能中断（已产出内容保留、错误码并入内容流），**禁止跨 Provider 切换**；
+  ③ 未装配 / 全部注入故障 → 明确状态码（503 `NO_PROVIDER_AVAILABLE` / 502），不是 500 内部错误、不挂起；
+  ④ 显式 `X-Upstream-Provider` 点名已停用上游 → router 在决策期直接拒绝（带 `explicitly requested` 文案）。
+
+### 变更说明
+
+- 修正 `src/utils/update-check.ts` 里一条已过期的事实描述：原文写"本项目只打 tag、不创建 Release 对象，
+  `releases/latest` 会永久停在旧版本"，而自 v5.0.0 起 Release workflow 已随 tag 自动建 Release。
+  实现仍用 `/tags` 取最大 semver（覆盖面更广、不受 Release 发布状态影响），故只改注释、不改逻辑。
+- **登记一处契约缺口（测试锁定现状，未改产品行为）**：六步路由决策的**步骤 3（模型名前缀）不检查
+  `enabled`** —— 停用某上游后，带该前缀的请求仍会被放行到该 Provider，由 Provider 自身
+  （如 `FreebuffProvider.assertEnabled`）抛 503 拒绝。结果是对的（仍是 503、且不静默换上游），但与
+  步骤 1/2（header / `extra_body` 显式指定 → router 直接抛 503 且带 Retry-After 文案）**不同源**，
+  且 `router.ts` 文件头注释只声明了「粘性步骤落空」，未声明前缀路径的这层分工。建议确认语义后二选一：
+  把 `enabled` 检查提到步骤 3（统一文案与 Retry-After），或在 router 注释与 master-plan §3.3 中明确
+  「前缀路径依赖 Provider 自检」。对应用例注释已写明：若今后把检查提到步骤 3，该断言会变红，
+  届时同步更新契约说明。
+
+### 验证
+
+- 全量 `npm run verify` **80 文件 / 1003 用例全绿（1 skipped）**；`npm run typecheck` 双工程 0 错误；
+  `npm run lint` 零输出。
+- **GitHub Actions CI 双平台通过**：`ubuntu-latest` 与 `windows-latest` 均绿 —— 本次修复的直接动因就是
+  windows-latest 上 `admin-boundary` 用例因通知路径同步阻塞而超时判红（同一提交在 ubuntu 与本机全绿）。
+
+## [5.0.4] - 2026-10-08
+
+> 单面板三源统一网关正式接线完成：三个 Provider（CommandCode / Freebuff / WorkBuddy）全部接入运行时，
+> 数据面按路由决策分发、面板多源消费面（上游 / 账号 / 模型 / 用量）就位；新增「指定上游账号」能力；
+> 并修复一个会让**全新克隆**门禁必红的快照基建缺陷。
+
+### 新增
+
+- **T213 阶段 1：三源 Provider 运行时接线**（`9b98d9d`）—— `src/providers/runtime.ts`（ProviderRuntime：
+  三源装配 + T104 registry/router 实例 + 按需初始化 + 总闸/状态/registry 刷新）；
+  `GET /api/providers`、`POST /api/providers/:name/enable|disable`、`POST /api/providers/registry/refresh`；
+  `/v1/models` 追加 `freebuff/<id>`、`workbuddy/<id>` 命名空间条目（分片门控，缺省行为不变）。
+  **数据面（chat/messages）刻意不动**，切路由属阶段 2；配套 `tests/provider-{runtime,endpoints}.test.ts` 13 例。
+
+- **P0-PORT-D2：CommandCode Provider 薄适配层**（`1e011a5`）—— 落地 D1 报告决策「不搬家、只做薄包装」
+  （4.22.4 起 `src/adapters/commandcode/` 已模块化，整目录迁移收益低、回归风险高）。
+  新增 `src/providers/commandcode/provider.ts`（`CommandCodeProvider implements IProvider`，18 成员全集），
+  复用既有翻译引擎（CommandCodeAdapter + sendToCC）、配置/账号层、模型注册表与用量采集；
+  `chatCompletion` 产出文本增量、上游 `error` 事件转稳定错误码 ProxyError、无凭据不发请求；
+  `extractUsage` 复用 CC 事件采集器（缓存明细拆分 + provider-metadata 权威 costUsd，无权威值时为 null）；
+  账号面凭据只露尾 4 位。外部依赖全部经 `CommandCodeProviderDeps` 注入（测试不触网、不读写真实 config/.env）。
+  配套 `tests/commandcode-provider.test.ts` 19 例（先红后绿）。
+- **T204'/T205'：WorkBuddy 联邦透传 Provider + Sidecar 管理**（`47f8a3a`）—— 按 G0-T2 联邦裁决
+  （`docs/wb-source-diff-report.md` §7）与 master-plan §3.11 落地：选号/熔断/payload 管线由 Go sidecar 承接，
+  网关只做拉起/看护/透传/账号委托。`src/providers/workbuddy/sidecar.ts`：子进程拉起二进制 + `/healthz`
+  就绪轮询 + 崩溃自动重启（5min 内 3 次，超限置 crashed 面板可见）+ 有意停止 + 随主进程退出；
+  `src/providers/workbuddy/provider.ts`：`chatCompletion` 透传 `/v1/chat/completions`（流式 SSE → 文本增量）、
+  `conversation_id` 原样透传（T207' 网关侧唯一职责）、`rewriteMode` 总开关（full/passthrough 一键回退）、
+  `listModels` 读 sidecar 目录、账号委托（list 读 `/status`，pause/resume/remove 打 `/panel/api/accounts/{uid}/*`，
+  add 明确不支持并提示 OAuth 设备授权属 T301）、`probe` 真实 `/healthz` 并刷新池快照、
+  `extractUsage` 为 `costUsd=null` + `native.points`（§3.9 积分制不参与美元聚合）、
+  `sidecarStatus()` 供面板上游卡片显示进程状态。sidecar 端点为 Go 源码实测口径。
+  配套 `tests/workbuddy-{sidecar,provider}.test.ts` 22 例（先红后绿）。
+
+- **T213 阶段 2：数据面经六步路由分发三 Provider + 默认上游切换**（`af6db03`）——
+  chat/messages 路由接入 T104 路由器：前缀/注册表/显式指定/priority 四路决策，commandcode 走
+  既有通路（零回归），freebuff/workbuddy 经 `routes/provider-dispatch.ts` 渲染双出口
+  （OpenAI chunk / Anthropic 桥块生命周期）；`x-actual-upstream` 响应头；用量按真实来源落库
+  （persistCompletion 增 provider 维度，分发路径为本地估算）；
+  `POST /api/providers/default` 面板切换默认上游（热生效 + routing 分片持久化 + 重启等价读回）。
+  配套 `tests/provider-dispatch.test.ts` 10 例（真实监听端口 + 假 Provider marker，含混合并发 50
+  无跨 Provider 污染与错误注入）。**注意**：缺省部署（无 freebuff/workbuddy 分片）行为与接线前一致。
+
+- **T208~T212：面板五页多源消费面**（`85b0ed9` + `d2611c7`）—— 新增「上游」页签（Provider 卡片、
+  启停总闸热生效、默认上游切换、WorkBuddy sidecar 进程视图）与总览异常横幅（health 异常出现/恢复消失，
+  T213 DoD 收口）；账号页多上游账号分栏（`GET /api/providers/:name/accounts`，凭据脱敏）；模型目录
+  命名空间徽章；用量页分上游口径表（`GET /api/usage/by-provider`，§3.9 不跨上游混加）。
+  配套 `tests/spa-upstream.test.ts` 12 例 + `tests/multi-source-panel.test.ts` 6 例。
+
+- **T213b：配置源收口**（`5658065`）—— UnifiedConfigStore 进程单例装配（热重载）；`rateLimit` /
+  `modelAccess` 分片非空时驱动限流与模型访问守卫（store 优先、env 回退，缺省部署零破坏）；
+  legacy 扁平分支 `syncEnvFile` 在加密库可用时不再写明文 `COMMANDCODE_API_KEY` 并摘除旧行。
+  配套 `tests/config-source-closure.test.ts` 8 例。
+
+- **指定上游账号（`X-Upstream-Account`）端到端接线** —— 收口 T203 登记的遗留「`preferredAccountId` /
+  `onRetry` 未透传到选号」。此前 `ChatOptions` 里的这两个字段在数据面**从未被赋值**
+  （`src/routes/` 下 grep 零命中），契约一直空转。
+  - 路由层：`routes/provider-dispatch.ts` 新增 `resolvePreferredAccount()` 解析 `X-Upstream-Account`
+    （重复头取首值、空白/非字符串视为未指定），`chat.ts` / `messages.ts` 两个出口经
+    `ProviderDispatchArgs.preferredAccountId` 透传；指定时留一行
+    `[DISPATCH] <provider> preferred account "<id>" requested` 便于排障。
+  - 选号：`RunManager.acquire(agentId, preferredAccountId?)` 与 `selectStartIndex()` 增加最高优先级
+    「指定账号」；命中且未暂停直接生效，**未命中或已暂停则告警并回退**到 selector / round-robin
+    —— 指定一个坏账号不该把一次请求升级成失败。
+  - 重试：`FreebuffProvider.chatCompletion` 在三类换号重试（`refresh_session` / `rotate_run` /
+    `cooldown_soft`）前调用 `opts.onRetry(attempt, err)`，返回值作为下一轮指定账号（契约与
+    `adapters/commandcode/upstream.ts` 的 `onRetry` 对齐：返回值而非出参）；回调自身抛错只告警，
+    不影响本轮重试决策。
+  - 边界：该头只对按账号调度的 Provider 生效（当前为 Freebuff），其余 Provider 忽略、零回归。
+  - 测试：`tests/freebuff-preferred-account.test.ts` 9 例（头解析 3 例 + 命中/未命中/暂停回退 +
+    `onRetry` 生效 / 返回 undefined / 抛错）。
+
+### 🐛 修复
+
+- **`tests/snapshot/scenarios.mjs` 从未入库，导致全新克隆的 `typecheck` / `verify` 必红**（阻塞级）。
+  `.gitignore` 的全局 `*.mjs` 规则把它静默吞掉——而它与 `scripts/collect-fixtures.mjs`、
+  `tests/snapshot/helpers.ts` 及两个快照用例共同构成 T107 基建。后果是：开发机上文件只在磁盘
+  （未跟踪）→ 门禁全绿；任何**全新克隆**跑 `npm run typecheck` 会报 3 条 `TS2307`，快照套件
+  import 失败。这是 HANDOFF §6 避坑 #2 记录的 `*.mjs` 坑**第三次复现**（前两次在 `*.mjs` 脚本清单上）。
+  - `.gitignore` 补例外 `!tests/snapshot/scenarios.mjs`（附注释说明为何必须入库）。
+  - 按调用契约重建该文件（`sentinelFor` / `scenarioNameFromBody` / `renderScenario` / `CC_SCENARIOS`），
+    并把 `renderScenario('commandcode-chat-basic')` 的产出与既有 upstream fixture 做**逐字节比对**
+    （通过）——录制路径与回放基线一致，未改写任何 fixture。
+- **`package-lock.json` 的包名/版本停留在上游 4.22.4**：`name` 仍是 `commandcode-proxy-v4`、`version`
+  仍是 `4.22.4`，与 `package.json`（`multi-upstream-gateway` / 5.0.3）不一致；任何一次 `npm install`
+  都会重写它，把与改动无关的噪声混进 diff。已对齐为当前包名与版本。
+
+### 🔧 变更
+
+- **构建产物改名**：`build:win` 输出由 `dist/commandcode-proxy-v4.exe` 改为
+  **`dist/multi-upstream-gateway-v5.exe`**（README 中英双语的构建说明同步更新）。
+  该文件名未被 `.github/workflows/` 引用，CI 无需联动。
+
+### 变更说明
+
+- 三个 Provider（CommandCode / Freebuff / WorkBuddy）**均已接入运行时**（T213 阶段 1+2）：
+  数据面按「前缀 / 注册表 / 显式指定 / priority」四路决策分发。**缺省部署行为与接线前完全一致** ——
+  实际可用上游仍是 CommandCode 一个：Freebuff 需配置 `providers.freebuff` 分片与 `FREEBUFF_TOKENS`，
+  WorkBuddy 需 sidecar Go 二进制（联邦透传路线）。
+- 配置源已收口（T213b）：限流 / modelAccess 在 store 分片非空时优先于 env、空分片回退 env；
+  legacy 扁平分支不再写明文 `COMMANDCODE_API_KEY`。
+- 遗留（登记于 PLAN-STATE）：判定路径合一（modelAccess / 限流的两套执行路径）待独立评审；
+  `FreebuffAccountPool` 契约适配层**有意不接入**（与 RunManager 自身选号构成双轨）；`updateConfig`
+  热改 Token 待做。
+
+### 验证
+
+- 全量 `npm run verify` **79 文件 / 993 用例全绿（1 skipped）**；覆盖率 **Statements 80.97%**
+  （5003/6179）、Conditionals 68.30%、Methods 82.70%，远超 ≥55% 门槛；`npm run typecheck`（src+tests
+  双工程）0 错误（快照基建缺文件时曾为 3 条 `TS2307`）；`npm run lint` 零输出；
+  `npm audit --omit=dev` **0 vulnerabilities**。
+- 5 分钟自动化泄漏监控（`scripts/soak.mjs`，400 请求）RSS 净降 31.9MB；CommandCode 与 Freebuff
+  端到端快照测试通过；GitHub Actions CI（`npm ci` → lint → typecheck → build → 全量测试 → 覆盖率
+  → 启动代理探活）通过。
+- 提交序列：`1e011a5`（D2）→ `d879121` → `47f8a3a`（T204'/T205'）→ `fe6350c` → `304ac6d` →
+  `9b98d9d`（T213 阶段 1）→ `fc36e5b` → `eb103a3` → `af6db03`（T213 阶段 2）→ `85b0ed9`（T208/T209）→
+  `d2611c7`（T210~T212）→ `5658065`（T213b）→ `bce7e4e`（移植测试收口）→ `2adffd5`（v5.0.3 判据修正）→
+  `510556d`（快照单源入库）→ `9ed1915`（账号指定接线）→ `896987a`（产物改名）→ `71ed9c1` / `8340e68`（文档与合并）。
 
 ## [5.0.3] - 2026-10-07
 

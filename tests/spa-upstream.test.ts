@@ -43,6 +43,20 @@ describe('上游管理页：tab 语义与骨架', () => {
     expect(inline.length).toBe(1); // 仅剩 head 主题防闪屏 1 行
     expect(inline[0]).toContain('ccproxy-theme');
   });
+
+  // 真实缺陷回归（T214 面板逐页验收发现）：core.js 的 ROUTES 白名单漏了 'upstream'，
+  // 于是 switchTab('upstream') 写完 hash 后，hashchange 处理器把它判成未知路由并回落
+  // overview —— 上游页"点了就弹回概览"，完全打不开。上面几条静态断言都测不出来，
+  // 因为它们只看骨架是否齐备，不看点击后的路由结果。
+  it('hash 路由白名单与页签集合一致（漏加会让该页「点了就弹回概览」）', () => {
+    const tabs = [...html.matchAll(/id="tab-([a-z]+)"/g)].map(m => m[1]).sort();
+    const routes = [...coreJs.matchAll(/const ROUTES = \[([^\]]*)\]/g)]
+      .flatMap(m => m[1].split(',').map(s => s.trim().replace(/['"]/g, '')).filter(Boolean))
+      .sort();
+    expect(routes.length).toBeGreaterThan(0);
+    expect(tabs.length).toBeGreaterThan(0);
+    expect(routes).toEqual(tabs);
+  });
 });
 
 describe('upstream.js：数据通路与安全红线', () => {

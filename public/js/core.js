@@ -1,5 +1,5 @@
 // =============================================================================
-// CommandCode 代理面板 · 公共核心（core.js）
+// 多上游 AI 网关面板 · 公共核心（core.js）
 // -----------------------------------------------------------------------------
 // T110：原 public/index.html 中那一整块内联脚本（第 474 行起）按页外置，本文件是
 // 公共层。index.html 只留骨架 + 6 个 defer 外部脚本：
@@ -211,9 +211,16 @@ function toggleTheme() {
 }
 applyTheme((() => { try { return localStorage.getItem(THEME_KEY) || 'dark'; } catch { return 'dark'; } })());
 
-// ─── hash 路由（#/overview | #/accounts | #/usage | #/models | #/logs）────────
-// 只有这 5 个既有分区，不造新页；刷新/直链按 hash 恢复页面，tab 点击行为不变。
-const ROUTES = ['overview', 'accounts', 'usage', 'models', 'logs'];
+// ─── hash 路由（#/overview | #/upstream | #/accounts | #/usage | #/models | #/logs | #/settings）──
+// 必须与 index.html 的 .tab-btn 集合一一对应，不造新页；刷新/直链按 hash 恢复页面，
+// tab 点击行为不变。
+// ⚠️ 新增页签时必须同时把路由名加进 ROUTES：switchTab() 末尾会把 hash 写成 `#/<tab>`，
+//    随后 hashchange 处理器对**不在 ROUTES 里的 hash 一律回落 overview** —— 漏加会让新页
+//    "点了就弹回概览"（T208 新增的上游页即因此完全打不开，直到 T214 面板逐页验收才发现；
+//    T307 的系统设置页同样漏加，v5.0.5 只补了 upstream，本次靠下面的断言拦下）。
+//    真正点一次按钮即可复现，静态文本断言测不出来。测试锁：tests/spa-upstream.test.ts
+//    断言 ROUTES 与页签集合一致。
+const ROUTES = ['overview', 'upstream', 'accounts', 'usage', 'models', 'logs', 'settings'];
 let currentTab = 'overview';
 function routeFromHash() {
   const m = (location.hash || '').match(/^#\/(\w+)/);

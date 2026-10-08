@@ -132,8 +132,17 @@
     会话端点恒 401 时 probe 稳定不健康（刻意不信任会话缓存，修掉 T201「缓存 active 但 Token 已吊销」漏判）
   - 凭据：新增 Token 落 T103 加密库（断言磁盘为 AES-256-GCM 密文、新实例可读回、与 commandcode 账号共库互不干扰）
   - 门禁：55 文件 / 709 用例全绿；typecheck 双工程 0 错误；lint 零输出
-  - 遗留（T213 接线）：`FreebuffAccountPool` 尚未接入 provider/路由；`preferredAccountId`/`onRetry` 未透传到选号；
-    面板账号页未消费 `snapshot()`；`updateConfig` 不热改 Token
+  - 遗留（T213 接线）——**2026-10-08 复核后的状态**：
+    ① ✅ `preferredAccountId`/`onRetry` 未透传到选号 —— **已收口**（`X-Upstream-Account` 端到端接线：
+    `routes/provider-dispatch.ts::resolvePreferredAccount` → chat/messages 两出口 →
+    `RunManager.acquire(agentId, preferredAccountId?)` 选号优先级；重试侧消费 `onRetry`。见本轮阶段记录）；
+    ② ✅ 面板账号页未消费 `snapshot()` —— **已由 T210 满足**（`FreebuffProvider.listAccounts()`
+    本身即基于 `runs.snapshots()`，`/api/providers/:name/accounts` 与面板多源账号页消费它）；
+    ③ ⬜ `FreebuffAccountPool`（`providers/freebuff/account-pool.ts`）尚未接入 provider/路由 ——
+    **评估后不接**：它与 RunManager 自身选号构成双轨，接入要同时成立两套调度，理由同 D2「不搬家只薄包装」；
+    ④ ✅ `updateConfig` 不热改 Token —— **已收口**（2026-10-08）：热重载按当前 `FREEBUFF_TOKENS`
+    补入新 Token（不必重启进程）；删除**刻意不做**（池有两个来源，按 env 校准会摘掉面板加的账号），
+    移除账号只经面板 `removeAccount`。测试 `tests/freebuff-config-hotreload.test.ts` 5 例。
 - [x] T203 Freebuff 账号池与凭据持久化（历史条目，已完成见上）
 - [x] T204' WorkBuddy 透传 Provider + Sidecar 管理（联邦，见 `docs/wb-source-diff-report.md` §7）
   - 完成：2026-10-07，提交 `47f8a3a`。按 §3.11-1/2 落地：
@@ -197,6 +206,9 @@
     （security-guard preHandler 的 `MODEL_ACCESS_ALLOW/BLOCK` 通配 vs 路由级守卫的
     `MODEL_ALLOWLIST` 精确）与两条限流路径（security-guard 全局+per-provider vs 路由级全局）；
     配置源已统一为 store 优先，执行路径合一会改错误码/环境变量语义，需独立评审。
+    **2026-10-08 更新：评审材料已备** —— `docs/review/decision-path-unification.md`
+    （现状事实表 / 三条真实风险 R1~R3 / 三个候选方案与建议），待负责人裁决；同轮已就地补上
+    R3 里那个纯文档缺口（README 错误码表补 `MODEL_ACCESS_DENIED`）。
 - [ ] T214 P1 阶段门（自动化项全绿，剩余 3 项外部 blocker 挂起待办）
   - deps: T201~T213（全部完成）
   - 范围：三源 E2E、面板逐页验收、错误注入降级（strict 语义）、5 分钟泄漏监控
@@ -207,6 +219,21 @@
     - 静态检查：`npm run typecheck` 双工程 0 错误；`npm run lint` 零告警零输出
     - 5 分钟泄漏监控：专用独立压测 `scripts/soak.mjs` 跑满 300s，400/400 请求成功，RSS 114.8MB → 83.0MB（增长 -31.9MB），无内存泄漏
     - 快照测试：CommandCode 端到端流式/非流式快照通过；Freebuff 快照测试通过
+  - **范围四项的进展（2026-10-08 更新）**：
+    - ✅ **错误注入降级（strict 语义）** —— 新增 `tests/t214-strict-degradation.test.ts`（9 例），
+      把 §3.6 的 strict 语义落成可回归断言：失败不跨上游兜底（其它 Provider 零调用）、首字节之后
+      禁止切换（内容保留 + 错误并入流）、未装配/已停用给明确状态码（503/502，非 500 内部错误）、
+      显式 header 点名已停用上游由 router 决策期拒绝。
+      期间发现并登记**一处契约缺口**：步骤 3（模型名前缀）不查 `enabled`，停用拦截依赖 Provider 自检
+      （详见 CHANGELOG `[Unreleased]` 与 HANDOFF §4）。
+    - ✅ 5 分钟泄漏监控（`scripts/soak.mjs` 满 300s / 400 请求 / RSS 净降 31.9MB）
+    - ✅ **面板逐页验收**（2026-10-08 完成，含**交互层**）：隔离端口实例 + 真实浏览器走查六个分区、风险门、
+      主题、异常横幅——**发现并修复两个真实缺陷**：①「上游」页路由白名单缺失导致该页点不开（阻塞级）；
+      ② 面板品牌残留 + 「新版本」徽章指向上游仓库。见 HANDOFF §4。
+      **交互层补充验收**（同日第二轮）：上游页启停热生效 / 「设为默认」落盘 `routing` / 异常横幅随启停联动、
+      模型页标签筛选与价格排序、日志页刷新 —— **全部通过，未发现新缺陷**（三处"疑似缺陷"经核实是验收侧
+      度量错误与隔离实例缺价格数据，见 HANDOFF §4）。
+    - ⬜ **三源 E2E**（卡在下面 ①② 两个外部 blocker）
   - 剩余 Blocker：
     - ① Freebuff 真实线上 Token（`FREEBUFF_TOKENS`）待配置
     - ② WorkBuddy sidecar 缺少 Go 运行时 / 预构建二进制（需环境补齐以完成端到端三方通信）
@@ -446,4 +473,92 @@ CommandCode（D2）两个 Provider 均已具备 IProvider 外壳，但**都尚�
 2. legacy 扁平分支 `syncEnvFile` 的 `COMMANDCODE_API_KEY` 明文行（unified 分支已由
    `stripEnvKeyLine` 摘除，仅旧形态残留）。
 3. `saveConfigFile` 旧扁平分支明文回写（unified 分支已走加密库）。
+
+## 阶段记录 — T203 账号池遗留收口与全新克隆门禁缺陷修复（2026-10-08）
+
+**背景**：接手复核时，把「唯一可用上游仍是 CommandCode」之外的遗留项逐条对照源码，发现两条与文档描述不一致：
+
+1. **`X-Upstream-Account` 契约空转**：`providers/core/interface.ts` 的 `ChatOptions` 定义了
+   `preferredAccountId` / `onRetry`，但 `src/routes/` 下 grep 零命中 —— 路由层从不解析账号指定头、
+   也从不构造这两个字段，Provider 侧自然也无从消费。本次将其打通（路由解析 → 两出口透传 →
+   `RunManager` 选号优先级 → 重试期 `onRetry` 回调决定下一轮账号），并把「指定不存在/已暂停账号」
+   定为**告警回退**而非失败。测试 `tests/freebuff-preferred-account.test.ts` 9 例。
+2. **`tests/snapshot/scenarios.mjs` 从未入库（阻塞级）**：`.gitignore:17` 的全局 `*.mjs` 规则把它吞掉，
+   而它是 T107 快照基建的场景单源（被 `tests/snapshot/helpers.ts`、`snapshot.test.ts`、
+   `tests/freebuff-snapshot.test.ts`、`scripts/collect-fixtures.mjs` 四路 import）。后果：
+   开发机上文件在磁盘（未跟踪）→ 门禁全绿；任何**全新克隆**跑 `npm run typecheck` 必报 3 条 `TS2307`。
+   这是避坑 #2 记录的 `*.mjs` 坑第三次复现。已补 `.gitignore` 例外并按契约重建该文件；
+   重建产物 `renderScenario('commandcode-chat-basic')` 与既有 upstream fixture **逐字节一致**（回放基线未被改写）。
+
+**另办**：构建产物 `build:win` 改名 `dist/multi-upstream-gateway-v5.exe`（README 中英双语同步）；
+对齐 `package-lock.json` 中滞留的上游包名/版本（`commandcode-proxy-v4`/4.22.4 → `multi-upstream-gateway`/5.0.3）。
+
+**门禁**：`npm run verify` **79 文件 / 993 用例全绿（1 skipped）**（984 + 新增 9 例）；`typecheck`
+双工程 0 错误（修复前 3 条 `TS2307`）；`lint` 零输出；`npm audit --omit=dev` **0 vulnerabilities**。
+
+**未做（有意，已登记）**：`FreebuffAccountPool` 不接入（双轨，理由同 D2）；`updateConfig` 热改 Token 仍待；
+T214 的三个外部 blocker（Freebuff 真实 Token / WorkBuddy sidecar Go 二进制 / 负责人 `DECISION` 签字）不变。
+
+## 分支合并记录 — `main` ← `feat/p0-port`（2026-10-08）
+
+**动作**：把集成分支快进合并到 `main`，结束"主线落后于集成分支"的状态。
+
+- **合并前**：远端 `main` = `8168a54`（v5.0.2 文档提交）、`feat/p0-port` = `2adffd5`（v5.0.3），
+  `main` 落后 **14 个提交**（T208~T212 面板、T213 两阶段接线、T213b 配置源收口、T214 移植测试与快照基建补齐、
+  v5.0.3 静默判据修正）；且 **v5.0.3 的 tag 与 Release 都挂在集成分支侧**，`main` 不含该代码 ——
+  分支模型（"main = 产品主线"）名存实亡，任何只看 `main` 的接手者都会读到过期事实。
+- **合并方式**：`git merge --ff-only`。`main` 是集成分支的祖先，无需合并提交，线性历史保持不变
+  （与仓库既有提交习惯一致，便于 `git log` 直读发布序列）。
+- **合并后**：`main` = `feat/p0-port` = `feat/t203-account-pin` = **`71ed9c1`**（含本轮 4 个提交：
+  快照单源入库修复 / 账号指定接线 / 产物改名 / 四文档同步）。
+- **推送状态：已推送（2026-10-08）**。远端 `main` 与 `feat/p0-port` 同为 `8340e68`。
+  过程说明：最初误判为"本机连不上 GitHub"（`git` 默认 `schannel` 对 github.com 报 TLS 握手失败，
+  叠加当时本地代理端口无出网），实际加 `-c http.sslBackend=openssl -c http.proxy=` 后直连推送即成功
+  —— 教训见 `HANDOFF.md` §5 的踩坑记录。下一次发布版本号（建议 `v5.0.4`）与发布步骤同见该处。
+
+**遗留（合并后不变）**：T214 三个外部 blocker（Freebuff 真实 Token / WorkBuddy sidecar Go 二进制 /
+负责人 `DECISION` 签字）；`FreebuffAccountPool` 不接入（双轨，理由同 D2）；`updateConfig` 热改 Token 待做；
+判定路径合一（modelAccess/限流两套执行路径）待独立评审；6 个 dependabot PR 未处理（含 zod 3→4、
+undici 7→8、typescript 5.9→7 等 major 升级，需评估后再合）。
+
+## 发布记录 — v5.0.4（2026-10-08）
+
+**发布内容**：T208~T213b 的三源运行时接线与面板多源消费面（此前只存在于集成分支）、指定上游账号能力、
+`tests/snapshot/scenarios.mjs` 入库修复、构建产物改名。**这是三源接线成果第一次进入带版本号的发行版**
+—— v5.0.3 及之前，多上游接线只存在于 `feat/p0-port`，主线与发行版都看不到。
+
+**执行**：
+1. 版本号 5.0.3 → 5.0.4（`package.json` + `package-lock.json`）。
+2. `CHANGELOG.md` 的 `## [Unreleased]` 整理为 `## [5.0.4] - 2026-10-08`：合并两个平行「新增」小节、
+   去掉「（本轮）」这类工作标签、修正「变更说明」里已过期的事实（原文仍写"三个 Provider 尚未接入运行时"，
+   而 T213 早已接入 —— 这段会直接成为 Release 正文，属必须修正项）。
+3. 发布前门禁：`npm run verify` **79 文件 / 993 用例全绿（1 skipped）**；`typecheck` 双工程 0 错误；
+   `lint` 零输出；`npm audit --omit=dev` **0 vulnerabilities**。
+4. annotated tag subject（即 Release 标题）：`v5.0.4: 三源 Provider 运行时接线、面板五页与账号指定上线`；
+   推送 `git push origin main --tags`，由 Release workflow 从 CHANGELOG 同名段抽正文自动建 Release
+   （`scripts/extract-release-notes.mjs` 取不到正文会非零退出，不会发出空正文 Release）。
+
+**下一步（T214 阶段门的三个外部 blocker，非代码问题）**：
+① Freebuff 真实线上 Token（`FREEBUFF_TOKENS`）；② WorkBuddy sidecar 的 Go 二进制；
+③ 负责人签字确认 master-plan §0.4 的 `DECISION` 行（`continue | pause | pivot-federated`）。
+
+## 发布记录 — v5.0.5（2026-10-08，补丁版）
+
+**为什么立即补发**：v5.0.4 的「上游」管理页**完全打不开** —— `public/js/core.js` 的 hash 路由白名单
+`ROUTES` 漏了 `upstream`，`switchTab()` 写完 hash 后被 `hashchange` 处理器回落 `overview`（点了就弹回、
+直链也无效）。这是 T208 的核心交付，属**发行版级缺陷**，不能等到下一个功能版本。由 T214「面板逐页验收」
+的真实浏览器走查发现（12 条既有静态断言全绿，真实点一次按钮即复现）。
+
+**发布内容**：① 上游页路由修复（阻塞级）+ `ROUTES`/页签集合一致性回归锁；② 面板品牌残留（`<title>`/h1
+仍写"CommandCode 代理"）与「新版本」徽章指向上游仓库；③ 通知路径同步阻塞（Windows CI 上 `admin-boundary`
+用例超时判红，顺带修掉 `docs/review/architecture-review.md` P2-11 登记的同一处）；④ T214「错误注入降级
+（strict 语义）」验收测试 9 例；⑤ 一处契约缺口登记（六步决策的步骤 3 前缀路径不查 `enabled`）。
+
+**流程与门禁**：版本号 5.0.4 → 5.0.5；CHANGELOG 重整为 `## [5.0.5] - 2026-10-08`（修复 → 新增 →
+变更说明 → 验证）；annotated tag subject `v5.0.5: 修复上游页打不开、面板品牌与更新链接、通知路径同步阻塞`；
+Release 由 workflow 自动创建。门禁：`verify` **80 文件 / 1003 用例全绿（1 skipped）**、`typecheck` 0 错误、
+`lint` 零输出、`audit --omit=dev` 0 漏洞、**CI 双平台（ubuntu + windows）通过**。
+
+**教训（新增验收方法，已写入 HANDOFF §4）**：面板这类"交互之后落到哪个状态"的缺陷，静态文本断言测不出来，
+**必须真点一次**；而 Windows 专用分支的缺陷只有 `windows-latest` 能暴露 —— 判断门禁是否真绿要看**两个平台**。
 

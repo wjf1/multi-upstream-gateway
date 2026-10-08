@@ -49,7 +49,8 @@ Freebuff 模块已移植入树但**尚未接入运行时**，详见[项目状态
 ## 🚦 项目状态
 <a id="status"></a>
 
-**版本线：v5.0.0** —— 自该线起另起产品版本序列，勿与上游 `commandcode-proxy` 的 v4.22.x 混用。
+**当前版本：v5.0.4**（2026-10-08）—— 版本线自 v5.0.0 起另起产品序列，勿与上游 `commandcode-proxy` 的
+v4.22.x 混用；完整发布记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/wjf1/multi-upstream-gateway/releases)。
 
 **P0 语义移植（Phase A~F）已完成并部署**（2026-10-07）：
 
@@ -177,7 +178,7 @@ npm run build && npm start
 或独立二进制：
 
 ```bash
-npm run build:win    # dist/commandcode-proxy-v4.exe —— 零依赖运行（打包需 Node ≥22）
+npm run build:win    # dist/multi-upstream-gateway-v5.exe —— 零依赖运行（打包需 Node ≥22）
 ```
 
 > [!TIP]
@@ -211,17 +212,24 @@ curl http://127.0.0.1:9090/v1/messages \
 curl "http://127.0.0.1:9090/v1/models?plan=individual-go&available=1"
 ```
 
+### 指定上游与账号
+
 多上游路由的显式指定（可选，缺省走六步路由自动决策）：
 
 ```bash
 # 指定上游：x-upstream-provider: commandcode | freebuff | workbuddy（等价于模型名前缀 freebuff/<id>、workbuddy/<id>）
-# 指定账号：x-upstream-account（仅对支持账号池的上游生效，如 Freebuff / WorkBuddy 联邦）
+# 指定账号：x-upstream-account（仅对支持账号池的上游生效，当前为 Freebuff）
 curl http://127.0.0.1:9090/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "x-upstream-provider: freebuff" \
-  -H "x-upstream-account: <account-id>" \
+  -H "x-upstream-account: token-2" \
   -d '{"model":"glm-5.2","messages":[{"role":"user","content":"hi"}]}'
 ```
+
+把**单次请求**钉到某个账号上，用于比较账号之间的额度 / 延迟，或在某个账号异常时手动把流量固定在健康的那一个。
+账号 ID 取自仪表盘「账号」页或 `GET /api/providers/<provider>/accounts`（Freebuff 形如 `token-2`）。
+**指定的账号不存在或已暂停时不会让请求失败**：网关回退到常规轮询，并在日志里留一行告警写明回退原因
+（`preferred account … not found / is paused`）。该头只对按账号调度的上游生效（当前为 Freebuff），其余 Provider 忽略它、行为与从前完全一致。
 
 响应头 `x-actual-upstream` 回报该请求**实际命中的上游**（发生降级切换时也会如实回写）。
 路由规则可在面板设置页调整，或直接读写管理面 API（需 `x-admin-token`）：
@@ -258,7 +266,8 @@ Anthropic 出口（`/v1/messages`）：
 | `INVALID_CREDENTIAL` | 401 | Key 失效或被吊销 |
 | `PROXY_AUTH_REQUIRED` | 401 | 未携带匹配的 `PROXY_API_KEY` |
 | `RATE_LIMIT` | 429 | 5 小时/周额度耗尽，或余额不足 |
-| `MODEL_NOT_IN_PLAN` | 403 | 模型超出当前套餐档位 |
+| `MODEL_NOT_IN_PLAN` | 403 | 模型超出当前套餐档位，或被网关的模型访问策略拒绝（`config.json` 的 `modelAccess` 分片 / `MODEL_ALLOWLIST`，精确匹配） |
+| `MODEL_ACCESS_DENIED` | 403 | 被网关的模型访问策略拒绝（`MODEL_ACCESS_ALLOW` / `MODEL_ACCESS_BLOCK` 环境变量，支持 `glm-5*` 尾部通配） |
 | `MODEL_NOT_FOUND` | 404 | 模型 id 不存在（刷新目录后重试） |
 | `UNSUPPORTED_OPTION` / `UNSUPPORTED_CONTENT` | 400 | 请求形态或内容无法翻译到上游 wire |
 | `REQUEST_TIMEOUT` / `STREAM_IDLE_TIMEOUT` | 504 | 请求超时 / 流中途静默被看门狗中止 |
@@ -463,11 +472,13 @@ with a built-in Chinese dashboard, usage & cost analytics, multi-account quota r
 </div>
 
 > [!WARNING]
-> **Unofficial community tool, still under development.** This repo is a semantic fork of [`wjf1/commandcode-proxy`](https://github.com/wjf1/commandcode-proxy) (MIT) at **v4.22.4**, reverse-engineered from the official CommandCode CLI wire protocol (`/alpha/generate`). Not affiliated with CommandCode; may break when the upstream changes. **Multi-upstream support is not finished** — only CommandCode is usable today, so do not treat "in-tree but unwired" modules as available. Use with your own account and credentials. The bilingual sections above (screenshots, security) apply here too.
+> **Unofficial community tool, still under development.** This repo is a semantic fork of [`wjf1/commandcode-proxy`](https://github.com/wjf1/commandcode-proxy) (MIT) at **v4.22.4**, reverse-engineered from the official CommandCode CLI wire protocol (`/alpha/generate`). Not affiliated with CommandCode; may break when the upstream changes. **Multi-upstream support is not finished** — only CommandCode is usable today, so do not treat "wired but unconfigured" providers as available. Use with your own account and credentials. The bilingual sections above (screenshots, security) apply here too.
 
 ### <a id="status-en"></a>Project status
 
-**Version line: v5.0.0** — a separate product version series; do not mix it with the upstream `commandcode-proxy` v4.22.x.
+**Current version: v5.0.4** (2026-10-08) — the product version line starts at v5.0.0; do not mix it with the
+upstream `commandcode-proxy` v4.22.x. Full release history: [CHANGELOG](CHANGELOG.md) and
+[Releases](https://github.com/wjf1/multi-upstream-gateway/releases).
 
 **The P0 semantic port (Phases A–F) is complete and deployed** (2026-10-07): engineering base, audit-batch-B security semantics,
 new modules (provider contract layer, unified config, credential encryption, rate limiting, risk gate, Freebuff), seam wiring,
@@ -560,6 +571,19 @@ npm run build:win              # standalone Windows exe
 ```
 
 On first launch the dashboard opens automatically. Log in via **Browser (OAuth)** or paste an API key; keys are also auto-loaded from `~/.commandcode/auth.json` or `COMMANDCODE_API_KEY`. Full config table: see the [中文配置](#config) section (env var names are identical).
+
+### Pin a request to an upstream account
+
+A single request can be pinned to one account with the `X-Upstream-Account` header — useful for comparing quota or latency between accounts, or for holding traffic on a healthy one while another misbehaves:
+
+```bash
+curl http://127.0.0.1:9090/v1/chat/completions \
+  -H "X-Upstream-Account: token-2" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<freebuff model id>","messages":[{"role":"user","content":"hi"}]}'
+```
+
+Account ids come from the dashboard's Accounts page or `GET /api/providers/<provider>/accounts` (for Freebuff, e.g. `token-2`). An unknown or paused id **never fails the request**: the gateway falls back to normal rotation and logs a warning naming the reason (`preferred account … not found / is paused`). The header only applies to providers that schedule per account (currently Freebuff); others ignore it and behave exactly as before.
 
 ### Error contract
 

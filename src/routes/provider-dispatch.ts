@@ -22,13 +22,31 @@ import { estimateTextTokens, isAbortError } from '../adapters/commandcode/upstre
 import { writeSSEHeaders } from './sse-common.js';
 import { ErrorCode, ProxyError, toProxyError } from '../utils/errors.js';
 import { AnthropicStreamEncoder, sseFrame } from '../providers/core/anthropic-bridge.js';
-import type { ProviderName } from '../providers/core/interface.js';
+import type { ChatOptions, ProviderName } from '../providers/core/interface.js';
 import type { ProviderRuntime } from '../providers/runtime.js';
 import type { RouteDecision } from '../providers/core/router.js';
 import { logger } from '../utils/logger.js';
 
 /** 空闲防断注释行（与 chat.ts 同频：15s 一条 `:`，防 CDN/代理掐空闲连接）。 */
 const PING_INTERVAL_MS = 15_000;
+
+/**
+ * 数据面账号指定头：值 = Provider 账号 ID（如 freebuff 的 `token-2`）。
+ *
+ * 形状与 `ChatOptions.preferredAccountId`（§3.4 契约）一致；校验留在 Provider 侧——
+ * 路由层不认识各家的账号命名，在这里判存在性只会把「未知账号」误报成非法请求。
+ */
+export const PREFERRED_ACCOUNT_HEADER = 'x-upstream-account';
+
+/** 从请求头解析指定账号；缺失/空白/数组（重复头）时取首值，全空返回 undefined。 */
+export function resolvePreferredAccount(
+  headers: Record<string, unknown> | undefined,
+): string | undefined {
+  const raw = headers?.[PREFERRED_ACCOUNT_HEADER];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  const trimmed = String(value ?? '').trim();
+  return trimmed || undefined;
+}
 
 export interface ProviderFinalizeInfo {
   status: 'COMPLETED' | 'FAILED';
@@ -51,6 +69,8 @@ export interface ProviderDispatchArgs {
   /** 出口协议：'chat' = OpenAI chunk 流；'messages' = Anthropic SSE。 */
   mode: 'chat' | 'messages';
   startTime: number;
+  /** 数据面账号指定（`X-Upstream-Account` 头解析结果）；Provider 不支持时被忽略。 */
+  preferredAccountId?: string;
   /** 路由侧回调：审计 + 用量落库（本模块保证每个请求至多调用一次；客户端中止不调用）。 */
   finalize: (info: ProviderFinalizeInfo) => void;
 }
@@ -164,11 +184,19 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     return candidate;
   };
 
-  const chatOpts = {
+  // 账号指定有两个来源：路由裁决（`X-Upstream-Account` 头经六步路由透传）与调用方入参，前者优先。
+  // 只声明意图，是否命中由 Provider 的账号池决定（未命中回退 + 告警），故此处不做存在性校验。
+  const preferredAccountId = decision.preferredAccountId ?? args.preferredAccountId;
+  const chatOpts: ChatOptions = {
     requestId,
     abortSignal,
-    ...(decision.preferredAccountId ? { preferredAccountId: decision.preferredAccountId } : {}),
+    ...(preferredAccountId ? { preferredAccountId } : {}),
   };
+  if (preferredAccountId) {
+    logger.info(
+      `[DISPATCH] ${decision.provider} preferred account "${preferredAccountId}" requested | Request ${requestId}`,
+    );
+  }
 
   if (mode === 'chat') {
     const chunkId = `chatcmpl-${randomUUID().slice(0, 8)}`;
