@@ -6,6 +6,11 @@
 
 ### 新增
 
+- **README 错误码表补模型访问双路径说明与评审材料链接**（判定路径合一「方案 1」收尾）：错误码表下
+  新增说明块——env `MODEL_ACCESS_*`（全局守卫、尾部通配、`MODEL_ACCESS_DENIED`）与 `modelAccess`
+  分片 / `MODEL_ALLOWLIST`（路由守卫、精确匹配、`MODEL_NOT_IN_PLAN`）两条执行路径的现状，链接至
+  [docs/review/decision-path-unification.md](docs/review/decision-path-unification.md)；合一（方案 2/3）
+  仍待负责人裁决。
 - **Freebuff 配置热重载可参保新 Token**（收口 T203 遗留「`updateConfig` 不热改 Token」）——
   运维改完 `FREEBUFF_TOKENS` 后触发热重载，新 Token 立即参与调度，不必重启进程（此前必须重新
   `initialize`）。**"删"刻意不做**：池有两个来源（环境变量 + 面板 `addAccount` 落进加密库），

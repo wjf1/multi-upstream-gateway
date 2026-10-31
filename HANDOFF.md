@@ -462,8 +462,9 @@
     **WorkBuddy sidecar Go 二进制**（从 `F:/AI/Qdor/review/workbuddy2api-panel` 构建）；
     CommandCode 源 E2E 无前置。
     **登记的遗留**：判定路径合一（modelAccess/限流的两套执行路径）—— **评审材料已备**
-    （`docs/review/decision-path-unification.md`：现状事实表、三条真实风险、三个候选方案与建议），
-    **待负责人裁决**；
+    （`docs/review/decision-path-unification.md`：现状事实表、三条真实风险、三个候选方案与建议）；
+    **方案 1（纯文档收尾）已完成**：README 已补 `MODEL_ACCESS_DENIED` 行（`8b8c447`）+ 错误码表下
+    双路径说明与材料链接（本次），**方案 2（合一到分片保留通配，建议方向）/ 方案 3（只留精确）待负责人裁决**；
     限流/modelAccess 双轨配置源与 legacy 扁平分支明文行——**已由 T213b 收口**。
     **T203 账号池遗留**：`preferredAccountId` / `onRetry` 透传入选号 —— ✅ **已收口**
     （`X-Upstream-Account` 端到端接线）；`updateConfig` 热改 Token —— ✅ **已收口**（2026-10-08，
