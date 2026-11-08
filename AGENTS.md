@@ -9,7 +9,9 @@
 - 包名 `multi-upstream-gateway`，当前版本 **5.0.7**（2026-10-08，WorkBuddy 积分镜像收口 F07）。
 - 技术栈：TypeScript（`src/`，编译到 `dist/`），fastify 5 + undici + zod + chokidar；测试 **vitest**（不是 jest）；构建链 tsc → esbuild bundle → @yao-pkg/pkg 出 Windows exe。
 - **本目录就是生产部署**：9090 端口由 `dist/index.js` 常驻服务（计划任务 `CommandCodeProxy` → watchdog）。
+- 部署形态：Windows 为主（`start.cmd` / `start_hidden.ps1` / pkg exe / 注册表通知），这也是 CI 加 windows 矩阵的原因；`.gitattributes` 统一 LF 行尾。
 - 关键目录：`src/index.ts`（bootstrap，四条路由）、`src/utils/`（config/models/logger/version）、`public/`（面板骨架 + 外置 JS，`/js/*` no-cache）、`tests/`（vitest，90+ 用例）、`scripts/setup.mjs`。
+- 状态文件：`PLAN-STATE.md`（阶段门 T310 进度与外部依赖阻塞项）、`HANDOFF.md`（接力 + 部署检查清单）、`HERMES_TEST_PROMPT.md`（验收材料）。
 
 ## 构建与测试命令
 
