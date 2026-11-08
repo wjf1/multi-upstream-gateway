@@ -29,6 +29,7 @@ import { RequestRouter } from './core/router.js';
 import { CommandCodeProvider } from './commandcode/provider.js';
 import { FreebuffProvider } from './freebuff/provider.js';
 import { WorkBuddyProvider, WORKBUDDY_SIDECAR_BIN_ENV, WORKBUDDY_SIDECAR_KEY_ENV, WORKBUDDY_SIDECAR_PORT_ENV } from './workbuddy/provider.js';
+import { DegradationManager } from './core/degradation.js';
 import { readRawConfigFile } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
 
@@ -65,10 +66,23 @@ export interface ProviderStatusView {
   configured: boolean;
   initialized: boolean;
   health: ProviderHealth | null;
+  /** T303：是否被标记为 degraded 降级状态。 */
+  degraded: boolean;
+  /** 降级原因（如有）。 */
+  degradedReason?: string;
   /** WorkBuddy 联邦 sidecar 进程状态（§3.11-4 面板上游卡片数据源）。 */
   sidecar?: SidecarView;
   /** 初始化失败原因（尽力而为，不阻断启动）。 */
   initError?: string;
+}
+
+/** T304：高级路由策略视图（master-plan §3.2 & §3.6）。 */
+export interface RoutingRulesView {
+  defaultProvider: ProviderName;
+  fallbackStrategy: 'strict' | 'auto' | 'same-model';
+  upstreamPriority: ProviderName[];
+  sessionStickyEnabled: boolean;
+  modelPrefixRouting: boolean;
 }
 
 export interface ProviderRuntimeDeps {
@@ -89,6 +103,8 @@ function messageOf(err: unknown): string {
 export class ProviderRuntime {
   readonly registry = new ProviderRegistry();
   readonly router: RequestRouter;
+  /** T303：级联防护与降级管理器。 */
+  readonly degradation: DegradationManager;
 
   private readonly env: NodeJS.ProcessEnv;
   private readonly loadShards: () => Record<string, unknown>;
@@ -101,15 +117,21 @@ export class ProviderRuntime {
   /** 各 Provider 最近一次 listModels 的元数据缓存（/v1/models 聚合用，避免热路径打 sidecar）。 */
   private modelCache = new Map<ProviderName, OpenAIModel[]>();
   private upstreamPriority: ProviderName[] = [...DEFAULT_PRIORITY];
+  private fallbackStrategy: 'strict' | 'auto' | 'same-model' = 'strict';
+  private sessionStickyEnabled = true;
+  private modelPrefixRouting = true;
 
   constructor(deps: ProviderRuntimeDeps = {}) {
     this.env = deps.env ?? process.env;
-    this.loadShards = deps.loadShards ?? (() => readRawConfigFile().providers as Record<string, unknown> ?? {});
+    this.loadShards = deps.loadShards ?? (() => ((readRawConfigFile().providers as Record<string, unknown>) ?? {}));
     this.buildProvidersFn = deps.buildProviders;
+    this.degradation = new DegradationManager();
     this.router = new RequestRouter({
       upstreamPriority: this.upstreamPriority,
       isProviderEnabled: (name) => this.providers.get(name)?.isEnabled() ?? false,
       registry: this.registry,
+      sessionStickyEnabled: this.sessionStickyEnabled,
+      modelPrefixRouting: this.modelPrefixRouting,
     });
   }
 
@@ -122,6 +144,16 @@ export class ProviderRuntime {
   async initialize(): Promise<void> {
     this.shards = this.loadShards() ?? {};
     const routing = (this.shards.routing ?? {}) as Record<string, unknown>;
+    if (routing.fallbackStrategy === 'auto' || routing.fallbackStrategy === 'same-model' || routing.fallbackStrategy === 'strict') {
+      this.fallbackStrategy = routing.fallbackStrategy;
+    }
+    if (routing.sessionStickyEnabled !== undefined) {
+      this.sessionStickyEnabled = Boolean(routing.sessionStickyEnabled);
+    }
+    if (routing.modelPrefixRouting !== undefined) {
+      this.modelPrefixRouting = Boolean(routing.modelPrefixRouting);
+    }
+
     if (Array.isArray(routing.upstreamPriority)) {
       const valid = routing.upstreamPriority.filter(
         (n): n is ProviderName => (ALL_PROVIDERS as readonly string[]).includes(String(n)),
@@ -155,9 +187,12 @@ export class ProviderRuntime {
       }
     }
     await this.refreshRegistry();
+    // T303：启动 30s 周期性主动探活调度器
+    this.degradation.startProbeScheduler(() => Array.from(this.providers.values()), 30_000);
   }
 
   async destroy(): Promise<void> {
+    this.degradation.stopProbeScheduler();
     for (const provider of this.providers.values()) {
       try {
         await provider.destroy();
@@ -225,6 +260,54 @@ export class ProviderRuntime {
     return true;
   }
 
+  /** T304：获取当前降级策略（strict / auto / same-model）。 */
+  get fallbackStrategyMode(): 'strict' | 'auto' | 'same-model' {
+    return this.fallbackStrategy;
+  }
+
+  /** 获取当前优先级序只读副本。 */
+  get priorityList(): ProviderName[] {
+    return [...this.upstreamPriority];
+  }
+
+  /** T304：获取当前路由策略全貌。 */
+  getRoutingRules(): RoutingRulesView {
+    return {
+      defaultProvider: this.defaultProvider,
+      fallbackStrategy: this.fallbackStrategy,
+      upstreamPriority: [...this.upstreamPriority],
+      sessionStickyEnabled: this.sessionStickyEnabled,
+      modelPrefixRouting: this.modelPrefixRouting,
+    };
+  }
+
+  /** T304：热更新路由策略（即时生效，无延迟）。 */
+  setRoutingRules(rules: Partial<RoutingRulesView>): void {
+    if (rules.defaultProvider && (ALL_PROVIDERS as readonly string[]).includes(rules.defaultProvider)) {
+      this.setDefaultProvider(rules.defaultProvider);
+    }
+    if (rules.fallbackStrategy && ['strict', 'auto', 'same-model'].includes(rules.fallbackStrategy)) {
+      this.fallbackStrategy = rules.fallbackStrategy;
+    }
+    if (rules.sessionStickyEnabled !== undefined) {
+      this.sessionStickyEnabled = Boolean(rules.sessionStickyEnabled);
+    }
+    if (rules.modelPrefixRouting !== undefined) {
+      this.modelPrefixRouting = Boolean(rules.modelPrefixRouting);
+    }
+    if (Array.isArray(rules.upstreamPriority)) {
+      const valid = rules.upstreamPriority.filter(
+        (n): n is ProviderName => (ALL_PROVIDERS as readonly string[]).includes(String(n)),
+      );
+      if (valid.length > 0) {
+        this.upstreamPriority.splice(0, this.upstreamPriority.length, ...valid);
+      }
+    }
+    logger.info(
+      `[ROUTING] Rules updated hot (fallback=${this.fallbackStrategy}, default=${this.defaultProvider})`,
+    );
+  }
+
   // ─── 目录 / 状态 ────────────────────────────────────────────────────────────
 
   /**
@@ -286,6 +369,8 @@ export class ProviderRuntime {
         configured: this.isConfigured(name),
         initialized: this.initializedSet.has(name),
         health,
+        degraded: this.degradation.isDegraded(name),
+        degradedReason: this.degradation.getDegradedInfo(name).reason,
       };
       const sidecar = (provider as { sidecarStatus?: () => SidecarView | null }).sidecarStatus?.();
       if (sidecar) view.sidecar = sidecar;

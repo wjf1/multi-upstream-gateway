@@ -152,6 +152,7 @@ html.light .mfilter-chip.on{color:#fff}
   <button onclick="switchTab('usage')" id="tab-usage" role="tab" aria-selected="false" aria-controls="content-usage" tabindex="-1" class="tab-btn py-3 flex items-center gap-2"><i aria-hidden="true" class="fa-solid fa-chart-pie"></i> 用量与额度</button>
   <button onclick="switchTab('models')" id="tab-models" role="tab" aria-selected="false" aria-controls="content-models" tabindex="-1" class="tab-btn py-3 flex items-center gap-2"><i aria-hidden="true" class="fa-solid fa-cubes"></i> 模型</button>
   <button onclick="switchTab('logs')" id="tab-logs" role="tab" aria-selected="false" aria-controls="content-logs" tabindex="-1" class="tab-btn py-3 flex items-center gap-2"><i aria-hidden="true" class="fa-solid fa-terminal"></i> 实时日志</button>
+  <button onclick="switchTab('settings')" id="tab-settings" role="tab" aria-selected="false" aria-controls="content-settings" tabindex="-1" class="tab-btn py-3 flex items-center gap-2"><i aria-hidden="true" class="fa-solid fa-sliders"></i> 系统设置</button>
 </nav>
 
 <main class="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6">
@@ -500,14 +501,361 @@ html.light .mfilter-chip.on{color:#fff}
 </section>
 
 <section id="content-logs" role="tabpanel" tabindex="0" aria-labelledby="tab-logs" class="space-y-4 hidden" data-route="logs">
-  <div class="flex items-center justify-between">
-    <h2 class="text-lg font-bold text-white">网关事件控制台</h2>
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+    <div>
+      <h2 class="text-lg font-bold text-white flex items-center gap-2">
+        <i aria-hidden="true" class="fa-solid fa-terminal text-indigo-400"></i> 网关事件控制台
+      </h2>
+      <p class="text-xs text-slate-400 mt-0.5">实时流式日志、多维频道/上游筛选与 RequestId 请求全链路关联详情</p>
+    </div>
     <div class="flex items-center space-x-2">
+      <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> 5s 轮询
+      </span>
       <button onclick="clearLogs()" class="px-3 py-1.5 bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-rose-200 text-xs rounded-lg flex items-center gap-1.5 border border-slate-700 transition"><i aria-hidden="true" class="fa-solid fa-trash-can"></i> 清空日志</button>
       <button onclick="loadLogs()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg flex items-center gap-1.5 border border-slate-700 transition"><i aria-hidden="true" class="fa-solid fa-rotate"></i> 刷新日志</button>
     </div>
   </div>
-  <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-300 h-[500px] overflow-y-auto space-y-1" id="logsBox"><p class="text-slate-500">正在初始化日志控制台...</p></div>
+
+  <!-- T306 三筛选工具栏：级别/频道、上游、关键词 -->
+  <div class="card rounded-xl p-3 border border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-900/40">
+    <div class="flex flex-wrap items-center gap-3">
+      <div class="flex items-center gap-1.5 text-xs text-slate-400">
+        <label for="logLevelFilter"><i aria-hidden="true" class="fa-solid fa-filter text-slate-500"></i> 级别:</label>
+        <select id="logLevelFilter" onchange="applyLogFilters()" class="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 outline-none focus:border-indigo-500">
+          <option value="all">全部级别</option>
+          <option value="info">INFO</option>
+          <option value="warn">WARN</option>
+          <option value="error">ERROR</option>
+        </select>
+      </div>
+
+      <div class="flex items-center gap-1.5 text-xs text-slate-400">
+        <label for="logProviderFilter"><i aria-hidden="true" class="fa-solid fa-server text-slate-500"></i> 上游:</label>
+        <select id="logProviderFilter" onchange="applyLogFilters()" class="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 outline-none focus:border-indigo-500">
+          <option value="all">全部上游</option>
+          <option value="commandcode">CommandCode</option>
+          <option value="freebuff">Freebuff</option>
+          <option value="workbuddy">WorkBuddy</option>
+        </select>
+      </div>
+
+      <div class="flex items-center gap-1.5 text-xs text-slate-400">
+        <label for="logKeywordFilter"><i aria-hidden="true" class="fa-solid fa-magnifying-glass text-slate-500"></i> 搜索:</label>
+        <div class="relative">
+          <input type="text" id="logKeywordFilter" oninput="applyLogFilters()" placeholder="关键词 / RequestId / 模型..." class="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-lg pl-3 pr-7 py-1.5 w-44 md:w-60 outline-none focus:border-indigo-500 font-mono">
+          <button onclick="clearKeywordFilter()" id="clearLogKwBtn" class="absolute right-2 top-2 text-slate-500 hover:text-slate-300 text-[10px] hidden"><i aria-hidden="true" class="fa-solid fa-xmark"></i></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="text-[11px] font-mono text-slate-500" id="logFilterStats">
+      共 0 条
+    </div>
+  </div>
+
+  <!-- T306 RequestId 关联详情卡片（点击日志内 ID 或详情按钮展开） -->
+  <div id="logDetailCard" class="card rounded-xl p-4 border border-indigo-500/30 bg-slate-900/90 shadow-xl space-y-3 hidden">
+    <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-indigo-400"></span>
+        <h3 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+          <i aria-hidden="true" class="fa-solid fa-circle-nodes text-indigo-400"></i> 请求全链路关联详情
+        </h3>
+        <span id="detailTraceBadge" class="text-[10px] px-2 py-0.5 rounded font-mono bg-slate-800 text-slate-300"></span>
+      </div>
+      <button onclick="hideRequestDetail()" class="text-slate-400 hover:text-white text-xs px-2 py-1 rounded hover:bg-slate-800 transition"><i aria-hidden="true" class="fa-solid fa-xmark"></i> 关闭详情</button>
+    </div>
+
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 font-mono text-xs" id="detailGrid">
+      <div class="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+        <div class="text-[10px] text-slate-500 mb-0.5">RequestId</div>
+        <div id="detailRequestId" class="font-bold text-indigo-300 truncate" title="">--</div>
+      </div>
+      <div class="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+        <div class="text-[10px] text-slate-500 mb-0.5">模型</div>
+        <div id="detailModel" class="font-bold text-slate-200 truncate">--</div>
+      </div>
+      <div class="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+        <div class="text-[10px] text-slate-500 mb-0.5">上游来源</div>
+        <div id="detailProvider" class="font-bold text-sky-400">--</div>
+      </div>
+      <div class="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+        <div class="text-[10px] text-slate-500 mb-0.5">请求状态</div>
+        <div id="detailStatus" class="font-bold text-slate-200">--</div>
+      </div>
+      <div class="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+        <div class="text-[10px] text-slate-500 mb-0.5">耗时</div>
+        <div id="detailTiming" class="font-bold text-emerald-400">--</div>
+      </div>
+      <div class="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+        <div class="text-[10px] text-slate-500 mb-0.5">Tokens / 成本</div>
+        <div id="detailTokens" class="font-bold text-amber-300 truncate">--</div>
+      </div>
+    </div>
+
+    <div class="mt-2 space-y-1">
+      <div class="text-[11px] text-slate-400 font-semibold flex items-center gap-1">
+        <i aria-hidden="true" class="fa-solid fa-list-ul text-slate-500"></i> 本次请求相关的日志事件
+      </div>
+      <div id="detailRelatedLogs" class="bg-slate-950 border border-slate-800/80 rounded-lg p-2.5 font-mono text-[11px] max-h-36 overflow-y-auto space-y-1 text-slate-300">
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-300 h-[520px] overflow-y-auto space-y-1" id="logsBox"><p class="text-slate-500">正在初始化日志控制台...</p></div>
+</section>
+
+<!-- T307 系统设置独立页（五大区块 + 热生效 + 需重启标红 + 危险操作二次确认 + 校验标红） -->
+<section id="content-settings" role="tabpanel" tabindex="0" aria-labelledby="tab-settings" class="space-y-6 hidden" data-route="settings">
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+    <div>
+      <h2 class="text-lg font-bold text-white flex items-center gap-2">
+        <i aria-hidden="true" class="fa-solid fa-sliders text-indigo-400"></i> 系统设置
+      </h2>
+      <p class="text-xs text-slate-400 mt-0.5">网关运行参数配置、安全与告警策略、存储路径及危险管理操作</p>
+    </div>
+    <div class="flex items-center space-x-2">
+      <button onclick="loadSettings()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg flex items-center gap-1.5 border border-slate-700 transition"><i aria-hidden="true" class="fa-solid fa-rotate"></i> 重载当前配置</button>
+      <button onclick="submitSettings()" id="saveSettingsBtnTop" class="btn-solid px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-md shadow-indigo-600/20 transition"><i aria-hidden="true" class="fa-solid fa-floppy-disk"></i> 保存设置</button>
+    </div>
+  </div>
+
+  <div id="settingsGlobalMsg" class="hidden p-3 rounded-xl text-xs border"></div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <!-- 1. 网络区块 -->
+    <div class="card rounded-xl p-5 border border-slate-800 bg-slate-900/40 space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+          <i aria-hidden="true" class="fa-solid fa-network-wired text-sky-400"></i> 网络与通信设置
+        </h3>
+        <span class="text-[10px] text-slate-500 font-mono">Network</span>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="set_port" class="text-xs text-slate-300">监听端口 (PORT)</label>
+            <span class="px-1.5 py-0.5 rounded text-[10px] bg-rose-500/15 text-rose-400 border border-rose-500/30 font-semibold">需重启</span>
+          </div>
+          <input type="number" id="set_port" placeholder="9090" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500 font-mono">
+          <p id="err_port" class="text-rose-400 text-[11px] mt-1 hidden"></p>
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="set_host" class="text-xs text-slate-300">监听主机 (HOST)</label>
+            <span class="px-1.5 py-0.5 rounded text-[10px] bg-rose-500/15 text-rose-400 border border-rose-500/30 font-semibold">需重启</span>
+          </div>
+          <input type="text" id="set_host" placeholder="127.0.0.1" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500 font-mono">
+          <p id="err_host" class="text-rose-400 text-[11px] mt-1 hidden"></p>
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="set_proxy" class="text-xs text-slate-300">出站 HTTP(S) 代理</label>
+            <span class="px-1.5 py-0.5 rounded text-[10px] bg-rose-500/15 text-rose-400 border border-rose-500/30 font-semibold">需重启</span>
+          </div>
+          <input type="text" id="set_proxy" placeholder="http://127.0.0.1:7900" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500 font-mono">
+          <p class="text-[10px] text-slate-500 mt-0.5">Clash 混合代理端口变更时在此配置；watchdog 需同步配置</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label for="set_upstreamTimeoutMs" class="text-xs text-slate-300">总时限 (ms)</label>
+              <span class="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">热生效</span>
+            </div>
+            <input type="number" id="set_upstreamTimeoutMs" placeholder="1800000" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500 font-mono">
+            <p id="err_upstreamTimeoutMs" class="text-rose-400 text-[11px] mt-1 hidden"></p>
+          </div>
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label for="set_idleTimeoutMs" class="text-xs text-slate-300">空闲超时 (ms)</label>
+              <span class="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">热生效</span>
+            </div>
+            <input type="number" id="set_idleTimeoutMs" placeholder="120000" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500 font-mono">
+            <p id="err_idleTimeoutMs" class="text-rose-400 text-[11px] mt-1 hidden"></p>
+          </div>
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="set_maxRetries" class="text-xs text-slate-300">上游失败重试次数 (maxRetries)</label>
+            <span class="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">热生效</span>
+          </div>
+          <input type="number" id="set_maxRetries" placeholder="2" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500 font-mono">
+          <p id="err_maxRetries" class="text-rose-400 text-[11px] mt-1 hidden"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. 安全区块 -->
+    <div class="card rounded-xl p-5 border border-slate-800 bg-slate-900/40 space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+          <i aria-hidden="true" class="fa-solid fa-shield-halved text-emerald-400"></i> 安全与访问防护
+        </h3>
+        <span class="text-[10px] text-slate-500 font-mono">Security</span>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="set_maxBodyMb" class="text-xs text-slate-300">请求体大小上限 (MB)</label>
+            <span class="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">热生效</span>
+          </div>
+          <input type="number" id="set_maxBodyMb" placeholder="20" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500 font-mono">
+          <p id="err_maxBodyMb" class="text-rose-400 text-[11px] mt-1 hidden"></p>
+        </div>
+
+        <div>
+          <label for="set_allowedHosts" class="text-xs text-slate-300 block mb-1">SSRF 放行主机名单（英文逗号分隔）</label>
+          <input type="text" id="set_allowedHosts" placeholder="127.0.0.1, localhost" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500 font-mono">
+          <p class="text-[10px] text-slate-500 mt-0.5">保护网关免受针对内部服务/元数据接口的 SSRF 探测攻击</p>
+        </div>
+
+        <div class="p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-xs space-y-2">
+          <div class="text-slate-400 font-medium">限流与访问策略状态（只读）</div>
+          <div class="grid grid-cols-2 gap-2 text-[11px] font-mono">
+            <div>RPM 限流: <span id="view_rateLimitRpm" class="text-slate-200">未开启</span></div>
+            <div>TPM 限流: <span id="view_rateLimitTpm" class="text-slate-200">未开启</span></div>
+          </div>
+          <p class="text-[10px] text-slate-500">限流参数可通过统一配置分片或环境变量 RATE_LIMIT_RPM/TPM 设置</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. 告警区块 -->
+    <div class="card rounded-xl p-5 border border-slate-800 bg-slate-900/40 space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+          <i aria-hidden="true" class="fa-solid fa-bell text-amber-400"></i> 告警与通知设置
+        </h3>
+        <span class="text-[10px] text-slate-500 font-mono">Alerts</span>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="set_webhookUrl" class="text-xs text-slate-300">Webhook 告警推送 URL</label>
+            <span class="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">热生效</span>
+          </div>
+          <input type="text" id="set_webhookUrl" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500 font-mono">
+        </div>
+
+        <div>
+          <label for="set_dailyBudgetUsd" class="text-xs text-slate-300 block mb-1">每日预算告警阈值 (USD)</label>
+          <input type="text" id="set_dailyBudgetUsd" placeholder="off 或如 50" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500 font-mono">
+        </div>
+
+        <div>
+          <label for="set_errorRateThreshold" class="text-xs text-slate-300 block mb-1">错误率告警阈值 (0 ~ 1.0)</label>
+          <input type="number" step="0.01" id="set_errorRateThreshold" placeholder="0.2" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500 font-mono">
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. 面板偏好区块 -->
+    <div class="card rounded-xl p-5 border border-slate-800 bg-slate-900/40 space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+          <i aria-hidden="true" class="fa-solid fa-compass text-indigo-400"></i> 面板与默认偏好
+        </h3>
+        <span class="text-[10px] text-slate-500 font-mono">Preferences</span>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="set_defaultProvider" class="text-xs text-slate-300">默认路由上游 (defaultProvider)</label>
+            <span class="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">2s 热生效</span>
+          </div>
+          <select id="set_defaultProvider" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500">
+            <option value="commandcode">CommandCode</option>
+            <option value="freebuff">Freebuff</option>
+            <option value="workbuddy">WorkBuddy</option>
+          </select>
+          <p id="err_defaultProvider" class="text-rose-400 text-[11px] mt-1 hidden"></p>
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="set_fallbackStrategy" class="text-xs text-slate-300">路由降级策略 (fallbackStrategy)</label>
+            <span class="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">热生效</span>
+          </div>
+          <select id="set_fallbackStrategy" class="w-full bg-slate-950 border border-slate-700 text-xs rounded-lg p-2.5 text-white outline-none focus:border-indigo-500">
+            <option value="strict">严格模式 strict（不可用直接报错，默认）</option>
+            <option value="auto">自动降级 auto（首字节前自动切换优先级备选）</option>
+            <option value="same-model">同名模型 same-model（仅当备选支持同名模型才降级）</option>
+          </select>
+          <p class="text-[10px] text-slate-500 mt-0.5">流式响应一旦首字节流出，严格禁止跨上游切换以防止脏协议流</p>
+        </div>
+
+        <div class="space-y-2 pt-1">
+          <label for="set_sessionStickyEnabled" class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="set_sessionStickyEnabled" class="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0">
+            <span class="text-xs text-slate-300">开启会话账号粘性 (sessionStickyEnabled)</span>
+          </label>
+          <label for="set_modelPrefixRouting" class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="set_modelPrefixRouting" class="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0">
+            <span class="text-xs text-slate-300">开启模型名前缀路由 (modelPrefixRouting，如 codebuddy/glm-5.2)</span>
+          </label>
+        </div>
+
+        <div class="p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-xs space-y-2">
+          <div class="text-slate-400 font-medium">使用前风险告知确认状态</div>
+          <div class="flex items-center justify-between">
+            <span id="view_riskStatus" class="text-[11px] font-mono">--</span>
+            <span class="text-[10px] text-slate-500">可在初次进入时弹窗确认</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. 存储与危险操作区块（跨两列） -->
+  <div class="card rounded-xl p-5 border border-slate-800 bg-slate-900/40 space-y-4">
+    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+      <h3 class="text-sm font-bold text-white flex items-center gap-2">
+        <i aria-hidden="true" class="fa-solid fa-database text-purple-400"></i> 存储路径与危险管理操作
+      </h3>
+      <span class="text-[10px] text-slate-500 font-mono">Storage & Danger Zone</span>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="space-y-2 text-xs">
+        <div class="text-slate-400 font-medium">系统文件物理路径（只读）</div>
+        <div class="space-y-1.5 font-mono text-[11px] text-slate-400">
+          <div class="truncate">配置: <span id="path_config" class="text-slate-200">--</span></div>
+          <div class="truncate">日志: <span id="path_log" class="text-slate-200">--</span></div>
+          <div class="truncate">用量: <span id="path_usage" class="text-slate-200">--</span></div>
+          <div class="truncate">凭据: <span id="path_cred" class="text-slate-200">--</span></div>
+        </div>
+      </div>
+
+      <div class="p-4 rounded-xl border border-rose-900/40 bg-rose-950/10 space-y-3">
+        <div class="text-rose-400 text-xs font-bold flex items-center gap-1.5">
+          <i aria-hidden="true" class="fa-solid fa-triangle-exclamation"></i> 危险管理操作（需二次确认 + 审计留痕）
+        </div>
+        <div class="flex flex-wrap items-center gap-3">
+          <button onclick="clearUsageWithAudit()" class="px-3.5 py-2 bg-rose-600/80 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-rose-600/20 transition">
+            <i aria-hidden="true" class="fa-solid fa-trash-can"></i> 清空全部用量历史
+          </button>
+          <button onclick="clearLogs()" class="px-3.5 py-2 bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-rose-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition">
+            <i aria-hidden="true" class="fa-solid fa-broom"></i> 清空实时日志控制台
+          </button>
+        </div>
+        <p class="text-[10px] text-slate-500 leading-relaxed">清空用量历史将清空 usage-history.jsonl，此操作将被记入管理面审计日志，不可撤销。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="flex justify-end space-x-3 pt-2">
+    <button onclick="loadSettings()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg transition font-medium">放弃更改</button>
+    <button onclick="submitSettings()" id="saveSettingsBtnBottom" class="btn-solid px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-md shadow-indigo-600/20 transition"><i aria-hidden="true" class="fa-solid fa-floppy-disk"></i> 保存并应用系统设置</button>
+  </div>
 </section>
 
 </main>
@@ -587,5 +935,6 @@ html.light .mfilter-chip.on{color:#fff}
 <script src="/js/usage.js" defer></script>
 <script src="/js/models.js" defer></script>
 <script src="/js/logs.js" defer></script>
+<script src="/js/settings.js" defer></script>
 </body>
 </html>

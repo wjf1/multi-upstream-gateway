@@ -10,9 +10,14 @@
 //     sidecar 面板 API（`/panel/api/accounts/{uid}/{pause|resume|remove}`，T205'）；
 //   - `probe`：真实 `GET /healthz` 往返（禁止恒真，T303 依赖）。
 //
-// 边界：`addAccount` 需要 OAuth 设备授权（sidecar 原生面板流程，属 T301），本卡
-// 明确不支持并抛出可执行提示；`rewriteMode` 总开关保留，仅控制透传前的清洗层
-// （'full' 追加会话头与模型名规范化；'passthrough' 原样透传，用于故障一键回退）。
+// T301：账号授权编排与令牌看护由 `./oauth.ts` 承接——`loginStart`/`loginPoll` 驱动
+// sidecar 原生面板的两段式授权（面板内「添加账号」），`WorkBuddyTokenWatch` 按
+// sidecar `/status` 的 `expiresAt` 做 1 小时预刷 + 3 次指数退避 + 「待刷新」态 + 告警。
+// 网关侧**永不持有 OAuth token**（凭据落在 sidecar 的加密 auths/ 内）。
+//
+// 边界：`addAccount`（程序化直接写入凭据）仍不支持并抛出可执行提示——联邦下凭据
+// 由 sidecar 独占，网关只提供授权编排入口；`rewriteMode` 总开关保留，仅控制透传前
+// 的清洗层（'full' 追加会话头与模型名规范化；'passthrough' 原样透传，一键回退）。
 //
 // sidecar 端点为 Go 源码实测口径：GET /healthz（无鉴权）、GET /status、GET /v1/models、
 // POST /v1/chat/completions、POST /panel/api/accounts/{uid}/{pause|resume|remove}（均 Bearer）。
@@ -29,11 +34,29 @@ import type {
 } from '../core/interface.js';
 import { logger } from '../../utils/logger.js';
 import { ErrorCode, ProxyError, codeForStatus, toProxyError } from '../../utils/errors.js';
+import { STATE_PATH_ENV, resolveConfiguredStatePath } from '../../utils/state-store.js';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import {
   WorkBuddySidecar,
   type SidecarStatus,
   type WorkBuddySidecarOptions,
 } from './sidecar.js';
+import {
+  WorkBuddyOAuthClient,
+  WorkBuddyTokenWatch,
+  parseTokenExpiry,
+  type LoginPollResult,
+  type LoginStartResult,
+  type RefreshOutcome,
+  type TokenWatchEntry,
+  type WorkBuddyRealm,
+} from './oauth.js';
+import { notifyWebhook } from '../../utils/webhook-alerts.js';
+import {
+  WorkBuddyBalanceWatch,
+  type BalanceSnapshot,
+} from './balance-watch.js';
 
 const PROVIDER_NAME: ProviderName = 'workbuddy';
 const DEFAULT_SIDECAR_PORT = 8787;
@@ -44,13 +67,15 @@ export const WORKBUDDY_SIDECAR_BIN_ENV = 'WORKBUDDY_SIDECAR_BIN';
 export const WORKBUDDY_SIDECAR_PORT_ENV = 'WORKBUDDY_SIDECAR_PORT';
 export const WORKBUDDY_SIDECAR_KEY_ENV = 'WORKBUDDY_SIDECAR_KEY';
 export const WORKBUDDY_AUTH_DIR_ENV = 'WORKBUDDY_AUTH_DIR';
+/** 显式指定 sidecar 配置文件落点（缺省落在状态文件同级的 `workbuddy-sidecar/config.json`）。 */
+export const WORKBUDDY_SIDECAR_CONFIG_ENV = 'WORKBUDDY_SIDECAR_CONFIG';
 
 export interface WorkBuddyConfig {
   enabled: boolean;
   authDir?: string;
   rewriteMode: 'full' | 'passthrough';
   pointsPerUsdRate: number | null;
-  sidecar: { binPath?: string; port: number };
+  sidecar: { binPath?: string; port: number; configPath?: string };
   /** sidecar Bearer 密钥（空 = sidecar 不鉴权，回环部署默认）。 */
   apiKey: string;
 }
@@ -67,11 +92,30 @@ interface PoolSnapshot {
     paused: boolean;
     disabled: boolean;
     cooling: boolean;
+    /** T301：绝对到期时刻（Unix 毫秒），用于 1 小时预刷窗口判定。 */
+    expiresAt?: number;
   }>;
 }
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** 真实 sidecar 二进制的启动参数：只有 `-config <path>`（Go flag 包不接受其它标志）。 */
+function buildSidecarArgs(configPath: string): string[] {
+  return ['-config', configPath];
+}
+
+/** 读 sidecar 既有配置；缺失或损坏都当作空对象（重写时以网关受管键为准）。 */
+async function readJsonIfExists(file: string): Promise<Record<string, unknown>> {
+  try {
+    const parsed: unknown = JSON.parse(await fsp.readFile(file, 'utf8'));
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function truncate(text: string, limit = ERROR_TEXT_LIMIT): string {
@@ -91,6 +135,10 @@ function resolveWorkBuddyConfig(raw: unknown, env: NodeJS.ProcessEnv): WorkBuddy
   const port =
     num(sidecar.port) ??
     (Number.isFinite(portFromEnv) && portFromEnv > 0 ? portFromEnv : DEFAULT_SIDECAR_PORT);
+  const configPath =
+    (typeof sidecar.configPath === 'string' && sidecar.configPath.trim() !== ''
+      ? sidecar.configPath.trim()
+      : undefined) ?? (env[WORKBUDDY_SIDECAR_CONFIG_ENV]?.trim() || undefined);
 
   return {
     enabled: o.enabled !== false,
@@ -99,7 +147,7 @@ function resolveWorkBuddyConfig(raw: unknown, env: NodeJS.ProcessEnv): WorkBuddy
       (env[WORKBUDDY_AUTH_DIR_ENV]?.trim() || undefined),
     rewriteMode: o.rewriteMode === 'passthrough' ? 'passthrough' : 'full',
     pointsPerUsdRate: typeof o.pointsPerUsdRate === 'number' ? o.pointsPerUsdRate : null,
-    sidecar: { binPath, port },
+    sidecar: { binPath, port, configPath },
     apiKey: env[WORKBUDDY_SIDECAR_KEY_ENV] ?? '',
   };
 }
@@ -110,6 +158,12 @@ export interface WorkBuddyProviderDeps {
   createSidecar?: (opts: WorkBuddySidecarOptions) => WorkBuddySidecar;
   fetchFn?: typeof fetch;
   env?: NodeJS.ProcessEnv;
+  /** T301：注入令牌看护（测试可控制时钟/退避/告警出口）。 */
+  tokenWatch?: WorkBuddyTokenWatch;
+  /** T301：注入授权客户端（测试可完全离线）。 */
+  oauthClient?: WorkBuddyOAuthClient;
+  /** T302：注入余额镜像（测试可注入临时 state.json 路径与假时钟）。 */
+  balanceWatch?: WorkBuddyBalanceWatch;
 }
 
 /**
@@ -127,6 +181,9 @@ export class WorkBuddyProvider implements IProvider {
   private cfg: WorkBuddyConfig | null = null;
   private sidecar: WorkBuddySidecar | null;
   private pool: PoolSnapshot | null = null;
+  private oauth: WorkBuddyOAuthClient | null;
+  private tokenWatch: WorkBuddyTokenWatch | null;
+  private balanceWatch: WorkBuddyBalanceWatch | null;
 
   private readonly deps: WorkBuddyProviderDeps;
   private readonly fetchFn: typeof fetch;
@@ -137,6 +194,9 @@ export class WorkBuddyProvider implements IProvider {
     this.fetchFn = deps.fetchFn ?? fetch;
     this.env = deps.env ?? process.env;
     this.sidecar = deps.sidecar ?? null;
+    this.oauth = deps.oauthClient ?? null;
+    this.tokenWatch = deps.tokenWatch ?? null;
+    this.balanceWatch = deps.balanceWatch ?? null;
   }
 
   // ─── 生命周期 ───────────────────────────────────────────────────────────────
@@ -147,6 +207,15 @@ export class WorkBuddyProvider implements IProvider {
     this.enabled = cfg.enabled;
     this.initialized = true;
 
+    // T302：载入本地余额/池状态镜像。**先于 sidecar 分支**——即便没配 sidecar 二进制，
+    // 也应有基线落盘与损坏告警（状态文件属于网关自身，不依赖 sidecar 是否起得来）。
+    // 失败不阻断启动：镜像降级，sidecar 与探活面照常工作。
+    try {
+      await this.balanceWatcher().initialize();
+    } catch (err) {
+      logger.warn(`[PVD:workbuddy] balance state init failed: ${messageOf(err)}`);
+    }
+
     if (!this.sidecar) {
       if (!cfg.sidecar.binPath) {
         logger.warn(
@@ -155,10 +224,22 @@ export class WorkBuddyProvider implements IProvider {
         );
         return;
       }
+      // 真实二进制（workbuddy2api-panel）**只认 `-config <path>`**，其余标志一律 usage + exit 2。
+      // 因此监听端口/密钥/授权目录都要写进配置文件，写不进去就不 spawn——宁可侧车缺席，
+      // 也不留一个必然崩溃的子进程（§3.11 面板会显示该 provider 不可用）。
+      let sidecarConfigPath: string;
+      try {
+        sidecarConfigPath = await this.materializeSidecarConfig(cfg);
+      } catch (err) {
+        logger.warn(
+          `[PVD:workbuddy] sidecar config not writable, skipping spawn: ${messageOf(err)}`,
+        );
+        return;
+      }
       const opts: WorkBuddySidecarOptions = {
         binPath: cfg.sidecar.binPath,
         port: cfg.sidecar.port,
-        args: this.buildSidecarArgs(cfg),
+        args: buildSidecarArgs(sidecarConfigPath),
       };
       this.sidecar = this.deps.createSidecar ? this.deps.createSidecar(opts) : new WorkBuddySidecar(opts);
     }
@@ -175,6 +256,12 @@ export class WorkBuddyProvider implements IProvider {
     this.enabled = false;
     this.initialized = false;
     this.pool = null;
+    // T302：把排队中的落盘等完再停 sidecar——否则最后一次余额写入可能被进程退出截断。
+    try {
+      await this.balanceWatch?.drain();
+    } catch (err) {
+      logger.warn(`[PVD:workbuddy] balance state drain failed: ${messageOf(err)}`);
+    }
     if (this.sidecar) {
       await this.sidecar.stop();
     }
@@ -215,6 +302,13 @@ export class WorkBuddyProvider implements IProvider {
       return { healthy: false, latencyMs, detail: st.lastError ?? `sidecar ${st.state}`, checkedAt };
     }
     await this.refreshPool();
+    // T301：探活（30s 调度）顺带推进一轮令牌预刷看护——进窗口的号在此被刷新，
+    // 连续失败则转「待刷新」+ 告警。失败绝不影响探活结论（旁路安全）。
+    try {
+      await this.tokenWatcher().runTick();
+    } catch (err) {
+      logger.warn(`[PVD:workbuddy] token watch tick failed: ${messageOf(err)}`);
+    }
     return { healthy: true, latencyMs, checkedAt };
   }
 
@@ -374,8 +468,20 @@ export class WorkBuddyProvider implements IProvider {
   /** 刷新池快照（面板与 health() 的数据源）。 */
   async refreshPool(): Promise<PoolSnapshot | null> {
     const status = await this.getJson<Record<string, unknown>>('/status');
-    if (!status) return null;
+    if (!status) {
+      // T302：sidecar 读不到时也告诉余额镜像一声——它会记一次失败并保留上次已知余额
+      // （绝不能把「读不到」写成「余额清零」）。
+      await this.balanceWatcher().observe(null);
+      return null;
+    }
     this.pool = mapPoolSnapshot(status);
+    // T301：把最新账号集合（含 expiresAt）对齐到令牌看护；账号消失时其待刷新标记
+    // 一并清除（sync 保留既有 pendingRefresh/lastError/attempts）。
+    this.tokenWatcher().sync(
+      this.pool.accounts.map((a) => ({ id: a.id, ...(a.expiresAt !== undefined ? { expiresAt: a.expiresAt } : {}) })),
+    );
+    // T302：复用**同一次** `/status` 响应推进余额镜像（零额外 IO）；落盘按 5min 节流。
+    await this.balanceWatcher().observe(status);
     return this.pool;
   }
 
@@ -400,6 +506,108 @@ export class WorkBuddyProvider implements IProvider {
     this.fireAndForget(`/panel/api/accounts/${encodeURIComponent(id)}/resume`, 'resume', id);
   }
 
+  // ─── T301：授权编排（面板内添加账号）────────────────────────────────────────
+
+  /**
+   * 发起授权：返回 `{ url, state }`，面板把 url 交给用户，然后轮询 `loginPoll`。
+   * 凭据全程留在 sidecar（本方法返回值里没有任何 token 字段）。
+   */
+  async loginStart(realm: WorkBuddyRealm = 'cn'): Promise<LoginStartResult> {
+    return this.oauthClient().startLogin(realm);
+  }
+
+  /** 轮询一次授权状态（`done=false` 表示用户尚未在浏览器完成授权）。 */
+  async loginPoll(state: string): Promise<LoginPollResult> {
+    return this.oauthClient().pollLogin(state);
+  }
+
+  // ─── T301：令牌看护（1h 预刷 / 3 次指数退避 / 待刷新态 / 告警）──────────────
+
+  /** 令牌看护状态（面板徽章与 `GET /api/upstreams/workbuddy/tokens` 数据源）。 */
+  tokenWatchStatus(): { preRefreshWindowMs: number; maxRetries: number; accounts: TokenWatchEntry[]; pendingRefresh: string[] } {
+    const watch = this.tokenWatcher();
+    return {
+      preRefreshWindowMs: watch.windowMs,
+      maxRetries: watch.retryLimit,
+      accounts: watch.snapshot(),
+      pendingRefresh: watch.pendingRefreshIds(),
+    };
+  }
+
+  /** 主动跑一轮预刷看护（T303 的 30s 探活调度经 `probe()` 间接触发）。 */
+  async runTokenWatchTick(): Promise<RefreshOutcome[]> {
+    return this.tokenWatcher().runTick();
+  }
+
+  // ─── T302：余额镜像与池状态持久化 ───────────────────────────────────────────
+
+  /** 余额/池状态镜像的只读视图（`GET /api/upstreams/workbuddy/balance` 数据源）。 */
+  balanceStatus(): BalanceSnapshot {
+    return this.balanceWatcher().snapshot();
+  }
+
+  /** 主动刷新一次余额（不等 5min 窗口）；也用于损坏后从 sidecar 重建。 */
+  refreshBalance(): Promise<{ ok: boolean; persisted: boolean; accounts: number; refreshedAt: number }> {
+    return this.balanceWatcher()
+      .refresh({ force: true })
+      .then((r) => ({ ok: r.ok, persisted: r.persisted, accounts: r.accounts, refreshedAt: r.refreshedAt }));
+  }
+
+  /** 懒构造余额镜像：只拉 `/status`（sidecar 才是刷新执行者，网关不碰上游凭据）。 */
+  private balanceWatcher(): WorkBuddyBalanceWatch {
+    if (!this.balanceWatch) {
+      this.balanceWatch = new WorkBuddyBalanceWatch({
+        fetchStatus: () => this.getJson<Record<string, unknown>>('/status'),
+        onAlert: (alert) => notifyWebhook('workbuddy.balance', {
+          kind: alert.kind,
+          message: alert.message,
+          at: alert.at,
+          ...(alert.detail ?? {}),
+        }),
+      });
+    }
+    return this.balanceWatch;
+  }
+
+  /** 懒构造：sidecar baseUrl/密钥在 initialize 后才确定。 */
+  private oauthClient(): WorkBuddyOAuthClient {    if (!this.oauth) {
+      if (!this.sidecar) {
+        throw new ProxyError(ErrorCode.NO_PROVIDER_AVAILABLE, 'WorkBuddy sidecar is not available');
+      }
+      this.oauth = new WorkBuddyOAuthClient({
+        baseUrl: this.sidecar.baseUrl,
+        apiKey: this.cfg?.apiKey ?? '',
+        fetchFn: this.fetchFn,
+      });
+    }
+    return this.oauth;
+  }
+
+  /** 懒构造令牌看护：刷新出口 = sidecar 面板的「复活」路由（联邦下刷新由 sidecar 执行）。 */
+  private tokenWatcher(): WorkBuddyTokenWatch {
+    if (!this.tokenWatch) {
+      this.tokenWatch = new WorkBuddyTokenWatch({
+        triggerRefresh: (uid) => this.refreshAccountViaSidecar(uid),
+        notify: (event, payload) => notifyWebhook(event, payload),
+      });
+    }
+    return this.tokenWatch;
+  }
+
+  /** 触发 sidecar 刷新单号（失败抛错，由看护层做退避重试与待刷新标记）。 */
+  private async refreshAccountViaSidecar(uid: string): Promise<void> {
+    if (!this.sidecar) throw new Error('workbuddy sidecar is not available');
+    const headers: Record<string, string> = {};
+    if (this.cfg?.apiKey) headers.authorization = `Bearer ${this.cfg.apiKey}`;
+    const res = await this.fetchFn(
+      `${this.sidecar.baseUrl}/panel/api/accounts/${encodeURIComponent(uid)}/revive`,
+      { method: 'POST', headers, signal: AbortSignal.timeout(10_000) },
+    );
+    if (!res.ok) {
+      throw new Error(`sidecar revive ${uid} -> HTTP ${res.status}`);
+    }
+  }
+
   // ─── 总闸 / 配置 ────────────────────────────────────────────────────────────
 
   enable(): void {
@@ -414,11 +622,18 @@ export class WorkBuddyProvider implements IProvider {
     return this.enabled;
   }
 
-  /** 热重载：只应用非凭据增量；sidecar 二进制/端口变更需重新 initialize。 */
+  /** 热重载：只应用非凭据增量；sidecar 二进制变更需重新 initialize。 */
   updateConfig(config: unknown): void {
     const next = resolveWorkBuddyConfig(config, this.env);
     this.cfg = next;
     this.enabled = next.enabled;
+    // 端口/密钥/授权目录改了而进程已在跑：同步配置文件，等 sidecar 下次重启即生效。
+    // 未起过 sidecar 时不落盘——避免为一个从未启用的 provider 凭空写文件。
+    if (this.sidecar) {
+      void this.materializeSidecarConfig(next).catch((err: unknown) => {
+        logger.warn(`[PVD:workbuddy] sidecar config refresh failed: ${messageOf(err)}`);
+      });
+    }
   }
 
   /** sidecar 进程状态（面板上游卡片的直读数据源，§3.11-4）。 */
@@ -437,11 +652,40 @@ export class WorkBuddyProvider implements IProvider {
     }
   }
 
-  private buildSidecarArgs(cfg: WorkBuddyConfig): string[] {
-    const args = [`--listen`, `127.0.0.1:${cfg.sidecar.port}`];
-    if (cfg.authDir) args.push('--auth-dir', cfg.authDir);
-    if (cfg.apiKey) args.push('--api-key', cfg.apiKey);
-    return args;
+  /**
+   * 把网关侧的监听/密钥/授权目录落成 sidecar 认识的配置文件（真实二进制的唯一入口）。
+   *
+   * 落点优先级：显式 `sidecar.configPath` > `WORKBUDDY_SIDECAR_CONFIG` > 状态文件同级的
+   * `workbuddy-sidecar/config.json`。**深合并**写回：面板可在 sidecar 里热改的键
+   * （`cooldown` / `custom` / …）在网关重写时被保留，只覆盖网关自己管的四个键。
+   * 返回实际写入的配置路径；任何一步失败都抛出（调用方据此放弃 spawn）。
+   */
+  private async materializeSidecarConfig(cfg: WorkBuddyConfig): Promise<string> {
+    const configPath = await this.resolveSidecarConfigPath(cfg);
+    const dir = path.dirname(configPath);
+    await fsp.mkdir(dir, { recursive: true });
+
+    const existing = await readJsonIfExists(configPath);
+    const managed = {
+      listen: `127.0.0.1:${cfg.sidecar.port}`,
+      api_key: cfg.apiKey,
+      auth_dir: cfg.authDir ?? path.join(dir, 'auths'),
+      state_file: path.join(dir, 'state.json'),
+    };
+
+    // 临时文件 + rename：避免 sidecar 恰好读到半截 JSON。
+    const tmp = `${configPath}.tmp`;
+    await fsp.writeFile(tmp, `${JSON.stringify({ ...existing, ...managed }, null, 2)}\n`, 'utf8');
+    await fsp.rename(tmp, configPath);
+    return configPath;
+  }
+
+  private async resolveSidecarConfigPath(cfg: WorkBuddyConfig): Promise<string> {
+    if (cfg.sidecar.configPath) return path.resolve(cfg.sidecar.configPath);
+    // 状态文件路径先看注入的 env（测试与分片部署都靠它隔离），再走共享解析器。
+    const fromEnv = this.env[STATE_PATH_ENV]?.trim();
+    const statePath = fromEnv ? path.resolve(fromEnv) : await resolveConfiguredStatePath();
+    return path.join(path.dirname(statePath), 'workbuddy-sidecar', 'config.json');
   }
 
   private async getJson<T>(path: string): Promise<T | null> {
@@ -478,18 +722,21 @@ export class WorkBuddyProvider implements IProvider {
 // ─── 纯函数（导出以便单测）────────────────────────────────────────────────────
 
 /** 把 sidecar `/status` 响应映射为池快照（缺失字段按 0 处理，容忍 sidecar 演进）。 */
-export function mapPoolSnapshot(status: Record<string, unknown>): PoolSnapshot {
+export function mapPoolSnapshot(status: Record<string, unknown>, now: number = Date.now()): PoolSnapshot {
   const rawAccounts = Array.isArray(status.accounts) ? (status.accounts as Array<Record<string, unknown>>) : [];
   const accounts = rawAccounts
     .map((a) => {
       const uid = String(a.uid ?? a.id ?? '').trim();
       if (!uid) return null;
+      const expiresAt = parseTokenExpiry(a, now);
       return {
         id: uid,
         label: typeof a.nickname === 'string' && a.nickname ? a.nickname : uid,
         paused: a.paused === true,
         disabled: a.disabled === true,
         cooling: a.cooling === true,
+        // T301：只有 sidecar 明确给出到期信息时才填；缺失即 undefined（未知≠已过期）。
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
       };
     })
     .filter((a): a is NonNullable<typeof a> => a !== null);

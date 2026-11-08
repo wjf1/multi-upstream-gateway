@@ -124,6 +124,25 @@ export function isWaitingRoomError(err: unknown): err is WaitingRoomError {
   return err instanceof WaitingRoomError;
 }
 
+/** T305：等待室排队超时错误。 */
+export class WaitingRoomTimeoutError extends Error {
+  constructor(
+    public readonly token: string,
+    public readonly timeoutMs: number,
+    public readonly lastPosition: number,
+    public readonly lastQueueDepth: number,
+  ) {
+    super(
+      `freebuff waiting room timeout for ${token} (exceeded ${Math.round(timeoutMs / 1000)}s; last position ${lastPosition}/${lastQueueDepth})`,
+    );
+    this.name = 'WaitingRoomTimeoutError';
+  }
+}
+
+export function isWaitingRoomTimeoutError(err: unknown): err is WaitingRoomTimeoutError {
+  return err instanceof WaitingRoomTimeoutError;
+}
+
 // ─── Freebuff 运行配置 ───────────────────────────────────────────────────────
 
 /**
@@ -147,4 +166,6 @@ export interface FreebuffConfig {
   userAgent: string;
   /** Provider 总闸（unified config 的 enabled）。 */
   enabled: boolean;
+  /** T305 等待室排队最大等待时限（ms，默认 30s）。设 0 为不排队立即返回 503。 */
+  waitingRoomTimeoutMs?: number;
 }

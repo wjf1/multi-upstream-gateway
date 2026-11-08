@@ -18,6 +18,7 @@ import { getProjectRootDir, readRawConfigFile, saveConfigFile } from '../utils/c
 import { isSameOriginIfPresent } from './sse-common.js';
 import { ADMIN_CSP, adminTokenOk, injectAdminTokenMeta, isLoopbackHostHeader } from '../utils/admin-guard.js';
 import { registerAuditLog } from '../utils/audit-log.js';
+import { resolveDefaultStoreFilePath } from '../utils/credential-store.js';
 import { acceptRiskDisclaimer, isRiskDisclaimerAccepted } from '../utils/risk-gate.js';
 import {
   loadConfig,
@@ -358,7 +359,119 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     return { status: 'success', running: getGatewayRunning() };
   });
 
-  fastify.get('/api/logs', async () => ({ logs: logger.getLogs() }));
+  fastify.get('/api/logs', async (req: any) => {
+    let list = logger.getLogs();
+    const query = req?.query || {};
+    const level = typeof query.level === 'string' ? query.level.toLowerCase().trim() : '';
+    const provider = typeof query.provider === 'string' ? query.provider.toLowerCase().trim() : '';
+    const kw = typeof (query.q || query.keyword) === 'string' ? String(query.q || query.keyword).toLowerCase().trim() : '';
+
+    if (level && level !== 'all') {
+      list = list.filter(l => (l.level || '').toLowerCase() === level);
+    }
+    if (provider && provider !== 'all') {
+      list = list.filter(l => {
+        const msg = (l.message || '').toLowerCase();
+        if (provider === 'freebuff') return msg.includes('freebuff') || msg.includes('pvd:freebuff');
+        if (provider === 'workbuddy') return msg.includes('workbuddy') || msg.includes('pvd:workbuddy') || msg.includes('codebuddy');
+        if (provider === 'commandcode') return msg.includes('commandcode') || msg.includes('cc') || (!msg.includes('freebuff') && !msg.includes('workbuddy'));
+        return msg.includes(provider);
+      });
+    }
+    if (kw) {
+      list = list.filter(l => (l.message || '').toLowerCase().includes(kw));
+    }
+    const limit = Number(query.limit);
+    if (Number.isFinite(limit) && limit > 0) {
+      list = list.slice(-limit);
+    }
+    return { logs: list, total: list.length };
+  });
+
+  /**
+   * T306：按 requestId / traceId 查询请求关联详情（包含模型、账号、状态、耗时、用量与关联日志行）。
+   */
+  fastify.get('/api/logs/request/:id', async (req: any, reply) => {
+    const rawId = String(req.params?.id || '').trim();
+    if (!rawId) return reply.status(400).send({ error: 'Request id is required' });
+
+    const records = getUsageHistory();
+    // 逆序查找最新匹配项
+    const matchedRecord = records.slice().reverse().find(r =>
+      r.requestId === rawId ||
+      r.traceId === rawId ||
+      (r.requestId && (r.requestId === rawId || r.requestId.includes(rawId))) ||
+      (r.traceId && (r.traceId === rawId || r.traceId.includes(rawId)))
+    );
+
+    const relatedLogs = logger.getLogs().filter(l =>
+      l.message.includes(rawId) ||
+      (matchedRecord?.traceId && l.message.includes(matchedRecord.traceId)) ||
+      (matchedRecord?.requestId && l.message.includes(matchedRecord.requestId))
+    );
+
+    if (matchedRecord) {
+      return {
+        found: true,
+        record: {
+          requestId: matchedRecord.requestId || rawId,
+          traceId: matchedRecord.traceId || null,
+          timestamp: matchedRecord.timestamp,
+          model: matchedRecord.model,
+          provider: matchedRecord.provider || 'commandcode',
+          status: matchedRecord.status,
+          timingMs: matchedRecord.timingMs,
+          inputTokens: matchedRecord.inputTokens,
+          outputTokens: matchedRecord.outputTokens,
+          cacheReadTokens: matchedRecord.cacheReadTokens || 0,
+          costUsd: matchedRecord.costUsd,
+          native: matchedRecord.native || null,
+          errorCode: matchedRecord.errorCode || null,
+          mode: matchedRecord.mode,
+          sessionId: matchedRecord.sessionId || null,
+          project: matchedRecord.project || null,
+        },
+        relatedLogs,
+      };
+    }
+
+    if (relatedLogs.length > 0) {
+      // 从日志文本尽力解析字段
+      let model = '未知';
+      let status: 'COMPLETED' | 'FAILED' = 'COMPLETED';
+      let timingMs = 0;
+      for (const l of relatedLogs) {
+        const mMatch = l.message.match(/Model[:\s]+([\w.-]+)/i);
+        if (mMatch) model = mMatch[1];
+        const tMatch = l.message.match(/Timing[:\s]+([\d.]+)(s|ms)/i);
+        if (tMatch) {
+          timingMs = tMatch[2].toLowerCase() === 's' ? Math.round(parseFloat(tMatch[1]) * 1000) : parseInt(tMatch[1], 10);
+        }
+        if (l.level === 'error' || /error|failed|429|500|502|504/i.test(l.message)) {
+          status = 'FAILED';
+        }
+      }
+      return {
+        found: true,
+        record: {
+          requestId: rawId,
+          traceId: null,
+          timestamp: relatedLogs[0].timestamp,
+          model,
+          provider: 'commandcode',
+          status,
+          timingMs,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: null,
+          errorCode: null,
+        },
+        relatedLogs,
+      };
+    }
+
+    return { found: false, requestId: rawId, message: '未找到该请求的用量或日志记录', relatedLogs: [] };
+  });
 
   /**
    * T106（§3.7-7）：确认合规风险告知。
@@ -453,6 +566,82 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     return { status: 'success', defaultProvider: name, persisted };
   });
 
+  // ── T304：路由策略高级配置（strict / auto / same-model / 粘性 / 优先级）───────
+
+  fastify.get('/api/routing/rules', async () => {
+    const runtime = fastify.providerRuntime;
+    if (runtime) {
+      return { ok: true, rules: runtime.getRoutingRules() };
+    }
+    const routing = (readRawConfigFile().routing ?? {}) as Record<string, unknown>;
+    return {
+      ok: true,
+      rules: {
+        defaultProvider: (routing.defaultProvider as any) || 'commandcode',
+        fallbackStrategy: (routing.fallbackStrategy as any) || 'strict',
+        upstreamPriority: Array.isArray(routing.upstreamPriority) ? routing.upstreamPriority : ['commandcode', 'freebuff', 'workbuddy'],
+        sessionStickyEnabled: routing.sessionStickyEnabled !== false,
+        modelPrefixRouting: routing.modelPrefixRouting !== false,
+      },
+    };
+  });
+
+  fastify.post('/api/routing/rules', async (req: any, reply) => {
+    const runtime = fastify.providerRuntime;
+    const body = req.body || {};
+    const errors: Record<string, string> = {};
+
+    let fallbackStrategy: 'strict' | 'auto' | 'same-model' | undefined;
+    if (body.fallbackStrategy !== undefined) {
+      const s = String(body.fallbackStrategy).trim().toLowerCase();
+      if (!['strict', 'auto', 'same-model'].includes(s)) {
+        errors.fallbackStrategy = '无效的降级策略，可选值：strict, auto, same-model';
+      } else {
+        fallbackStrategy = s as any;
+      }
+    }
+
+    let defaultProvider: ProviderName | undefined;
+    if (body.defaultProvider !== undefined) {
+      const p = String(body.defaultProvider).trim().toLowerCase();
+      if (!['commandcode', 'freebuff', 'workbuddy'].includes(p)) {
+        errors.defaultProvider = '无效的默认上游提供商';
+      } else {
+        defaultProvider = p as any;
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      return reply.status(400).send({ ok: false, error: '路由规则参数校验失败', errors });
+    }
+
+    const currentRouting = (readRawConfigFile().routing ?? {}) as Record<string, unknown>;
+    const updates: Record<string, unknown> = {};
+    if (fallbackStrategy) updates.fallbackStrategy = fallbackStrategy;
+    if (defaultProvider) updates.defaultProvider = defaultProvider;
+    if (body.sessionStickyEnabled !== undefined) updates.sessionStickyEnabled = Boolean(body.sessionStickyEnabled);
+    if (body.modelPrefixRouting !== undefined) updates.modelPrefixRouting = Boolean(body.modelPrefixRouting);
+    if (Array.isArray(body.upstreamPriority)) updates.upstreamPriority = body.upstreamPriority;
+
+    // 内存即时热生效
+    if (runtime) {
+      runtime.setRoutingRules(updates as any);
+    }
+
+    // 持久化到 config.json
+    const persisted = saveConfigFile({
+      routing: { ...currentRouting, ...updates },
+    } as never);
+
+    logger.info(`[ROUTING] Rules updated via dashboard (persisted=${persisted})`);
+    return {
+      ok: true,
+      message: '路由规则已热生效并持久化保存',
+      persisted,
+      rules: runtime ? runtime.getRoutingRules() : { ...currentRouting, ...updates },
+    };
+  });
+
   fastify.post('/api/providers/registry/refresh', async (_req, reply) => {
     const runtime = fastify.providerRuntime;
     if (!runtime) return reply.status(404).send({ error: 'Provider runtime is not wired in this build' });
@@ -460,6 +649,111 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     const count = runtime.namespacedModels().length;
     logger.info(`[DASHBOARD] Provider model registry refreshed (${count} namespaced models)`);
     return { status: 'success', namespacedModels: count };
+  });
+
+  // ── T301：WorkBuddy 面板内授权（添加账号）+ 令牌看护状态 ─────────────────────
+  // 凭据全程留在 sidecar：这些端点的响应里**没有**任何 accessToken/refreshToken
+  // 字段（listAccounts 与 oauth 客户端均不持有凭据）。
+
+  /** duck-type：workbuddy 未装配/未初始化时端点优雅降级而非 500。 */
+  const workbuddyT301 = () => {
+    const provider = fastify.providerRuntime?.get('workbuddy') as
+      | {
+          loginStart?: (realm?: 'cn' | 'global') => Promise<unknown>;
+          loginPoll?: (state: string) => Promise<unknown>;
+          tokenWatchStatus?: () => unknown;
+        }
+      | undefined;
+    if (!provider || typeof provider.loginStart !== 'function' || typeof provider.tokenWatchStatus !== 'function') {
+      return null;
+    }
+    return provider;
+  };
+
+  /** T302：余额镜像端点的 duck-type（同一套「未装配即优雅降级」处理）。 */
+  const workbuddyT302 = () => {
+    const provider = fastify.providerRuntime?.get('workbuddy') as
+      | {
+          balanceStatus?: () => unknown;
+          refreshBalance?: () => Promise<{ ok: boolean; persisted: boolean; accounts: number; refreshedAt: number }>;
+        }
+      | undefined;
+    if (!provider || typeof provider.balanceStatus !== 'function' || typeof provider.refreshBalance !== 'function') {
+      return null;
+    }
+    return provider;
+  };
+
+  fastify.post('/api/upstreams/workbuddy/login/start', async (req: any, reply) => {
+    const provider = workbuddyT301();
+    if (!provider) return reply.status(404).send({ ok: false, error: 'WorkBuddy provider is not available' });
+    const raw = String(req.body?.realm ?? 'cn').trim().toLowerCase();
+    if (raw !== 'cn' && raw !== 'global') {
+      return reply.status(400).send({ ok: false, error: `无效的 realm "${raw}"，可选：cn / global` });
+    }
+    try {
+      const started = await provider.loginStart!(raw);
+      logger.info(`[DASHBOARD] WorkBuddy login started (realm=${raw})`);
+      return { ok: true, ...(started as object) };
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      logger.warn(`[DASHBOARD] WorkBuddy login/start failed: ${msg}`);
+      return reply.status(503).send({ ok: false, error: msg });
+    }
+  });
+
+  fastify.get('/api/upstreams/workbuddy/login/poll', async (req: any, reply) => {
+    const provider = workbuddyT301();
+    if (!provider) return reply.status(404).send({ ok: false, error: 'WorkBuddy provider is not available' });
+    const state = String(req.query?.state ?? '').trim();
+    if (!state) return reply.status(400).send({ ok: false, error: 'state 参数缺失' });
+    try {
+      return { ok: true, ...((await provider.loginPoll!(state)) as object) };
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      return reply.status(/unknown or expired/.test(msg) ? 404 : 503).send({ ok: false, error: msg });
+    }
+  });
+
+  fastify.get('/api/upstreams/workbuddy/tokens', async (_req, reply) => {
+    const provider = workbuddyT301();
+    if (!provider) return reply.status(404).send({ ok: false, error: 'WorkBuddy provider is not available' });
+    try {
+      return { ok: true, ...(provider.tokenWatchStatus!() as object) };
+    } catch (err: any) {
+      return reply.status(503).send({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
+  // ── T302：WorkBuddy 余额镜像（只读）+ 手动强制刷新 ───────────────────────────
+  // 余额的刷新执行者是 sidecar（联邦裁决 G0-T2），网关只做镜像与原子持久化；
+  // 快照里带 `degraded` / `persistedAt`，便于面板区分「余额没变」与「读不到」。
+
+  fastify.get('/api/upstreams/workbuddy/balance', async (_req, reply) => {
+    const provider = workbuddyT302();
+    if (!provider) return reply.status(404).send({ ok: false, error: 'WorkBuddy provider is not available' });
+    try {
+      return { ok: true, ...(provider.balanceStatus!() as object) };
+    } catch (err: any) {
+      return reply.status(503).send({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
+  fastify.post('/api/upstreams/workbuddy/balance/refresh', async (_req, reply) => {
+    const provider = workbuddyT302();
+    if (!provider) return reply.status(404).send({ ok: false, error: 'WorkBuddy provider is not available' });
+    try {
+      const result = await provider.refreshBalance!();
+      logger.info(
+        `[DASHBOARD] WorkBuddy balance refresh requested (ok=${result.ok}, accounts=${result.accounts})`,
+      );
+      // sidecar 仍不可用时如实回报 503：镜像保持上次已知余额，不谎报成功。
+      return result.ok
+        ? { ...result, snapshot: provider.balanceStatus!() }
+        : reply.status(503).send({ ...result });
+    } catch (err: any) {
+      return reply.status(503).send({ ok: false, error: err?.message || String(err) });
+    }
   });
 
   fastify.get('/api/accounts', async () => {
@@ -698,8 +992,210 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
   });
 
   fastify.post('/api/usage/clear', async () => {
+    logger.warn('[AUDIT] Cleared all usage history via dashboard request.');
     clearUsageHistory();
-    return { status: 'success' };
+    return { status: 'success', audited: true };
+  });
+
+  // ─── T307 面板系统设置 API（五大区块 + 字段校验 + 热生效）─────────────────────────
+
+  fastify.get('/api/settings', async () => {
+    const config = loadConfig();
+    const raw = readRawConfigFile();
+    const upstream = (raw.upstream ?? {}) as Record<string, unknown>;
+    const routing = (raw.routing ?? {}) as Record<string, unknown>;
+
+    return {
+      version: PROXY_VERSION,
+      sections: {
+        network: {
+          port: config.port,
+          host: config.host,
+          proxy: (upstream.proxy as string) || config.proxy || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || '',
+          upstreamTimeoutMs: config.upstreamTimeoutMs,
+          idleTimeoutMs: config.idleTimeoutMs,
+          maxRetries: config.maxRetries,
+        },
+        security: {
+          maxBodyMb: Math.round(resolveBodyLimit() / 1048576),
+          allowedHosts: (upstream.allowedHosts as string[]) || ['127.0.0.1'],
+          rateLimitRpm: readEnvIntStrict('RATE_LIMIT_RPM') || 0,
+          rateLimitTpm: readEnvIntStrict('RATE_LIMIT_TPM') || 0,
+        },
+        alerts: {
+          webhookUrl: process.env.WEBHOOK_URL || '',
+          dailyBudgetUsd: process.env.DAILY_BUDGET_USD || '',
+          errorRateThreshold: readEnvFloatLike('WEBHOOK_ERROR_RATE') || 0,
+        },
+        storage: {
+          configFile: CONFIG_FILE_PATH,
+          logFile: LOG_FILE_PATH,
+          usageFile: USAGE_FILE_PATH,
+          credentialStoreFile: resolveDefaultStoreFilePath(),
+        },
+        preferences: {
+          defaultProvider: (routing.defaultProvider as string) || 'commandcode',
+          fallbackStrategy: (routing.fallbackStrategy as string) || 'strict',
+          sessionStickyEnabled: routing.sessionStickyEnabled !== false,
+          modelPrefixRouting: routing.modelPrefixRouting !== false,
+          acceptedRiskDisclaimer: isRiskDisclaimerAccepted(),
+        },
+      },
+      meta: {
+        requiresRestartFields: ['port', 'host', 'proxy'],
+        hotReloadFields: ['upstreamTimeoutMs', 'idleTimeoutMs', 'maxRetries', 'maxBodyMb', 'allowedHosts', 'defaultProvider'],
+      },
+    };
+  });
+
+  fastify.post('/api/settings', async (req: any, reply) => {
+    const body = req.body || {};
+    const errors: Record<string, string> = {};
+
+    const net = body.network || {};
+    let port: number | undefined;
+    let host: string | undefined;
+    let proxy: string | undefined;
+    let upstreamTimeoutMs: number | undefined;
+    let idleTimeoutMs: number | undefined;
+    let maxRetries: number | undefined;
+
+    if (net.port !== undefined && net.port !== null && String(net.port).trim() !== '') {
+      const p = Number(net.port);
+      if (!Number.isInteger(p) || p < 1 || p > 65535) {
+        errors.port = '端口必须为 1 到 65535 之间的整数';
+      } else {
+        port = p;
+      }
+    }
+
+    if (net.host !== undefined && net.host !== null) {
+      const h = String(net.host).trim();
+      if (!h) {
+        errors.host = '监听主机不能为空';
+      } else {
+        host = h;
+      }
+    }
+
+    if (net.proxy !== undefined && net.proxy !== null) {
+      proxy = String(net.proxy).trim();
+    }
+
+    if (net.upstreamTimeoutMs !== undefined && net.upstreamTimeoutMs !== null) {
+      const ms = Number(net.upstreamTimeoutMs);
+      if (!Number.isFinite(ms) || ms < 0) {
+        errors.upstreamTimeoutMs = '超时时间必须大于等于 0 毫秒';
+      } else {
+        upstreamTimeoutMs = Math.round(ms);
+      }
+    }
+
+    if (net.idleTimeoutMs !== undefined && net.idleTimeoutMs !== null) {
+      const ms = Number(net.idleTimeoutMs);
+      if (!Number.isFinite(ms) || ms < 0) {
+        errors.idleTimeoutMs = '空闲超时必须大于等于 0 毫秒';
+      } else {
+        idleTimeoutMs = Math.round(ms);
+      }
+    }
+
+    if (net.maxRetries !== undefined && net.maxRetries !== null) {
+      const r = Number(net.maxRetries);
+      if (!Number.isInteger(r) || r < 0 || r > 10) {
+        errors.maxRetries = '最大重试次数必须在 0 到 10 之间';
+      } else {
+        maxRetries = r;
+      }
+    }
+
+    const sec = body.security || {};
+    let maxBodyMb: number | undefined;
+    if (sec.maxBodyMb !== undefined && sec.maxBodyMb !== null) {
+      const mb = Number(sec.maxBodyMb);
+      if (!Number.isInteger(mb) || mb < 1 || mb > 500) {
+        errors.maxBodyMb = '请求体大小限制必须在 1 到 500 MB 之间';
+      } else {
+        maxBodyMb = mb;
+      }
+    }
+
+    const pref = body.preferences || {};
+    let defaultProvider: string | undefined;
+    if (pref.defaultProvider !== undefined && pref.defaultProvider !== null) {
+      const p = String(pref.defaultProvider).trim().toLowerCase();
+      if (p && !['commandcode', 'freebuff', 'workbuddy'].includes(p)) {
+        errors.defaultProvider = '无效的上游提供商，可选值：commandcode, freebuff, workbuddy';
+      } else if (p) {
+        defaultProvider = p;
+      }
+    }
+
+    let fallbackStrategy: 'strict' | 'auto' | 'same-model' | undefined;
+    if (pref.fallbackStrategy !== undefined && pref.fallbackStrategy !== null) {
+      const s = String(pref.fallbackStrategy).trim().toLowerCase();
+      if (!['strict', 'auto', 'same-model'].includes(s)) {
+        errors.fallbackStrategy = '无效的降级策略，可选值：strict, auto, same-model';
+      } else {
+        fallbackStrategy = s as any;
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      return reply.status(400).send({
+        ok: false,
+        error: '配置参数校验失败',
+        errors,
+      });
+    }
+
+    // 组装更新
+    const raw = readRawConfigFile();
+    const currentUpstream = (raw.upstream ?? {}) as Record<string, unknown>;
+    const currentRouting = (raw.routing ?? {}) as Record<string, unknown>;
+
+    const updates: Record<string, unknown> = {};
+    if (port !== undefined) updates.port = port;
+    if (host !== undefined) updates.host = host;
+
+    const newUpstream = { ...currentUpstream };
+    let upstreamChanged = false;
+    if (proxy !== undefined) { newUpstream.proxy = proxy; upstreamChanged = true; }
+    if (upstreamTimeoutMs !== undefined) { newUpstream.upstreamTimeoutMs = upstreamTimeoutMs; upstreamChanged = true; }
+    if (idleTimeoutMs !== undefined) { newUpstream.idleTimeoutMs = idleTimeoutMs; upstreamChanged = true; }
+    if (maxRetries !== undefined) { newUpstream.maxRetries = maxRetries; upstreamChanged = true; }
+    if (sec.allowedHosts && Array.isArray(sec.allowedHosts)) { newUpstream.allowedHosts = sec.allowedHosts; upstreamChanged = true; }
+    if (upstreamChanged) updates.upstream = newUpstream;
+    if (maxBodyMb !== undefined) {
+      const currentLimits = (raw.limits ?? {}) as Record<string, unknown>;
+      updates.limits = { ...currentLimits, maxBodyMb };
+    }
+
+    const routingUpdates: Record<string, unknown> = { ...currentRouting };
+    let routingChanged = false;
+    if (defaultProvider) { routingUpdates.defaultProvider = defaultProvider; routingChanged = true; }
+    if (fallbackStrategy) { routingUpdates.fallbackStrategy = fallbackStrategy; routingChanged = true; }
+    if (pref.sessionStickyEnabled !== undefined) { routingUpdates.sessionStickyEnabled = Boolean(pref.sessionStickyEnabled); routingChanged = true; }
+    if (pref.modelPrefixRouting !== undefined) { routingUpdates.modelPrefixRouting = Boolean(pref.modelPrefixRouting); routingChanged = true; }
+
+    if (routingChanged) {
+      updates.routing = routingUpdates;
+      if (fastify.providerRuntime) {
+        fastify.providerRuntime.setRoutingRules(routingUpdates as any);
+      }
+    }
+
+    const persisted = saveConfigFile(updates as never);
+    logger.info(`[SETTINGS] System settings updated (persisted=${persisted}, defaultProvider=${defaultProvider || 'unchanged'})`);
+
+    const hasRestartFields = port !== undefined || host !== undefined || proxy !== undefined;
+    return {
+      ok: true,
+      message: '系统设置保存成功并已热生效' + (hasRestartFields ? '（部分标记需重启的项将在下次启动生效）' : ''),
+      requiresRestart: hasRestartFields,
+      persisted,
+      applied: updates,
+    };
   });
 
   // ─── 仪表盘 SPA ────────────────────────────────────────────────────────────

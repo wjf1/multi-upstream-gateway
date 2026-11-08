@@ -44,8 +44,8 @@ describe('表格', () => {
 describe('标签页', () => {
   it('tablist / tab / tabpanel 三者齐备且互相指向', () => {
     expect(html).toMatch(/<nav[^>]*role="tablist"/);
-    // T209（2026-10-07）：新增 upstream 页，语义清单随之声明式扩容。
-    const tabs = ['overview', 'upstream', 'accounts', 'usage', 'models', 'logs'];
+    // T209/T307：新增 upstream 与 settings 页，语义清单随之声明式扩容。
+    const tabs = ['overview', 'upstream', 'accounts', 'usage', 'models', 'logs', 'settings'];
     for (const t of tabs) {
       expect(html, `tab-${t} 缺少 tab 语义`)
         .toMatch(new RegExp(`id="tab-${t}" role="tab" aria-selected="(true|false)" aria-controls="content-${t}"`));

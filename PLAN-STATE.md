@@ -238,7 +238,135 @@
     - ① Freebuff 真实线上 Token（`FREEBUFF_TOKENS`）待配置
     - ② WorkBuddy sidecar 缺少 Go 运行时 / 预构建二进制（需环境补齐以完成端到端三方通信）
     - ③ master-plan §0.4 强制项：项目负责人签字确认 `DECISION` 行（`continue | pause | pivot-federated`）
-- [ ] T301~T310 / T401~T406 / T501~T505（见执行依据方案）
+- [x] T306 面板运行日志页（2026-10-07 完成）
+  - deps: T105, T108
+  - 范围：独立日志页、三维筛选（级别/上游/关键词）、RequestId 交互识别与请求全链路关联详情
+  - 交付：
+    - 后端：增强 `GET /api/logs` 支持参数化过滤（level/provider/q/limit）；新增 `GET /api/logs/request/:id` 关联用量记录与生命周期日志
+    - 前端：`public/index.html` 增强工具条（级别下拉、上游下拉、关键词搜索框）与 RequestId 关联详情卡片（模型/上游/状态/耗时/token与成本/相关日志）；`public/js/logs.js` 实现三筛选、ID 交互高亮、详情拉取、5s 自动轮询刷新与智能滚动跟随
+  - 测试：新增 `tests/spa-logs.test.ts` 13 例（先红后绿），验证 HTML 骨架、a11y 4 弹窗守卫不破坏、三筛选逻辑、5s 轮询与后端参数化 API
+  - 门禁：全量 **79 文件 / 997 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [x] T307 面板系统设置页（2026-10-07 完成）
+  - deps: T102
+  - 范围：独立系统设置页、五大区块（网络/安全/告警/存储与危险操作/面板偏好）、热生效、需重启项标红、校验错误字段级标红、清空用量二次确认与审计留痕
+  - 交付：
+    - 后端：实现 `GET /api/settings`（暴露五大区块配置及需重启/热生效字段元数据）；`POST /api/settings` 支持细粒度校验与字段级错误字典，保存至 `config.json` 并即时热生效（2s 内响应）；增强 `POST /api/usage/clear` 记录管理面审计日志与事件
+    - 前端：`public/index.html` 增加第 7 个导航 Tab 与独立 `#content-settings` 分区；五大区块网格卡片排列；需重启项（端口/主机/代理）明确红标徽章；`public/js/settings.js` 负责表单加载、提交防重、字段级标红、2s 热生效 Feedback、清空用量二次确认弹窗与审计留痕
+  - 测试：新增 `tests/spa-settings.test.ts` 13 例全绿；更新 `tests/dashboard-spa.test.ts` 与 `tests/spa-a11y.test.ts` 声明式扩容 settings 语义；严格保持 4 模态弹窗 a11y 守卫
+  - 门禁：全量 **80 文件 / 1010 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [x] T308 WorkBuddy Anthropic 通用桥接入（2026-10-07 完成）
+  - deps: T202, T204
+  - 范围：复用 `core/anthropic-bridge`，补齐协议矩阵 WorkBuddy `/v1/messages` 能力与快照保真度锁
+  - 交付：
+    - 数据面：确认与验证 `messages.ts` 经 `anthropicToOpenAIRequest` 与 `respondViaProvider` 的 WorkBuddy 路由链路；支持 `codebuddy/` 与 `workbuddy/` 前缀及 Header 显式路由；
+    - 协议出口：流式 SSE 输出严格的 Anthropic 块生命周期序列（`message_start` → `content_block_start` → `content_block_delta` → `content_block_stop` → `message_delta` → `message_stop`）；非流式输出标准 Anthropic Message JSON（包含 role、content、stop_reason、usage）；
+    - 语义保真：验证 system prompt 前置、多轮历史上下文完整转换、异常时返回标准 Anthropic 错误信封
+  - 测试：新增 `tests/workbuddy-anthropic.test.ts` 7 例全绿，涵盖路由、流式、非流式、上下文透传、错误信封与流/非流 Snapshot 快照保真度锁
+  - 门禁：全量 **81 文件 / 1017 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [x] T305 Freebuff 等待室与队列（2026-10-07 完成）
+  - deps: T201
+  - 范围：waitingRoom 排队、位置提示透传、等待室轮询推进、超时错误语义处理
+  - 交付：
+    - 等待室轮询机：`free-session.ts` 实现 `pollWaitingRoomUntilActive`，按上游 `pollAt` 延迟周期轮询并更新宿主会话，捕获排队位置推进直至 active 获得实例；超限抛出 `WaitingRoomTimeoutError`；支持 AbortSignal 客户端打断
+    - Provider 接线：`FreebuffProvider.ensureLeaseSession` 支持配置驱动超时（`waitingRoomTimeoutMs`，默认 30s）；高负载排队时自动轮询推进并透传日志；超时抛出标准 504 `REQUEST_TIMEOUT`（带 `waitingRoom: true, timeout: true` 上下文）；零排队模式（`waitingRoomTimeoutMs: 0`）快速返回 503 与 Retry-After
+  - 测试：新增 `tests/freebuff-waiting-room.test.ts` 5 例全绿（DoD 1 高负载排队推进 4/10→1/10→active、DoD 2 超时 504 错误语义、AbortSignal 打断、503 快速失败）
+  - 门禁：全量 **82 文件 / 1022 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [x] T303 健康探测 + 自动降级 + 级联防护（2026-10-07 完成）
+  - deps: T214
+  - 范围：按 §3.6 全量实现（30s 周期探活调度、degraded 状态管理、429 熔断摘除、ramp 渐进切换流量控制、全局在途队列深度控制、流式首字节铁律保护）
+  - 交付：
+    - 核心引擎：新增 `src/providers/core/degradation.ts`（`DegradationManager`），管理全局并发深度（queueMaxDepth 默认 128，超限 503+Retry-After）；提供 30s 定时探活调度器；支持 30s 滑动窗口内 429 达 2 次自动摘除并标记 degraded；支持渐进切换（切换后第 1 分钟 10%，每分钟 +10% 平滑承接，平滑直方图无瞬时尖峰）
+    - 运行时接线：`ProviderRuntime` 持有 `degradation` 单例，管理探活调度器生命周期与 Provider degraded 状态视图；`status()` 接口暴露 degraded 标记与原因
+    - 数据面流式铁律守护：`provider-dispatch.ts` 请求入口/出口原子管理队列槽位（`acquireQueueSlot` / `releaseQueueSlot`）；记录 429 错误统计；首字节产出后（`began === true`）严格禁止跨 Provider 切换降级，确保协议纯净度
+  - 测试：新增 `tests/degradation.test.ts` 5 例全绿（DoD 1 断网 30s 内 degraded/恢复 healthy、DoD 2 ramp 渐进直方图平滑输出、DoD 3 429×2 摘除并跳过候选、DoD 4 首字节后严禁切换、DoD 5 queueMaxDepth 超限 503）
+  - 门禁：全量 **83 文件 / 1027 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [x] T304 路由策略高级配置（2026-10-08 完成）
+  - deps: T303
+  - 范围：strict / auto / same-model 三模式降级、`X-Upstream-Account` 强制账号（写审计）、会话粘性/前缀路由开关、路由规则配置页与热生效 API
+  - 交付：
+    - 三模式降级：`provider-dispatch.ts` 在流式首字节前按 `fallbackStrategy` 决策——`strict` 不降级；`auto` 切换到 `runtime.priorityList` 中的下一个启用上游；`same-model` 仅当备选支持同名模型才降级（`registry.resolve(modelName)` + `modelCache` 兜底判定）。5 处错误路径（chat 非流式/流式未开头、messages 非流式/流式未开头）在抛错前尝试切换，命中后回写 `x-actual-upstream`（`reply.header` + `reply.raw.setHeader` 双保险）并复用同一渲染出口；首字节已产出（`began`）严格不切换
+    - 强制账号：新增 `x-upstream-account` 请求头（`UPSTREAM_ACCOUNT_HEADER`），`RouteDecision` 增 `preferredAccountId`，经 `ChatOptions.preferredAccountId` 透传至 Provider 选号；`chat.ts` / `messages.ts` 审计 `accountId` 取值链 = 路由决策 > 请求头 > 凭据尾号
+    - 路由开关：`RouterDeps` 增 `sessionStickyEnabled` / `modelPrefixRouting`，可分别关闭第六步粘性与第三步前缀路由
+    - 规则热生效：`GET /api/routing/rules` 读当前规则；`POST /api/routing/rules` 校验 `fallbackStrategy`（三枚举）/ `defaultProvider` 后热生效并持久化 `config.json` 的 `routing` 分片
+    - 面板：设置页新增降级策略下拉、会话粘性开关、模型前缀路由开关（`public/js/settings.js` 同步提交与回填）
+  - 测试：新增 `tests/routing-advanced.test.ts` 7 例全绿（三模式行为断言、强制账号生效并写审计留痕、规则 GET/POST 热生效）；修复 `tests/spa-a11y.test.ts` 暴露的设置页两个 `<label>` 缺 `for` 属性
+  - 门禁：全量 **84 文件 / 1034 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [x] T301 WorkBuddy OAuth 设备授权与令牌看护（2026-10-08 完成）
+  - deps: T204'（联邦透传 Provider + sidecar 管理）
+  - 范围：面板内完成 OAuth 加号（授权编排）、令牌提前刷新与失败重试退避、待刷新态标记与告警、令牌只读视图
+  - 交付：
+    - 授权客户端：新增 `src/providers/workbuddy/oauth.ts`（`WorkBuddyOAuthClient`）—— `startLogin(realm)` 打 sidecar `POST /panel/api/login/start`（返回 `{url,state,realm}`，url/state 缺失即抛错）、`pollLogin(state)` 打 `GET /panel/api/login/poll?state=`（404 → 「unknown or expired」，`done !== true` 即待授权）、`waitForLogin(state,{timeoutMs,intervalMs,signal?})` 轮询至完成或超时（默认 15 分钟 / 3s）；**响应只取 uid/nickname/realm/credits，显式丢弃 accessToken/refreshToken**（腾讯自建 state 两段式，非 RFC 8628）
+    - 令牌看护：`WorkBuddyTokenWatch` 作 Go 侧的**严格超集**——预刷窗口 **1 小时**（Go 侧硬编码 10 分钟）、失败重试 **首次 + 3 次指数退避**（1s/2s/4s，Go 侧无退避）、**「待刷新」显式状态 + Webhook 告警（每 uid 一次）**（Go 侧静默失效）；`sync(accounts)` 保状态与待刷新标记并在账号消失时清理、`due(now)`、`pendingRefreshIds()`、`snapshot()` 供只读视图
+    - Provider 接线：`mapPoolSnapshot` 经 `parseTokenExpiry` 识别 `expiresAt`/`tokenExpiresAt`/`expires_at`（秒/毫秒自适应）与 `expiresIn`/`expires_in`（相对秒），**缺失即 `undefined`（未知 ≠ 已过期）**；`refreshPool()` 把账号同步进看护；预刷随 T303 既有 30s `probe()` 顺带 `runTick()`（不新增常驻定时器），失败仅 warn、不影响探活结论
+    - 凭据边界：网关侧**永不持有任何 OAuth token**（pollLogin 返回类型层面无 token 字段）
+    - 路由（`src/routes/dashboard.ts`）：`POST /api/upstreams/workbuddy/login/start`（realm 白名单校验 400 / 未装配 404 / sidecar 不可用 503）、`GET /api/upstreams/workbuddy/login/poll?state=`（缺 state 400、会话过期 404）、`GET /api/upstreams/workbuddy/tokens`（只读令牌视图，响应无 token 字段）
+    - 面板（`public/js/accounts.js`）：WorkBuddy 卡片增 realm 下拉 + 「添加账号（授权）」入口（面板内完成 start → 开窗 → 3s 轮询至 done，404 视为会话过期），账号行按 `/tokens` 渲染「待刷新」徽章
+  - 测试：新增 `tests/workbuddy-t301.test.ts` 19 例 + `tests/workbuddy-t301-routes.test.ts` 8 例全绿（授权编排含 404/500/缺 url-state、4 次尝试与 1s/2s/4s 退避、待刷新不重复告警、中途成功清标记、runTick 只打窗口内、sync 保标记与账号消失清理、notify 抛错不外泄、parseTokenExpiry 各口径、Provider 接线与响应无凭据泄漏、三条路由 401/400/404/503、面板端点接线）
+  - 门禁：全量 **86 文件 / 1061 用例全绿**（1 skipped）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [x] T302 余额刷新与池状态持久化（2026-10-08 完成）
+  - deps: T301
+  - 范围：5min 积分余额刷新；`state.json` 原子写 + 锁 + 损坏重建
+  - 交付：
+    - 余额镜像：新增 `src/providers/workbuddy/balance-watch.ts`（`WorkBuddyBalanceWatch`）—— `observe(status)`
+      把 sidecar `/status` 的账号余额（`credits`/`creditsTotal`/`creditsExpiring`/`earliestExpiry`/
+      `earliestRemaining`）与**池状态**（`paused`/`disabled`/`cooling`）归一化落账；字段名走别名表
+      （驼峰 + 下划线双写兼容），时间戳 `normalizeEpoch` 兼容秒/毫秒
+    - **5min 节流落盘**：内存每次都更新，落盘按 `intervalMs`（默认 `BALANCE_INTERVAL_MS = 5min`）节流，
+      **不新增常驻定时器**（Bash 硬约束）；`refresh({force:true})` 与 `drain()` 可强制落盘
+    - 原子持久化：复用 `utils/state-store.ts` 的 `JsonStateStore`（临时文件 + rename）+ `withFileLock`
+      （`open(...,'wx')` 原子抢占、`staleMs` 兜底残留锁）；路径由 `resolveConfiguredStatePath` 解析
+      （`COMMANDCODE_STATE_PATH` > explicit > `data/state.json`）；**锁内不做 IO**（§3.4）
+    - 损坏恢复：文件非 JSON / 版本不符 / `accounts` 非对象 → 判定损坏，`initialize()` **不写盘**
+      （保住尚可抢救的原文件）+ 发 `state-corrupted` 告警 + `pendingRebuild=true`；`refresh()` 从 sidecar
+      `/status` 重建后发 `state-rebuilt`；重建前 `persistIfDue` 一律拒写
+    - 失败语义：`observe(null)` 只记 `consecutiveFailures` + 首次失败告警，**绝不清零账本**（读不到 ≠ 余额为 0）；
+      恢复后发 `refresh-recovered`；`snapshot().degradedReason` 按 pendingRebuild > failures > 未首刷 分级
+    - Provider 接线（`src/providers/workbuddy/provider.ts`）：`initialize()` 先载入镜像（失败仅 warn 不阻断）、
+      `refreshPool()` **复用同一次 `/status` 响应**推进镜像（零额外 IO）、`destroy()` 前 `drain()`；
+      新增 `balanceStatus()` / `refreshBalance()`；告警经 `notifyWebhook('workbuddy.balance', ...)`
+    - 路由（`src/routes/dashboard.ts`）：`GET /api/upstreams/workbuddy/balance`（只读镜像，未装配 404）、
+      `POST /api/upstreams/workbuddy/balance/refresh`（强制刷新，失败 503 不谎报成功）
+    - 卫生：`.gitignore` 排除 `data/state.json`（含账号 uid/昵称）及其 `.lock` / `*.tmp` 残留
+  - **已登记偏差**：§3.4 字面为「损坏时**从 usage 记录重建**」；实际改为**从 sidecar `/status` 重建**——
+    usage 里 WorkBuddy 只有消费侧原生量（`native.points`），反推不出剩余余额，拿它当重建源会写出
+    「看似成功实则错误」的账本；sidecar 才是余额的真正持有者。sidecar 亦不可用时保持降级且永不写盘。
+  - 测试：新增 `tests/workbuddy-t302.test.ts` 15 例 + `tests/workbuddy-t302-routes.test.ts` 4 例全绿
+    （三条 DoD 各有可执行取证：5min 节流用「内存更新 vs 磁盘不变」分离断言；kill -9 后重启由新实例读同一
+    文件逐字段相等；损坏恢复断言原文件未被覆盖 → 从 sidecar 重建 → 可解析）
+  - 门禁：全量 **92 文件 / 1122 用例全绿**（1 skipped，共 1123）；typecheck 双工程 0 错误；lint 零输出；audit 0 漏洞
+- [ ] T310 P2 阶段门（**部分完成 — 3 项 BLOCKED，见下方与阶段记录**）
+  - deps: T301~T308
+  - 范围：安全复测（SSRF/rebinding/脱敏断言）、100 并发 WB 池无惊群 P99<2s、OAuth 全链路演练
+  - DoD 自检：
+    - [x] 0.4 强制①依赖安全检查：`npm audit --omit=dev` → **0 vulnerabilities**（high/critical = 0 为过）
+    - [x] 覆盖率 ≥60%：`npm run test:coverage` → **语句 80.21% / 分支 70.06% / 函数 84.23%**（istio 口径，76 文件）
+    - [x] 安全复测：SSRF 二跳（`safe-fetch`：白名单逐跳校验 / `REDIRECT_BLOCKED` / 3 跳截断 / 303 降级）、
+      DNS rebinding（`dns-rebinding`）、全路径日志脱敏（`log-redaction`：Bearer / api-key / sk- / query 参数）、
+      出站重定向（`upstream-redirect`）—— 8 文件 / **88 用例全绿**
+    - [x] 第 6 章 A-F 组 P2 部分：F01/F02/F03/F04/F05/F08/F09 有自动化取证（测试文件映射见阶段记录）
+    - [x] **sidecar 真机启动链路（本次新增，演练直接产出）**：授权安装 Go 工具链并构建真实二进制后，
+      首次真机拉起即暴露两处**假 sidecar 单测掩盖的契约断点**（启动参数 `--listen` 族 → 实际只认 `-config`；
+      空池 `/healthz` 503 被误判 `crashed` 并永久判死）——均已修复并有真机证据
+      （`scripts/probe-workbuddy-live.ts`：监听 8788、`/status` 200、`/healthz` 503、网关 `running`+`healthy:false`）
+    - [ ] F03 视觉（CC 必过）：由 `tool-image-and-params.test.ts` 覆盖 CC 侧；**FB/WB 按矩阵未演练**（同下 blocked）
+    - [ ] F06 WB OAuth 全流程 + 预刷 + 待刷新态：**sidecar 真机链路已打通**（拉起 / 配置落盘 / `/status` 200 /
+      `/healthz` 语义正确），**仍待人工步骤**——需真实 WorkBuddy 账号在浏览器完成 OAuth 授权（授权编排逻辑
+      已由 `workbuddy-t301.test.ts` 覆盖）
+    - [x] F07 账号池可视化 + 积分条：**已接线（2026-10-08，v5.0.7）**——账号池可视化与 CC 额度条此前已在面板；
+      WorkBuddy 积分条本轮补齐：每号余量进度条（≤10% rose / ≤30% amber，带 `role="progressbar"` + `aria-valuenow`）、
+      「即将过期」单列、「暂停/停用/冷却中」三态徽章、「刷新积分」按钮（`POST /api/upstreams/workbuddy/balance/refresh`）。
+      两条语义红线在渲染层落实：**未知 ≠ 0**（`credits`/`creditsTotal` 缺失或 `<=0` 时**不画进度条**，不把 undefined
+      当 0 算成「已用光」）；**degraded === true 显式标红**并带出 `degradedReason`。
+      取证：`tests/workbuddy-f07-balance-panel.test.ts` 17 例（其中 8 例用 `new Function` **真跑渲染函数**做运行时断言）
+    - [ ] 100 并发 WB 池无惊群 P99<2s：**BLOCKED —— 需池内有真实账号**（空池只会立即 503，测不出真实数据面）；
+      参考值：P0-PORT-F 阶段 CommandCode 50 并发 P99 126ms、T310 之前 100 并发无惊群项尚无 WB 实测
+  - BLOCKED（更新于 2026-10-08）：Go 工具链与 sidecar 二进制**已解决**；剩余受阻项为
+    **真实 WorkBuddy 账号（OAuth 人工授权 + 压测前提）**、**`FREEBUFF_TOKENS`（F03 FB 侧视觉矩阵）**
+    （**F07 积分条 UI 小卡已于 v5.0.7 收口，不再受阻**）
+  - **DECISION: continue**（✅ 2026-10-08 项目负责人签字确认；本阶段自动化验收项全绿，外部依赖项经授权安装 Go 工具链后继续闭环）
+  - 说明：按 §0.4「Gate 不过不得开始下一阶段」，P3（T401 起）在 F06/并发项闭环前**不得开工**
+    （F07 已闭环，剩余两项均卡外部依赖：真实 WorkBuddy 账号、`FREEBUFF_TOKENS`）
+- [ ] T309（基准方案中不存在此卡，疑为笔误）/ T401~T406 / T501~T505（见执行依据方案）
 
 ## 4. 阶段记录
 
@@ -399,7 +527,7 @@ CommandCode（D2）两个 Provider 均已具备 IProvider 外壳，但**都尚�
 **T214 剩余外部 Blocker 状态记录**：
 1. **Freebuff 线上真实 Token**：环境变量 `FREEBUFF_TOKENS` 待用户配置真实可用密钥。
 2. **WorkBuddy sidecar 真实通信**：环境中缺少 Go 编译工具链与预构建二进制（sidecar），单元契约与 Provider 契约均已全绿，端到端需环境具备 Go 运行时。
-3. **master-plan §0.4 决议行**：`DECISION: continue | pause | pivot-federated` 待项目负责人确认签字。
+3. **master-plan §0.4 决议行**：`DECISION: continue` —— ✅ 2026-10-08 项目负责人签字确认（`continue`）。
 
 
 **T213 收口项（D2 登记，未实施）**：
@@ -497,3 +625,128 @@ Release 由 workflow 自动创建。门禁：`verify` **80 文件 / 1003 用例�
 **教训（新增验收方法，已写入 HANDOFF §4）**：面板这类"交互之后落到哪个状态"的缺陷，静态文本断言测不出来，
 **必须真点一次**；而 Windows 专用分支的缺陷只有 `windows-latest` 能暴露 —— 判断门禁是否真绿要看**两个平台**。
 
+## 阶段记录 — T302 余额刷新与池状态持久化完成（2026-10-08）
+
+**结果：三条 DoD 全部有可执行取证，四条门禁全绿。**
+
+- DoD「积分按期刷新」：内存样本每次都更新，落盘按 5min 节流；测试用「+30s 内存变、磁盘不变 →
+  推过 `BALANCE_INTERVAL_MS` 后落盘且磁盘为最新值」分离断言。
+- DoD「kill -9 后重启状态一致」：`before` 实例 observe 后 `drain()`（不调 destroy），`after` 读同一
+  `state.json`，逐字段 `toEqual` 相等。
+- DoD「损坏文件恢复」：写入 `'NOT JSON {{{'` → `initialize()` 判损坏**且断言原文件内容未被覆盖** →
+  `refresh()` 从 sidecar `/status` 重建 → `state-rebuilt` 告警 → 文件可解析。
+
+**关键设计抉择与偏差登记**：§3.4 字面要求「损坏时从 usage 记录重建」。实测 usage 里 WorkBuddy 只有消费侧
+原生量（`native.points`），反推不出剩余余额 —— 拿它当重建源会写出**看似成功实则错误**的账本。故重建源
+改为 sidecar `/status`（余额的真正持有者）；sidecar 亦不可用时保持降级且**永不写盘**。该偏差已登记在
+`balance-watch.ts` 文件头与 CHANGELOG。
+
+**不新增依赖**（沿用 §3.4 自实现路线）：复用永在树的 `JsonStateStore` + `withFileLock`，未引入
+`async-mutex` / `proper-lockfile`；余额落盘同样不新增常驻定时器，复用 T303 既有 30s `probe()` 与
+`refreshPool()` 的同一次 `/status` 响应推进（零额外 IO）。
+
+**门禁**：`npm run verify` **92 文件 / 1122 用例全绿（1 skipped，共 1123）**；`typecheck` 双工程 0 错误；
+`lint` 零输出；`npm audit --omit=dev` 0 漏洞。
+
+
+## 阶段记录 — T310 P2 阶段门（2026-10-08，部分完成）
+
+**结果：自动化验收项全绿，3 项外部依赖受阻，故 Gate 未全过 → P3 不得开工。**
+
+| 验收项 | 门槛 | 实测 | 结论 |
+|---|---|---|---|
+| 全量回归 | `npm run verify` 绿 | **92 文件 / 1122 用例全绿**（1 skipped，共 1123） | ✅ |
+| 覆盖率 | ≥60% | **语句 80.21% / 分支 70.06% / 函数 84.23%** | ✅ |
+| `npm audit --omit=dev` | high/critical = 0 | **0 vulnerabilities** | ✅ |
+| typecheck（src+tests） | 干净 | 0 错误 | ✅ |
+| eslint | 零输出 | 零输出 | ✅ |
+| 安全复测 | SSRF/rebinding/脱敏全绿 | 8 文件 / **88 用例全绿** | ✅ |
+| 第 6 章 A-F（P2 部分） | 全绿 | F01/F02/F03(CC)/F04/F05/F08/F09 ✅；F06 真机 ⛔；F07 积分条 UI ⛔ | ⚠️ 部分 |
+| 100 并发 WB 池 P99<2s | <2s | **无法执行（无 sidecar）** | ⛔ 受阻 |
+| OAuth 全链路演练 | 全链通 | **无法执行（无 sidecar）** | ⛔ 受阻 |
+
+**A-F P2 部分取证映射（测试文件）**：
+- F01 三源 Anthropic `/v1/messages` —— `anthropic-bridge.test.ts` + `workbuddy-anthropic.test.ts`（+ T214 快照）
+- F02 三源 tools —— `freebuff-tool-schema.test.ts` + `tool-call-fragments.test.ts`
+- F03 视觉 —— `tool-image-and-params.test.ts`（CC 侧）；FB/WB 按矩阵未演练
+- F04 strict/auto/same-model —— `routing-advanced.test.ts` + `t214-strict-degradation.test.ts`
+- F05 X-Upstream-Account + 审计留痕 —— `routing-advanced.test.ts`（`x-upstream-account` → 审计 `accountId`）
+- F06 WB OAuth 全流程 —— `workbuddy-t301.test.ts`（mock）；真机演练 ⛔
+- F07 账号池可视化 + 积分条 —— 「WB 积分条 UI 未接线 ⛔」**已于 v5.0.7 收口**（见文末「追加记录 — F07 收口」）
+- F08 Freebuff 等待室 —— `freebuff-waiting-room.test.ts`
+- F09 级联防护（ramp/摘除/队列/首字节）—— `degradation.test.ts`
+
+**受阻根因（当时的记录）**：本机 **无 Go 工具链**（`go: command not found`）且 `F:/AI/Qdor/review/workbuddy2api-panel`
+**无预编译二进制**，因此 WorkBuddy sidecar 无法构建/拉起 → F06 真机 OAuth 演练、100 并发 WB 池压测、
+F03 的 FB/WB 视觉矩阵三项**无法在本机执行**。
+
+> **该根因已于同日（2026-10-08）解除**：授权安装 Go 1.27.0 并构建真实二进制后，首次真机拉起即暴露两处
+> 契约断点并已修复（见文末「追加记录 — sidecar 真机链路打通」）。现状：sidecar 真机链路已通
+> （拉起 / 配置落盘 / `/status` 200 / `/healthz` 语义正确），剩余受阻为**真实 WorkBuddy 账号**
+> （OAuth 人工授权与压测前提）与 **`FREEBUFF_TOKENS`**（F03 的 FB 侧）。
+
+**DECISION: continue**（✅ 2026-10-08 项目负责人签字确认）—— 本阶段可自动化的验收项**全部为绿**（回归 / 覆盖率 / audit /
+typecheck / lint / 安全复测均已闭环），仅剩外部环境依赖项受阻。签字后：授权安装 Go 工具链以构建 sidecar，
+继续闭环 F06 真机 OAuth 演练、100 并发 WB 池压测与 F03 的 FB/WB 视觉矩阵；F07 积分条面板 UI 另作小卡跟进。
+
+## 追加记录 — sidecar 真机链路打通（2026-10-08，签字后第一轮）
+
+**做了什么**：按签字结论安装 Go 工具链（winget `GoLang.Go` → `go1.27.0 windows/amd64`），
+从 `F:/AI/Qdor/review/workbuddy2api-panel` 构建真实二进制 `workbuddy-sidecar.exe`（14,607,360 字节），
+然后**用真机跑网关自己的启动代码路径**——这一步直接推翻了两处「假 sidecar 单测全绿」的假象。
+
+| 缺陷 | 症状（真机） | 根因 | 修复 |
+|---|---|---|---|
+| 启动参数不被识别 | `--listen 127.0.0.1:8787 --api-key k` → `flag provided but not defined: -listen`，`EXIT=2` | 二进制只认 `-config <path>`（Go `flag` 包遇未知标志即 usage + 退出） | 网关改**自行落盘配置文件**（`materializeSidecarConfig`）：默认 `‹状态文件目录›/workbuddy-sidecar/config.json`，写 `listen`/`api_key`/`auth_dir`/`state_file`，深合并保留面板可热改键，临时文件 + rename，**写不进就不 spawn** |
+| 空池冷启动被判死 | 零账号时 `/healthz` 恒 **503** → 旧逻辑 15s 超时判 `crashed`，`health()` 对非 running 一律 false → **永久判死**（授权成功后也不恢复） | 把「池不可服务」误当「进程没起来」 | 探活改三态（`servable` / `503 degraded` / `unreachable`）：HTTP 有响应即 `running` + `healthy=false`，池补齐后自然转健康；连不上仍按超时判失败 |
+
+**真机证据**（`npx tsx scripts/probe-workbuddy-live.ts <exe> 8788`）：`state=running`（pid 28300）、
+落盘配置 `{listen:"127.0.0.1:8788",api_key:"",auth_dir:…\workbuddy-sidecar\auths,state_file:…\state.json}`、
+sidecar 日志 `listening on 127.0.0.1:8788` + 管理面板 `http://127.0.0.1:8788/panel/`、
+`/healthz` → 503 `{"healthy":0,"total":0}`、`/status` → **200**、网关 `health()` → `{healthy:false,total:0}`、`destroy()` 干净收尾。
+
+**门禁（本轮后）**：`npm run verify` **93 文件 / 1131 用例全绿（1 skipped，共 1132）**；`typecheck` 双工程 0 错误；
+`lint` 零输出；`npm audit --omit=dev` **0 vulnerabilities**。新增测试：`workbuddy-sidecar-launch.test.ts` 7 例 +
+`workbuddy-sidecar.test.ts` 新增 2 例（503 → running 不健康；补号后探活转绿）。
+
+**T310 三项受阻项的现状**：① **sidecar 构建/拉起已解除**（真机 `/status` 200，面板与 Bearer 链路可用）；
+② F06 只差**人工 OAuth 授权**（需真实 WorkBuddy 账号在浏览器完成）；③ 100 并发 WB 池压测与 F03 的 FB 侧
+分别需要**池内真实账号**与 **`FREEBUFF_TOKENS`**。F07 积分条面板 UI 仍为独立小卡。
+
+## 追加记录 — F07 收口（2026-10-08，v5.0.7）
+
+**做了什么**：把 T302 已交付、却一直没被面板消费的 WorkBuddy 积分镜像接到 UI 上。T302 的交付物是
+`data/state.json` 持久化 + `GET /api/upstreams/workbuddy/balance` 只读镜像（真正的刷新执行者是 sidecar，
+网关只做镜像 + 原子持久化），面板侧当时未渲染 —— 于是运维能看出「账号在不在」，看不出「还剩多少积分」。
+
+**改动**：`public/js/accounts.js`（唯一生产文件）新增 `formatCredits` / `creditsBar` / `poolStateBadges` /
+`workbuddyBalancePanel` / `refreshWorkBuddyBalance`，并接入三处：`loadMultiSourceAccounts`（`Promise.all`
+并行取 `tokens` + `balance`，镜像失败只降级不阻塞账号列表）、`bindWorkBuddyActionsOnce`（`data-wb-action`
+事件委托新增 `refresh-balance` 分支）、parts 模板（WorkBuddy 卡片底部插入积分面板）。
+
+**两条语义红线**（`src/providers/workbuddy/balance-watch.ts` 源码注释里明写的口径，本轮在渲染层落实）：
+
+| 红线 | 违反后果 | 本轮做法 |
+|---|---|---|
+| **未知 ≠ 0** | 把缺失的 `credits` 当 0 渲染成「0 积分 / 已用光」，误导运维立刻去充值 | `credits` 或 `creditsTotal` 非有限数、或 `creditsTotal <= 0` 时**不画进度条**，退化为纯文本余量（本身也可能是 `—`） |
+| **degraded 必须显式标红** | 镜像不可信（从未成功 / 连续失败 / 损坏未重建）时把「最后一次已知值」当实时余额展示 | `degraded === true` 时面板顶部红色告警行 + 带出 `degradedReason` |
+
+**取证**：`tests/workbuddy-f07-balance-panel.test.ts` 17 例全绿，其中 **8 例为运行时求值** —— 复用
+`spa-search-functions.test.ts` 的 `extractFn` / `extractArrowConst` 手法，把面板渲染函数与 `esc` 一起塞进
+`new Function` **真跑**，直接对「未知不画进度条」「`creditsTotal=0` 不画进度条」「正常余量出
+`aria-valuenow="25"`」「degraded 标红且 `<img src=x>` 被转义」「三态徽章各出一枚」「空池/非法入参返回 `''`
+不崩」做可执行断言。理由：**静态正则改不动行为，运行时断言可以**（本轮就靠它抓到一次假阳性——用 `[`
+计徽章会被 Tailwind 的 `text-[10px]` 干扰，改为 `{{` 计数后通过）。
+
+**同时修复**：`tests/usage-surfacing.test.ts` 的 `beforeAll` 满负载假红 —— 该 hook 串行发 205 次完整请求 +
+轮询落库，隔离跑 6.3s，vitest 默认 `hookTimeout` 10s，整机被其余 93 个文件（或并跑的 `tsc`/`eslint`）抢满时
+报 `Hook timed out in 10000ms` 并把同文件用例连带标 skipped（单跑 3/3 绿，判定为抖动）。现显式给到 60s。
+
+**门禁（本轮后）**：`npm run verify` **94 文件 / 1148 用例全绿（1 skipped，共 1149）**；`typecheck` 双工程
+0 错误；`lint` 零输出；`npm audit --omit=dev` **0 vulnerabilities**。运行中的 9090 服务**无需重启**
+即对外提供新 `accounts.js`（静态资源直接来自磁盘，实测 `curl http://127.0.0.1:9090/js/accounts.js` → 200
+且含 `data-wb-action="refresh-balance"`）。
+
+**T310 剩余受阻项（未变）**：① F06 只差**人工 OAuth 授权**（需真实 WorkBuddy 账号在浏览器完成）；
+② 100 并发 WB 池压测需**池内真实账号**；③ F03 的 FB 侧视觉矩阵需 **`FREEBUFF_TOKENS`**。
+**P3 仍不开工**（按 §0.4，Gate 未全过）。

@@ -3,7 +3,9 @@
 // -----------------------------------------------------------------------------
 // 覆盖 DoD：
 //   [ ] 拉起子进程 + 等待首个健康响应（就绪 → running）
-//   [ ] 启动超时（一直不健康）→ 抛错并置 crashed
+//   [ ] 启动超时（一直连不上）→ 抛错并置 crashed
+//   [ ] HTTP 可达但 /healthz 503（真实二进制空池语义）→ 算起来了：running + healthy=false
+//   [ ] 空池冷启后补号：health() 由 503 自然转 200，不被锁定在 false
 //   [ ] 崩溃自动重启（5min 内 3 次策略）
 //   [ ] 超过策略 → crashed，不再重启
 //   [ ] stop() 为有意停止，不触发重启
@@ -81,12 +83,48 @@ describe('WorkBuddySidecar', () => {
     await s.stop();
   });
 
-  it('一直不健康 → 启动超时报错并置 crashed', async () => {
+  it('一直连不上（ECONNREFUSED）→ 启动超时报错并置 crashed', async () => {
     healthy = false;
     const s = makeSidecar({ startTimeoutMs: 30 });
     await expect(s.start()).rejects.toThrow(/did not become healthy/);
     expect(s.status().state).toBe('crashed');
     expect(s.status().lastError).toBeTruthy();
+  });
+
+  // 真实二进制（workbuddy2api-panel）的 /healthz 契约是「200=可服务 / 503=池不可服务」：
+  // 冷启动没有任何账号时**恒返 503**，而 503 恰恰是授权流程开始前的正常稳态。旧语义把
+  // 「15s 内没拿到 200」一律判 crashed，且 health() 对非 running 状态直接返回 false，导致
+  // 空池冷启的 provider 被永久判死——用户完成 OAuth 补进账号后也不会恢复。故选号池
+  // 不可服务 ≠ 进程没起来：HTTP 有响应即视为 running，healthy 交给后续探活如实反映。
+  it('HTTP 可达但 /healthz 503（空池）→ running + healthy=false，不判 crashed', async () => {
+    const s = makeSidecar({
+      fetchFn: (async () =>
+        new Response('{"healthy":0,"realm_servable":{"cn":false,"global":false}}', {
+          status: 503,
+        })) as unknown as typeof fetch,
+    });
+    await s.start();
+    expect(spawned).toHaveLength(1);
+    expect(s.status().state).toBe('running');
+    expect(s.status().healthy).toBe(false);
+    await s.stop();
+  });
+
+  it('空池冷启后补号：health() 由 503 转 true，不被锁死', async () => {
+    let servable = false;
+    const s = makeSidecar({
+      fetchFn: (async () =>
+        servable
+          ? okResponse()
+          : new Response('{"healthy":0,"total":0}', { status: 503 })) as unknown as typeof fetch,
+    });
+    await s.start();
+    expect(s.status().healthy).toBe(false);
+
+    servable = true; // 用户完成 OAuth，池里有号了
+    await expect(s.health()).resolves.toBe(true);
+    expect(s.status().healthy).toBe(true);
+    await s.stop();
   });
 
   it('start() 幂等（running 时重复调用不再 spawn）', async () => {

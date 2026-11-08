@@ -40,3 +40,8 @@ watchdog_launcher.vbs
 # T103 凭据加密库与明文凭据目录（绝不可入库）
 credentials.enc
 auths/
+
+# T302 运行时状态（余额镜像 + 池状态含账号 uid/昵称，属本机运行数据；含锁残留与临时文件）
+data/state.json
+data/state.json.lock
+data/state.json.*.tmp

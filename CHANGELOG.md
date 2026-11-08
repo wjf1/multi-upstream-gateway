@@ -4,6 +4,71 @@
 
 ## [Unreleased]
 
+## [5.0.7] - 2026-10-08
+
+> 补丁版：把 T302 已交付却一直没渲染的 WorkBuddy 积分镜像接到面板上（F07 的最后一小块），并修掉一条
+> 满负载下会误报的测试超时。本版之后 **P3 仍不开工** —— T310 阶段门剩下的三项都卡在外部依赖
+> （真实 WorkBuddy 账号 / `FREEBUFF_TOKENS`）。
+
+### 新增
+
+- **WorkBuddy 账号池「积分条」面板（F07 收口）** —— T302 交付的是 `/api/upstreams/workbuddy/balance`
+  只读镜像与 `data/state.json` 持久化，面板一直没渲染：运维能看出账号在不在，看不出还剩多少积分。
+  现在「多上游账号」页的 WorkBuddy 卡片底部多出积分面板：
+  - 每号一条进度条（余量 / 总量 + 百分比），≤10% 转 rose、≤30% 转 amber、其余 emerald，带
+    `role="progressbar"` 与 `aria-valuenow`；
+  - 「即将过期」单独一行（`creditsExpiring` + 最早过期日）；
+  - 池状态三态徽章（暂停 / 停用 / 冷却中）—— 这三个字段后端早已落盘，此前面板完全不显示；
+  - 「刷新积分」按钮走 `POST /api/upstreams/workbuddy/balance/refresh`（真正的刷新执行者是 sidecar，
+    网关只做镜像 + 原子持久化）；sidecar 不可用时如实报错并保留上次已知值，不谎报成功。
+  - **两条语义红线**（`balance-watch.ts` 源码注释里明写的口径，本版在渲染层落实）：
+    1. **未知 ≠ 0**：`credits` / `creditsTotal` 缺失时**不画进度条**（更不把 `undefined` 当 0 算成
+       「已用光」），只报余量原值或 `—`；`creditsTotal <= 0` 同样算不出百分比，退化为纯文本余量。
+    2. **degraded 必须显式标红**：镜像不可信（从未成功 / 连续失败 / 损坏未重建）时，这批数字只是
+       「最后一次已知值」，面板显式标红并带出 `degradedReason`，不当实时余额展示。
+  - 全部动态文本（昵称 / uid / 失败原因）过 `esc`；刷新按钮走既有事件委托（`data-wb-action`），
+    不新增内联 `onclick`、不新增静态 id 引用，避免撞 `dashboard-spa.test.ts` 的两条正则守卫。
+  - 测试：新增 `tests/workbuddy-f07-balance-panel.test.ts` 17 例，其中 8 例为**运行时求值** —— 用
+    `new Function` 真跑面板渲染函数，把「未知 ≠ 0」「degraded 标红」「XSS 转义」等语义变成可执行断言，
+    而不是只对源码打正则（静态正则改不动行为，运行时断言可以）。
+
+### 🐛 修复
+
+- **`tests/usage-surfacing.test.ts` 的 `beforeAll` 在满负载下假红**（2026-10-08 实测）：该 hook 要串行
+  发 205 次完整请求再轮询落库，隔离单跑就 6.3s，而 vitest 默认 `hookTimeout` 是 10s —— 整机被其余 93 个
+  测试文件（或同时跑的 `tsc` / `eslint`）抢满时会超时报 `Hook timed out in 10000ms`，并把同文件用例
+  连带标成 skipped，看起来像真实回归。现显式给到 60s。**纯测试稳定性修复，不改变任何生产行为**。
+
+## [5.0.6] - 2026-10-08
+
+> 补丁版：P1 收口（T301~T308）与 T203/T302 遗留一并发布，并修复 WorkBuddy sidecar 与**真实 Go 二进制**
+> 之间两处契约断点（真机演练发现，mock 单测掩盖）。本版之后 **P3 仍不开工** —— T310 阶段门尚有
+> 外部依赖项受阻（真实 WorkBuddy 账号 / `FREEBUFF_TOKENS`）。
+
+### 🐛 修复
+
+- **WorkBuddy sidecar 启动参数与真实二进制脱节（真机演练发现，两处契约断点）** —— T310 的「OAuth 全链路
+  演练」首次用真实 Go 二进制（`workbuddy2api-panel`）拉起 sidecar，立刻暴露两个问题；此前单测全用假
+  sidecar，**mock 掩盖了真实 CLI 契约**：
+  1. **启动参数不被识别**：网关原先传 `--listen/--auth-dir/--api-key`，而二进制只认 `-config <path>`
+     （Go `flag` 包遇未知标志直接 usage + `exit 2`），故网关拉起的 sidecar 立刻崩、OAuth 演练根本进不去。
+     现改为**由网关落盘配置文件**（新增 `WORKBUDDY_SIDECAR_CONFIG` 与 `sidecar.configPath`）：默认落在状态
+     文件同级的 `workbuddy-sidecar/config.json`，写入 `listen` / `api_key` / `auth_dir` / `state_file`
+     四个受管键，**深合并保留面板可热改的既有键**（`cooldown` / `custom` / …），临时文件 + rename 原子替换；
+     **配置文件写不进去就不 spawn**（宁可侧车缺席，也不留一个必然崩溃的子进程）。`updateConfig` 热重载时
+     同步刷新该文件，端口/密钥变更在 sidecar 下次重启即生效。
+  2. **空池冷启动被误判为崩溃**：真实二进制的 `/healthz` 契约是「200 = 可服务 / 503 = 池不可服务」，而
+     **零账号是冷启动的正常稳态**（第一步就是去授权）。旧逻辑把「15s 内没拿到 200」一律判 `crashed`，且
+     `health()` 对非 `running` 状态直接返回 `false`，导致空池冷启的 provider **被永久判死**——用户完成
+     OAuth 补进账号后也不会恢复。现将探活改为三态（`200` 可服务 / `503` 已就绪但池不可服务 / 连不上），
+     HTTP 有响应即置 `running`、`healthy=false` 并如实记录原因，池补齐后由下一次探活自然转健康。
+  - 测试：`tests/workbuddy-sidecar-launch.test.ts` 7 例（参数只有 `-config`、配置字段口径、env 覆盖、
+    显式 `authDir`、深合并保留既有键、`WORKBUDDY_SIDECAR_CONFIG` 落点、落点不可写则不 spawn）+
+    `tests/workbuddy-sidecar.test.ts` 新增 2 例（503 → `running`+不健康；补号后探活转绿）。
+  - 新增真机自检脚本 `scripts/probe-workbuddy-live.ts`：用真实二进制走「配置落盘 → spawn → 探活」全路径，
+    输出进程状态、落盘配置与 `/healthz` 原文，供部署前环境自检（已实测：监听 8788、`/status` 200、
+    `/healthz` 503、网关 `running`+`healthy:false`）。
+
 ### 新增
 
 - **README 错误码表补模型访问双路径说明与评审材料链接**（判定路径合一「方案 1」收尾）：错误码表下
@@ -19,6 +84,137 @@
   测试：`tests/freebuff-config-hotreload.test.ts` 5 例（增量参保 / 新 Token 真的承接请求 /
   **面板账号不被误删** / 重复热重载幂等 / 非凭据字段热更新通道不受影响）。
 
+### 新增（P1 任务卡）
+
+- **T303：健康探测 + 自动降级 + 级联防护** —— 完善级联防护体系（§3.6）：
+  核心引擎：新增 `src/providers/core/degradation.ts`（`DegradationManager`），管理全局并发在途深度（`queueMaxDepth` 默认 128，超限 503+Retry-After）；提供 30s 定时探活调度器；支持 30s 滑动窗口内 429 达 2 次自动摘除并标记 degraded；支持渐进切换（切换后第 1 分钟 10%，每分钟 +10% 平滑承接，平滑直方图无瞬时尖峰）；
+  运行时接线：`ProviderRuntime` 持有 `degradation` 单例，管理探活调度器生命周期与 Provider degraded 状态视图；`status()` 接口暴露 degraded 标记与原因；
+  数据面流式铁律守护：`provider-dispatch.ts` 请求入口/出口原子管理队列槽位（`acquireQueueSlot` / `releaseQueueSlot`）；记录 429 错误统计；首字节产出后（`began === true`）严格禁止跨 Provider 切换降级，确保协议纯净度；
+  配套 `tests/degradation.test.ts` 5 例全绿（DoD 1 断网 30s 内 degraded/恢复 healthy、DoD 2 ramp 渐进直方图平滑输出、DoD 3 429×2 摘除并跳过候选、DoD 4 首字节后严禁切换、DoD 5 queueMaxDepth 超限 503）；修复 `tests/admin-boundary.test.ts` 避免在 Windows 上因原生 Toast 耗时导致的 5s 超时假红。
+
+- **T304：路由策略高级配置（strict / auto / same-model + 强制账号 + 规则热生效）** —— 落地 §3.6/§3.7：
+  三模式降级：`provider-dispatch.ts` 在流式首字节前按 `fallbackStrategy` 决策——`strict` 不降级、
+  `auto` 切换到优先级列表中的下一个启用上游、`same-model` 仅当备选支持同名模型才降级
+  （经 `registry.resolve` + 模型缓存兜底判定）；命中后回写 `x-actual-upstream` 并重新走同一渲染出口；
+  强制账号：新增 `x-upstream-account` 请求头（`UPSTREAM_ACCOUNT_HEADER`），经 `RouteDecision.preferredAccountId`
+  透传至 Provider 选号，并写入审计日志 `accountId`（优先级：路由决策 > 请求头 > 凭据尾号）；
+  路由开关：`RouterDeps` 增 `sessionStickyEnabled` / `modelPrefixRouting`，可分别关闭第六步粘性与
+  第三步前缀路由；新增 `GET /api/routing/rules` 与 `POST /api/routing/rules`（校验 `fallbackStrategy` /
+  `defaultProvider`，热生效并持久化至 `config.json` 的 `routing` 分片）；
+  面板：设置页新增降级策略下拉、会话粘性与前缀路由开关；
+  配套 `tests/routing-advanced.test.ts` 7 例全绿（三模式行为、强制账号生效并写审计、规则热生效）。
+
+- **T301：WorkBuddy OAuth 设备授权与令牌看护** —— 面板内完成授权加号，并把 Go sidecar
+  「静默失效」补成显式的待刷新态与告警（作 Go 侧严格超集）：
+  授权客户端：新增 `src/providers/workbuddy/oauth.ts`（`WorkBuddyOAuthClient`），`startLogin(realm)` 打 sidecar
+  `POST /panel/api/login/start`（返回 `{url,state,realm}`）、`pollLogin(state)` 打 `GET /panel/api/login/poll?state=`
+  （404 → 「unknown or expired」，`done !== true` 即待授权）、`waitForLogin()` 轮询至完成或超时（默认 15 分钟 / 3s）；
+  腾讯自建 state 两段式（非 RFC 8628），**响应只取 uid/nickname/realm/credits，显式丢弃 accessToken/refreshToken**，
+  网关侧永不持有 OAuth token；
+  令牌看护：`WorkBuddyTokenWatch` 预刷窗口 **1 小时**（Go 侧硬编码 10 分钟）、失败重试 **首次 + 3 次指数退避**
+  （1s/2s/4s，Go 侧无退避）、**「待刷新」显式状态 + Webhook 告警（每 uid 一次）**；`sync(accounts)`
+  保状态与标记并在账号消失时清理；
+  Provider 接线：`mapPoolSnapshot` 经 `parseTokenExpiry` 识别 `expiresAt`/`tokenExpiresAt`/`expires_at`
+  （秒/毫秒自适应）与 `expiresIn`/`expires_in`（相对秒），缺失即 `undefined`（未知 ≠ 已过期，不误判已失效）；
+  `refreshPool()` 同步账号进看护，预刷随 T303 既有 30s `probe()` 顺带推进（不新增常驻定时器）；
+  路由：`POST /api/upstreams/workbuddy/login/start`（realm 白名单 400 / 未装配 404 / sidecar 不可用 503）、
+  `GET /api/upstreams/workbuddy/login/poll?state=`、`GET /api/upstreams/workbuddy/tokens`（只读视图，响应无 token 字段）；
+  面板：账号页 WorkBuddy 卡片增 realm 下拉与「添加账号（授权）」入口（面板内 start → 开窗 → 3s 轮询至 done），
+  账号行渲染「待刷新」徽章；
+  配套 `tests/workbuddy-t301.test.ts` 19 例 + `tests/workbuddy-t301-routes.test.ts` 8 例全绿。
+
+- **T302：余额刷新与池状态持久化** —— 5min 积分余额刷新 + `state.json` 原子写/锁/损坏重建：
+  余额镜像：新增 `src/providers/workbuddy/balance-watch.ts`（`WorkBuddyBalanceWatch`），把 sidecar `/status`
+  的账号余额（`credits`/`creditsTotal`/`creditsExpiring`/`earliestExpiry`/`earliestRemaining`）与**池状态**
+  （`paused`/`disabled`/`cooling`）归一化落账；字段名走驼峰 + 下划线别名表，时间戳兼容秒/毫秒；
+  **5min 节流落盘**：内存每次都更新、落盘按 `intervalMs`（默认 `DEFAULT_BALANCE_INTERVAL_MS = 5min`）节流，
+  `refresh({force})` / `drain()` 可强制落盘，**不新增常驻定时器**；
+  原子持久化：复用 `utils/state-store.ts` 的 `JsonStateStore`（临时文件 + rename）与 `withFileLock`
+  （`open(...,'wx')` 原子抢占 + `staleMs` 兜底残留锁），路径经 `resolveConfiguredStatePath` 解析，**锁内不做 IO**；
+  损坏恢复：非 JSON / 版本不符 / `accounts` 非对象 → 判损坏，`initialize()` **不写盘**（保住尚可抢救的原文）
+  + `state-corrupted` 告警 + `pendingRebuild`；`refresh()` 从 sidecar 重建后发 `state-rebuilt`，重建前拒写；
+  失败语义：`observe(null)` 只记 `consecutiveFailures` + 首次失败告警，**绝不清零账本**（读不到 ≠ 余额为 0），
+  恢复后发 `refresh-recovered`；`snapshot().degradedReason` 按 pendingRebuild > failures > 未首刷 分级；
+  Provider 接线：`initialize()` 先载镜像、`refreshPool()` 复用同一次 `/status` 推进（零额外 IO）、`destroy()` 前
+  `drain()`，新增 `balanceStatus()` / `refreshBalance()`，告警经 `notifyWebhook('workbuddy.balance', ...)`；
+  路由：`GET /api/upstreams/workbuddy/balance`（只读镜像）、`POST /api/upstreams/workbuddy/balance/refresh`
+  （强制刷新，sidecar 不可用时 503 不谎报成功）；
+  `.gitignore` 排除 `data/state.json`（含账号 uid/昵称）及其 `.lock` / `*.tmp` 残留；
+  **偏差登记**：§3.4 字面为「损坏时从 usage 记录重建」，实际改为**从 sidecar `/status` 重建** —— usage 里
+  WorkBuddy 只有消费侧原生量（`native.points`），反推不出剩余余额，拿它当重建源会写出「看似成功实则错误」的
+  账本；sidecar 才是余额的真正持有者（其不可用时保持降级且永不写盘）；
+  配套 `tests/workbuddy-t302.test.ts` 15 例 + `tests/workbuddy-t302-routes.test.ts` 4 例全绿（三条 DoD 各有
+  可执行取证：5min 节流用内存/磁盘分离断言、kill -9 后重启由新实例读同一文件逐字段相等、损坏恢复断言原文件
+  未被覆盖 → 从 sidecar 重建 → 可解析）。
+
+- **T305：Freebuff 等待室与队列** —— 高负载等待室排队与位置推进机制：
+  等待室轮询机：`free-session.ts` 实现 `pollWaitingRoomUntilActive`，按上游 `pollAt` 延迟周期轮询并更新宿主会话，
+  捕获排队位置推进直至 active 获得实例；超限抛出 `WaitingRoomTimeoutError`；支持 AbortSignal 客户端主动打断；
+  Provider 接线与超时处理：`FreebuffProvider.ensureLeaseSession` 支持配置驱动超时（`waitingRoomTimeoutMs`，默认 30s）；
+  高负载排队时自动轮询推进并透传日志；超时抛出标准 504 `REQUEST_TIMEOUT`（带 `waitingRoom: true, timeout: true` 上下文）；
+  零排队模式（`waitingRoomTimeoutMs: 0`）快速返回 503 与 Retry-After；
+  配套 `tests/freebuff-waiting-room.test.ts` 5 例全绿（DoD 1 高负载排队推进 4/10→1/10→active、DoD 2 超时 504 错误语义、AbortSignal 打断、503 快速失败）。
+
+- **T308：WorkBuddy Anthropic 通用桥接入与快照** —— 补齐协议能力矩阵：
+  复用 `core/anthropic-bridge`，打通 WorkBuddy 模型在 `/v1/messages` 出口下的双向映射；
+  支持 `codebuddy/` 与 `workbuddy/` 前缀及 Header 显式路由，剥离前缀后回传 `x-actual-upstream: workbuddy`；
+  流式 SSE 输出严格的 Anthropic 块生命周期事件序列（`message_start` → `content_block_start` → `content_block_delta`… → `content_block_stop` → `message_delta` → `message_stop`）；
+  非流式聚合为标准 Anthropic Message JSON 响应（包含 role、content、stop_reason、usage 估算）；
+  保证 system prompt 前置、多轮历史上下文完整转换；WorkBuddy 异常时返回标准 Anthropic 错误信封；
+  配套 `tests/workbuddy-anthropic.test.ts` 7 例全绿与快照保真度锁。
+
+- **T307：面板系统设置页** —— 独立系统设置管理页升级：
+  后端实现 `GET /api/settings` 与 `POST /api/settings`，支持五大区块（网络/安全/告警/存储与危险操作/面板偏好）细粒度校验，
+  返回字段级错误字典供前端精准标红提示；支持 2s 热生效反馈；增强 `POST /api/usage/clear` 记录管理面审计日志与事件；
+  前端 `public/index.html` 与 `public/js/settings.js` 提供完整配置表单、需重启项（端口/主机/代理）明确红标、
+  字段级校验失败红框与红字提示、危险操作二次确认弹窗与审计留痕；
+  无障碍严格保持 4 模态弹窗守卫。
+  配套 `tests/spa-settings.test.ts` 13 例。
+
+- **T306：面板运行日志页** —— 独立网关事件控制台升级：
+  后端增强 `GET /api/logs` 支持参数化过滤（`level`/`provider`/`keyword`/`limit`）；
+  新增 `GET /api/logs/request/:id`，支持按 requestId / traceId 深度关联用量记录（模型、上游、状态、耗时、用量及成本）与该请求的生命周期日志事件；
+  前端 `public/index.html` 与 `public/js/logs.js` 重构升级，支持级别下拉、上游下拉、关键词搜索框三维筛选，
+  智能识别日志行中的 RequestId 并高亮提供交互点击查看详情，5s 自动轮询刷新与智能滚动跟随；
+  详情卡片严格兼容无障碍守卫（不破坏 4 模态弹窗断言）。
+  配套 `tests/spa-logs.test.ts` 13 例。
+
+- **P0 移植测试完整收口与 T214 阶段门自动化取证** —— 补齐旧树未带过来的 13 个配套测试文件与
+  T107 快照基础设施（`tests/snapshot/` 完整用例、scenarios 及 upstream/snapshots fixtures）；
+  修复 `src/utils/config.ts` 的 `COMMANDCODE_ENV_PATH` 兼容别名与隔离测试放行迁移；
+  修复 `src/utils/usage-store.ts` 的 §3.9 多上游 `costUsd` null 与 0 语义分离；
+  修复 `tests/credential-store.test.ts` / `tests/snapshot/snapshot.test.ts` 对生产环境
+  `~/.commandcode/credentials.enc` 的路径隔离。
+  全量 `npm run verify` **78 测试文件 / 984 用例全绿（1 skipped）**，语句覆盖率提升至 **80.97%**
+  （远超 ≥55% 门槛）；5 分钟自动化泄漏监控（`scripts/soak.mjs` 400 请求，RSS 净降 31.9MB）
+  与 CommandCode / Freebuff 快照测试全部通过。
+
+### 🐛 修复（合并复核与门禁）
+
+- **「系统设置」页点一次就弹回概览（hash 路由白名单漏项，与 v5.0.5 修掉的「上游」页同形）** ——
+  T307 新增了 `#/settings` 页签与面板，但 `public/js/core.js` 的 `ROUTES` 白名单没同步加名；
+  `switchTab('settings')` 写完 hash 后，`hashchange` 处理器把它判成未知路由并回落 `overview`。
+  **该缺陷在云端 v5.0.4/v5.0.5 上同样存在**（v5.0.5 只补了 `upstream` 一项），
+  是本次合并后由 `tests/spa-upstream.test.ts` 的「白名单与页签集合一致」断言拦下的。
+  修复：`ROUTES` 补 `settings`，并把该断言的注释补上本次复现记录。
+- **合并复核发现的测试断言错误（全量并发下偶发红）** —— `tests/state-store.test.ts` 的
+  `withFileLock` 互斥用例断言了「先发起者必先持锁」（`['a-in','a-out','b-in','b-out']`）。
+  两个 `withFileLock` 同时发起时，谁先 `open(..., 'wx')` 落地并不确定，全量并发下会翻成
+  `b` 先进入。契约只保证**临界区不交错**，故断言改为「同一持有者的 in/out 相邻、两个持有者不同」，
+  不再锁定胜出顺序。
+- **`src/utils/state-store.ts` 两处门禁问题** —— `parsed.error` 在 `tsconfig.test.json`（`strict: false`）
+  下无法按布尔判别式收窄（布尔字面量被加宽为 `boolean`），改用 `'error' in parsed` 收窄；
+  `withFileLock` 里 `let stale = false` 的初值从未被读取，触发 `no-useless-assignment`，改为直接取 `mtimeMs`。
+- **`spa-logs` / `spa-settings` 两个测试文件写到了真实用户的用量历史（并发抢同一文件导致全量跑偶发红）** ——
+  两个文件都调 `recordCompletion` / `/api/usage/clear`，却没有隔离 `USAGE_HISTORY_PATH`，于是
+  ① 每跑一次全量测试就**污染真实用户的 `~/.commandcode/usage-history.jsonl`**（仓库里那个
+  `purge-test-usage.mjs` 正是为此存在）；② 并行 worker 下 spa-logs 的追加会插进 spa-settings
+  「clear 之后、断言之前」的窗口，断言 `getUsageHistory().length === 0` 偶发翻成 1（`expected 1 to be +0`）。
+  修复：两文件用 **`vi.hoisted` 在 import 之前**把 `USAGE_HISTORY_PATH`（spa-settings 另加
+  `AUDIT_LOG_PATH`）指到临时目录 —— 用量落点在**模块加载期**就被 store 捕获
+  （`storage-backend.ts` 的 `USAGE_FILE_PATH`），写在 `beforeEach` 里已经太晚，`vi.hoisted` 的回调先于
+  import 求值，是唯一能生效的位置；`afterAll` 清理临时文件。
+
 ### 变更说明
 
 - 新增评审材料 `docs/review/decision-path-unification.md`（判"谁能用哪个模型 / 请求是否超限"的
@@ -29,6 +225,28 @@
 - 记录一处调用约定（本轮写测试时踩到）：热重载的入参必须是**完整分片** —— `resolveFreebuffConfig`
   对缺失字段回落默认值，传空对象会把 `apiBase` 重置为官方默认 `www.codebuff.com`，现象上像
   "热重载把上游地址改坏了"。调用方（配置热重载接线）应传与 `initialize` 相同的分片。
+
+### 验证
+
+- 合并云端 `origin/main`（v5.0.4 / v5.0.5 发布）后重跑全量门禁：`npm run verify`
+  **90 文件 / 1103 用例通过（1 skipped，共 1104）**；`npm run typecheck`（src + tests 双工程）
+  **0 错误**；`npm run lint` **零输出**；`npm audit --omit=dev` **0 vulnerabilities**。
+  合并后连跑两轮 verify 均全绿（首轮暴露的 2 例失败已定位并修复，见 `### 🐛 修复`）。
+- 追加 T302 后重跑全量门禁：`npm run verify` **92 文件 / 1122 用例通过（1 skipped，共 1123）**；
+  `npm run typecheck`（src + tests 双工程）**0 错误**；`npm run lint` **零输出**；
+  `npm audit --omit=dev` **0 vulnerabilities**。
+- 追加 sidecar 真机契约修复后重跑全量门禁：`npm run verify` **93 文件 / 1131 用例通过（1 skipped，共 1132）**；
+  `npm run typecheck` 双工程 **0 错误**；`npm run lint` **零输出**；`npm audit --omit=dev` **0 vulnerabilities**。
+  真机取证：`npx tsx scripts/probe-workbuddy-live.ts <sidecar.exe> 8788` → 网关 `state=running`、
+  `/status` **200**、`/healthz` **503**（空池稳态）、落盘配置含 `listen`/`api_key`/`auth_dir`/`state_file`、
+  `destroy()` 干净回收子进程。
+- 本分支（`feat/p0-port`）提交序列：`b8b0c37`（T301 WorkBuddy OAuth 设备授权与令牌看护）→
+  `4e8e2ee`（T304 路由策略高级配置）→ `49c4f65`（T303 健康探测 + 自动降级 + 级联防护）→
+  `bd27fe0`（T305 Freebuff 等待室与队列）→ `b5b3b1e`（T308 WorkBuddy Anthropic 桥）→
+  `307d751`（T307 面板系统设置页）→ `504d70d`（T306 面板运行日志页）→（T302 余额刷新与池状态持久化）。
+- 本地历史中用到的 `preferredAccountId` / `onRetry` 透传语义与云端 `X-Upstream-Account` 接线
+  **合并为一处实现**（`src/routes/provider-dispatch.ts` 的 `chatOpts`，`decision.preferredAccountId`
+  优先、`args.preferredAccountId` 回落）。
 
 ## [5.0.5] - 2026-10-08
 
@@ -142,16 +360,6 @@
   `modelAccess` 分片非空时驱动限流与模型访问守卫（store 优先、env 回退，缺省部署零破坏）；
   legacy 扁平分支 `syncEnvFile` 在加密库可用时不再写明文 `COMMANDCODE_API_KEY` 并摘除旧行。
   配套 `tests/config-source-closure.test.ts` 8 例。
-
-- **P0 移植测试完整收口与 T214 阶段门自动化取证** —— 补齐旧树未带过来的 13 个配套测试文件与
-  T107 快照基础设施（`tests/snapshot/` 完整用例、scenarios 及 upstream/snapshots fixtures）；
-  修复 `src/utils/config.ts` 的 `COMMANDCODE_ENV_PATH` 兼容别名与隔离测试放行迁移；
-  修复 `src/utils/usage-store.ts` 的 §3.9 多上游 `costUsd` null 与 0 语义分离；
-  修复 `tests/credential-store.test.ts` / `tests/snapshot/snapshot.test.ts` 对生产环境
-  `~/.commandcode/credentials.enc` 的路径隔离。
-  全量 `npm run verify` **78 测试文件 / 984 用例全绿（1 skipped）**，语句覆盖率提升至 **80.97%**
-  （远超 ≥55% 门槛）；5 分钟自动化泄漏监控（`scripts/soak.mjs` 400 请求，RSS 净降 31.9MB）
-  与 CommandCode / Freebuff 快照测试全部通过。
 
 - **指定上游账号（`X-Upstream-Account`）端到端接线** —— 收口 T203 登记的遗留「`preferredAccountId` /
   `onRetry` 未透传到选号」。此前 `ChatOptions` 里的这两个字段在数据面**从未被赋值**

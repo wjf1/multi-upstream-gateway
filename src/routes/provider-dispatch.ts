@@ -22,7 +22,7 @@ import { estimateTextTokens, isAbortError } from '../adapters/commandcode/upstre
 import { writeSSEHeaders } from './sse-common.js';
 import { ErrorCode, ProxyError, toProxyError } from '../utils/errors.js';
 import { AnthropicStreamEncoder, sseFrame } from '../providers/core/anthropic-bridge.js';
-import type { ChatOptions } from '../providers/core/interface.js';
+import type { ChatOptions, ProviderName } from '../providers/core/interface.js';
 import type { ProviderRuntime } from '../providers/runtime.js';
 import type { RouteDecision } from '../providers/core/router.js';
 import { logger } from '../utils/logger.js';
@@ -54,6 +54,8 @@ export interface ProviderFinalizeInfo {
   traceId?: string;
   inputTokens: number;
   outputTokens: number;
+  /** T304：强制指定的账号 ID（留存审计日志）。 */
+  preferredAccountId?: string;
 }
 
 export interface ProviderDispatchArgs {
@@ -84,22 +86,20 @@ function errorOf(err: unknown): ProxyError {
 
 export async function respondViaProvider(args: ProviderDispatchArgs): Promise<unknown> {
   const { runtime, decision, openaiReq, requestId, abortSignal, reply, mode, startTime, finalize } = args;
+
+  // T303：申请在途队列槽位（超过 queueMaxDepth 立即 503+Retry-After）
+  runtime.degradation.acquireQueueSlot();
+  let slotReleased = false;
+  const releaseSlot = () => {
+    if (!slotReleased) {
+      slotReleased = true;
+      runtime.degradation.releaseQueueSlot();
+    }
+  };
+
   const provider = runtime.get(decision.provider);
   const stream = openaiReq.stream === true;
   const modelName = decision.model;
-
-  // 传递给 Provider 的调用选项：指定账号只声明意图，是否命中由 Provider 的账号池决定
-  // （未命中回退 + 告警），故这里不做存在性校验。
-  const providerOpts: ChatOptions = {
-    requestId,
-    abortSignal,
-    preferredAccountId: args.preferredAccountId,
-  };
-  if (args.preferredAccountId) {
-    logger.info(
-      `[DISPATCH] ${decision.provider} preferred account "${args.preferredAccountId}" requested | Request ${requestId}`,
-    );
-  }
 
   // 本地估算口径：文本增量流没有上游 usage 事件（与 CommandCode 路径「未回 usage
   // 时回落估算」一致）。输入按序列化消息长度估，输出按分片累计。
@@ -109,11 +109,20 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
   const finish = (status: 'COMPLETED' | 'FAILED', errorCode?: string, traceId?: string): void => {
     if (settled) return;
     settled = true;
-    finalize({ status, errorCode, traceId, inputTokens, outputTokens });
+    releaseSlot();
+    finalize({
+      status,
+      errorCode,
+      traceId,
+      inputTokens,
+      outputTokens,
+      preferredAccountId: decision.preferredAccountId,
+    });
   };
   /** 客户端中止：与既有路由同语义——直接收尾，不落用量。 */
   const abandon = (): void => {
     settled = true;
+    releaseSlot();
   };
 
   if (!provider) {
@@ -138,6 +147,57 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     ping = null;
   };
 
+  const noteError = (pErr: ProxyError) => {
+    if (pErr.status === 429 || pErr.code === ErrorCode.RATE_LIMIT) {
+      runtime.degradation.recordFallback429(decision.provider);
+    }
+  };
+
+  /** T304：三模式降级挑选（首字节产出前才允许调用）。 */
+  const tryFallback = (failedProvider: ProviderName): ProviderName | null => {
+    const strat = runtime.fallbackStrategyMode;
+    if (strat === 'strict') return null; // 默认严格模式：绝不降级
+
+    const candidate = runtime.degradation.pickFallbackCandidate(
+      failedProvider,
+      runtime.priorityList,
+      (p) => runtime.isEnabled(p),
+    );
+    if (!candidate) return null;
+
+    if (strat === 'same-model') {
+      const hits = runtime.registry.resolve(modelName);
+      let supports = candidate === 'commandcode' || hits.includes(candidate);
+      if (!supports) {
+        const cached = (runtime as any).modelCache?.get(candidate);
+        if (cached && Array.isArray(cached) && cached.some((m: any) => m.id === modelName)) {
+          supports = true;
+        }
+      }
+      if (!supports) {
+        logger.info(
+          `[FALLBACK] Candidate ${candidate} does not serve identical model ${modelName}, shedding`,
+        );
+        return null;
+      }
+    }
+    return candidate;
+  };
+
+  // 账号指定有两个来源：路由裁决（`X-Upstream-Account` 头经六步路由透传）与调用方入参，前者优先。
+  // 只声明意图，是否命中由 Provider 的账号池决定（未命中回退 + 告警），故此处不做存在性校验。
+  const preferredAccountId = decision.preferredAccountId ?? args.preferredAccountId;
+  const chatOpts: ChatOptions = {
+    requestId,
+    abortSignal,
+    ...(preferredAccountId ? { preferredAccountId } : {}),
+  };
+  if (preferredAccountId) {
+    logger.info(
+      `[DISPATCH] ${decision.provider} preferred account "${preferredAccountId}" requested | Request ${requestId}`,
+    );
+  }
+
   if (mode === 'chat') {
     const chunkId = `chatcmpl-${randomUUID().slice(0, 8)}`;
     const created = Math.floor(startTime / 1000);
@@ -155,7 +215,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     if (!stream) {
       let fullText = '';
       try {
-        for await (const delta of provider.chatCompletion(openaiReq, providerOpts)) {
+        for await (const delta of provider.chatCompletion(openaiReq, chatOpts)) {
           if (abortSignal.aborted) {
             abandon();
             return reply.status(499).send({ error: 'client aborted' });
@@ -174,11 +234,23 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
         });
       } catch (err) {
         const proxyErr = errorOf(err);
+        noteError(proxyErr);
         if (isAbortError(err) || (err as { isAbort?: boolean })?.isAbort) {
           abandon();
           return reply.status(499).send({ error: 'client aborted' });
         }
         logger.error(`[DISPATCH] ${decision.provider} chat error | Model ${modelName} | ${proxyErr.code}: ${proxyErr.message}`);
+        const fb = tryFallback(decision.provider);
+        if (fb) {
+          logger.warn(
+            `[FALLBACK] Auto failing over from ${decision.provider} to ${fb} before first byte for request ${requestId}`,
+          );
+          decision.provider = fb;
+          reply.header('x-actual-upstream', fb);
+          reply.raw.setHeader('x-actual-upstream', fb);
+          releaseSlot();
+          return await respondViaProvider(args);
+        }
         finish('FAILED', proxyErr.code);
         return reply.status(proxyErr.status).send({ error: proxyErr.openAIPayload() });
       }
@@ -186,7 +258,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
 
     // 流式：OpenAI chunk 序列（role 起始 → 内容增量 → finish [+usage]）。
     try {
-      for await (const delta of provider.chatCompletion(openaiReq, providerOpts)) {
+      for await (const delta of provider.chatCompletion(openaiReq, chatOpts)) {
         if (abortSignal.aborted) {
           disarmPing();
           abandon();
@@ -221,6 +293,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     } catch (err) {
       disarmPing();
       const proxyErr = errorOf(err);
+      noteError(proxyErr);
       if (isAbortError(err) || (err as { isAbort?: boolean })?.isAbort) {
         abandon();
         if (!reply.raw.writableEnded) reply.raw.end();
@@ -228,6 +301,17 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
       }
       logger.error(`[DISPATCH] ${decision.provider} chat stream error | Model ${modelName} | ${proxyErr.code}: ${proxyErr.message}`);
       if (!began) {
+        const fb = tryFallback(decision.provider);
+        if (fb) {
+          logger.warn(
+            `[FALLBACK] Auto failing over from ${decision.provider} to ${fb} before first byte for request ${requestId}`,
+          );
+          decision.provider = fb;
+          reply.header('x-actual-upstream', fb);
+          reply.raw.setHeader('x-actual-upstream', fb);
+          releaseSlot();
+          return await respondViaProvider(args);
+        }
         finish('FAILED', proxyErr.code);
         return sendErrorEnvelope(reply, mode, proxyErr, false, true);
       }
@@ -245,7 +329,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
   if (!stream) {
     let fullText = '';
     try {
-      for await (const delta of provider.chatCompletion(openaiReq, providerOpts)) {
+      for await (const delta of provider.chatCompletion(openaiReq, chatOpts)) {
         if (abortSignal.aborted) {
           abandon();
           return reply.status(499).send({ type: 'error', error: { type: 'api_error', message: 'client aborted' } });
@@ -266,11 +350,23 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
       });
     } catch (err) {
       const proxyErr = errorOf(err);
+      noteError(proxyErr);
       if (isAbortError(err) || (err as { isAbort?: boolean })?.isAbort) {
         abandon();
         return reply.status(499).send({ type: 'error', error: { type: 'api_error', message: 'client aborted' } });
       }
       logger.error(`[DISPATCH] ${decision.provider} messages error | Model ${modelName} | ${proxyErr.code}: ${proxyErr.message}`);
+      const fb = tryFallback(decision.provider);
+      if (fb) {
+        logger.warn(
+          `[FALLBACK] Auto failing over from ${decision.provider} to ${fb} before first byte for request ${requestId}`,
+        );
+        decision.provider = fb;
+        reply.header('x-actual-upstream', fb);
+        reply.raw.setHeader('x-actual-upstream', fb);
+        releaseSlot();
+        return await respondViaProvider(args);
+      }
       finish('FAILED', proxyErr.code);
       return reply.status(proxyErr.status).send(proxyErr.anthropicPayload());
     }
@@ -285,7 +381,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     armPing();
   };
   try {
-    for await (const delta of provider.chatCompletion(openaiReq, providerOpts)) {
+    for await (const delta of provider.chatCompletion(openaiReq, chatOpts)) {
       if (abortSignal.aborted) {
         disarmPing();
         abandon();
@@ -317,6 +413,7 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
   } catch (err) {
     disarmPing();
     const proxyErr = errorOf(err);
+    noteError(proxyErr);
     if (isAbortError(err) || (err as { isAbort?: boolean })?.isAbort) {
       abandon();
       if (!reply.raw.writableEnded) reply.raw.end();
@@ -324,6 +421,17 @@ export async function respondViaProvider(args: ProviderDispatchArgs): Promise<un
     }
     logger.error(`[DISPATCH] ${decision.provider} messages stream error | Model ${modelName} | ${proxyErr.code}: ${proxyErr.message}`);
     if (!began) {
+      const fb = tryFallback(decision.provider);
+      if (fb) {
+        logger.warn(
+          `[FALLBACK] Auto failing over from ${decision.provider} to ${fb} before first byte for request ${requestId}`,
+        );
+        decision.provider = fb;
+        reply.header('x-actual-upstream', fb);
+        reply.raw.setHeader('x-actual-upstream', fb);
+        releaseSlot();
+        return await respondViaProvider(args);
+      }
       finish('FAILED', proxyErr.code);
       return sendErrorEnvelope(reply, mode, proxyErr, false, true);
     }

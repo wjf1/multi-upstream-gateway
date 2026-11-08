@@ -9,10 +9,13 @@
 // 重启（5min 内 3 次），随主进程退出。
 //
 // sidecar 真实端点（核自 workbuddy2api-panel/internal/server/handler.go）：
-//   GET /healthz        —— 恒无鉴权，200=可服务 / 503=池不可服务
+//   GET /healthz        —— 恒无鉴权，200=可服务 / 503=池不可服务（空池是稳态，不等于启动失败）
 //   GET /status         —— Bearer 鉴权，池与管理汇总
 //   GET /v1/models      —— Bearer 鉴权
 //   POST /v1/chat/completions —— Bearer 鉴权
+//
+// 启动参数只有 `-config <path>`（Go flag 包对未知标志直接 usage + exit 2），
+// 监听/密钥/授权目录由 provider 落进该配置文件，见 provider.ts#materializeSidecarConfig。
 //
 // 全部外部副作用（spawn / fetch / 时钟 / 睡眠）均可注入，测试无需真的拉起进程。
 // =============================================================================
@@ -182,21 +185,27 @@ export class WorkBuddySidecar {
       this.healthy = false;
       return false;
     }
-    this.healthy = await this.ping();
+    this.healthy = (await this.probe()) === 'servable';
     return this.healthy;
   }
 
   // ─── 内部实现 ──────────────────────────────────────────────────────────────
 
-  private async ping(): Promise<boolean> {
+  /**
+   * 三态探活。真实二进制的 `/healthz` 恒无鉴权，`200=可服务 / 503=池不可服务`：
+   * 空池冷启动时是 **503 的稳态**，此时进程明明活着，不能当成启动失败。
+   * `unreachable` = 连不上或非契约状态码（端口/路径配错、进程还没监听）。
+   */
+  private async probe(): Promise<'servable' | 'degraded' | 'unreachable'> {
     try {
       const res = await this.fetchFn(`${this.baseUrl}${this.opts.healthPath}`, {
         method: 'GET',
         signal: AbortSignal.timeout(this.opts.probeTimeoutMs),
       });
-      return res.ok;
+      if (res.ok) return 'servable';
+      return res.status === 503 ? 'degraded' : 'unreachable';
     } catch {
-      return false;
+      return 'unreachable';
     }
   }
 
@@ -248,10 +257,25 @@ export class WorkBuddySidecar {
           finish(new Error(this.lastError ?? 'workbuddy sidecar exited during startup'));
           return;
         }
-        if (await this.ping()) {
+        const probe = await this.probe();
+        if (probe === 'servable') {
           this.state = 'running';
           this.healthy = true;
           logger.info(`[PVD:workbuddy] sidecar healthy at ${this.baseUrl} (pid ${child.pid ?? '?'})`);
+          finish();
+          return;
+        }
+        // 503 = 池里一个可用账号都没有（冷启动的第一步就是去授权），进程本身已就绪。
+        // 判 crashed 会让 provider 被永久判死（health() 对非 running 状态一律 false），
+        // 用户授权成功后也恢复不了——故这里按「起来了但暂不可服务」放行。
+        if (probe === 'degraded') {
+          this.state = 'running';
+          this.healthy = false;
+          this.lastError = `sidecar up but pool not servable (${this.opts.healthPath} → 503)`;
+          logger.warn(
+            `[PVD:workbuddy] sidecar up at ${this.baseUrl} but pool not servable yet (pid ${child.pid ?? '?'}); ` +
+              `登录账号后会自动转健康`,
+          );
           finish();
           return;
         }

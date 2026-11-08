@@ -49,8 +49,13 @@ Freebuff 模块已移植入树但**尚未接入运行时**，详见[项目状态
 ## 🚦 项目状态
 <a id="status"></a>
 
-**当前版本：v5.0.4**（2026-10-08）—— 版本线自 v5.0.0 起另起产品序列，勿与上游 `commandcode-proxy` 的
+**当前版本：v5.0.7**（2026-10-08）—— 版本线自 v5.0.0 起另起产品序列，勿与上游 `commandcode-proxy` 的
 v4.22.x 混用；完整发布记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/wjf1/multi-upstream-gateway/releases)。
+本版为补丁版：把 T302 已交付的 WorkBuddy 积分镜像接到面板上（**F07 积分条 UI 收口**——「多上游账号」页的
+WorkBuddy 卡片现在会显示每号余量进度条、即将过期积分与「暂停 / 停用 / 冷却中」三态徽章，并提供「刷新积分」
+按钮；**未知 ≠ 0**、**镜像不可信时显式标红**两条语义红线在渲染层落实）。前一版 v5.0.6 收口了 P1 任务卡
+（T301~T308）与 T203/T302 遗留，并修复 WorkBuddy sidecar 与真实 Go 二进制之间的启动契约断点
+（启动参数只认 `-config`、空池 `/healthz` 503 不再被误判为崩溃）。
 
 **P0 语义移植（Phase A~F）已完成并部署**（2026-10-07）：
 
@@ -80,7 +85,8 @@ v4.22.x 混用；完整发布记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](
 
 Provider 契约位于 `src/providers/core/`（`interface` / `router` / `registry`），六步路由 + 三源命名空间已接入
 `/v1/chat/completions`、`/v1/messages` 数据面；面板新增「上游」页（启停总闸热生效、默认上游切换、sidecar 进程视图、
-总览异常横幅）。P1 剩余：T214（P1 阶段门）与登记小卡（UnifiedConfigStore 切源、legacy 明文行收口）。
+总览异常横幅）与「日志」「设置」页。**自动降级与级联防护（T303）、三模式路由策略与强制账号（T304）、WorkBuddy OAuth 授权与令牌看护（T301）已交付**。
+P1 剩余：T214（P1 阶段门，自动化项已全绿，剩 3 项外部 blocker：Freebuff 真实 Token、WorkBuddy sidecar 二进制、负责人签字）。
 
 ---
 
@@ -153,11 +159,18 @@ Provider 契约位于 `src/providers/core/`（`interface` / `router` / `registry
 - **管理面鉴权与请求 ID 全链路** — `admin-guard` 覆盖管理面写操作；`x-request-id` 贯通路由与上游调用；pino redact 与危险 `NODE_DEBUG` 项剥离。
 - **Provider 契约层与用量维度** — `src/providers/core/`（契约 / 六步路由 / 模型命名空间注册表）；用量记录新增 `provider` / `native` 字段与 `summarizeByProvider`，为多上游分别计量做准备。
 - **面板外置化** — `public/index.html` 骨架化（约 560 行）+ `public/js/*.js`，新增 `/js/*` 静态路由（no-cache）；hash 路由、明暗主题、首启引导卡。**仍为零外链依赖（离线可用）。**
+- **自动降级与级联防护（T303）** — 30s 周期探活将不可用上游标记 `degraded`（状态接口与面板可见）；30s 滑动窗口内 429 达 2 次自动摘除并跳过该候选；全局在途队列深度上限（`queueMaxDepth`，默认 128）超限返回 `503` + `Retry-After`，防止上游雪崩时把网关自身拖垮；切换流量按「第 1 分钟 10%、此后每分钟 +10%」渐进承接，避免瞬时尖峰。
+- **三模式路由策略与强制账号（T304）** — `strict`（不降级，失败即失败）/ `auto`（首字节前自动切换到优先级列表中的下一个启用上游）/ `same-model`（仅当备选支持同名模型才降级）；**流式响应一旦首字节流出即严格禁止跨上游切换**，保证协议流纯净。请求头 `x-upstream-account` 可强制指定账号池中的具体账号，取值链（路由决策 > 请求头 > 凭据尾号）全部写入审计日志；第六步会话粘性与第三步前缀路由可分别关闭。规则经 `GET/POST /api/routing/rules` 热生效并持久化至 `config.json` 的 `routing` 分片。
+- **WorkBuddy OAuth 授权与令牌看护（T301）** — 账号页 WorkBuddy 卡片可直接完成 **OAuth 授权加号**（选国内版 / 国际版 → 面板内开窗授权 → 自动轮询至完成），无需离开网关面板。授权走腾讯自建 state 两段式（非 RFC 8628），由 sidecar 原生面板 API 承接；**网关侧只取 `uid/nickname/realm/credits`，永不持有 OAuth token**（响应类型层面无 token 字段）。
+  令牌**提前 1 小时**进入预刷（Go sidecar 原为硬编码 10 分钟），刷新失败按 **1s → 2s → 4s 指数退避重试**，最终仍失败则把账号标为**「待刷新」**并在账号行显示红色徽章、同时推送一次 Webhook 告警——把 sidecar 侧的「静默失效」变成显式可见状态。只读视图与授权编排暴露为 `GET /api/upstreams/workbuddy/tokens`、`POST /api/upstreams/workbuddy/login/start`、`GET /api/upstreams/workbuddy/login/poll?state=`。
+- **余额刷新与池状态持久化（T302）** — WorkBuddy 的账号积分余额（含可过期额度与最早到期时间）与**池状态**（暂停 / 禁用 / 冷却）经 `data/state.json` 持久化：内存样本每次刷新都更新，**落盘按 5 分钟节流**（不新增常驻定时器）；写入走**临时文件 + rename 原子替换**并加文件锁（`open(...,'wx')` 抢占 + 残留锁超时兜底），**锁内不做 IO**。进程 `kill -9` 后重启，账本从文件水合、逐字段一致。文件损坏（非 JSON / 版本不符）时**不覆盖原文件**并把状态标为降级 + 告警，随后从 sidecar `/status` 重建（usage 记录里只有消费侧原生量，反推不出剩余余额，故不作重建源）。余额读不到时**绝不清零账本**（读不到 ≠ 余额为 0），失败只记计数并在恢复后解除。管理面暴露 `GET /api/upstreams/workbuddy/balance`（只读镜像）与 `POST /api/upstreams/workbuddy/balance/refresh`（强制刷新，sidecar 不可用时返回 `503` 而非谎报成功）。
+- **WorkBuddy sidecar 启动契约（真实二进制对齐）** — 网关不再向 sidecar 传 `--listen/--auth-dir/--api-key`（真实 Go 二进制只认 `-config <path>`，未知标志会直接 `exit 2`），而是**自己落盘配置文件**：默认落在状态文件同级的 `workbuddy-sidecar/config.json`（可用 `WORKBUDDY_SIDECAR_CONFIG` 或 `providers.workbuddy.sidecar.configPath` 指定），写入 `listen` / `api_key` / `auth_dir` / `state_file`，**深合并保留面板可热改的其它键**，临时文件 + rename 原子替换；**写不进去就不 spawn**。另按真实 `/healthz` 语义（`200` 可服务 / `503` 池不可服务）把探活改为**三态**：**空池冷启动不再被判崩溃**（否则 provider 会被永久判死，用户授权成功后也不恢复），HTTP 有响应即置 `running`、`healthy=false`，池补齐后自动转健康。部署前可用 `npx tsx scripts/probe-workbuddy-live.ts <sidecar.exe> [port]` 做真机自检（配置落盘 → spawn → 探活全路径）。
 
 ---
 
 ## 🚀 快速开始
 <a id="quickstart"></a>
+
 
 ```bash
 npm install
@@ -207,18 +220,34 @@ curl http://127.0.0.1:9090/v1/messages \
 curl "http://127.0.0.1:9090/v1/models?plan=individual-go&available=1"
 ```
 
-### 指定上游账号
+### 指定上游与账号
 
-多上游数据面支持把**单次请求**钉到某个账号上——用于比较账号之间的额度/延迟，或在某个账号异常时手动把流量固定在健康的那一个：
+多上游路由的显式指定（可选，缺省走六步路由自动决策）：
 
 ```bash
+# 指定上游：x-upstream-provider: commandcode | freebuff | workbuddy（等价于模型名前缀 freebuff/<id>、workbuddy/<id>）
+# 指定账号：x-upstream-account（仅对支持账号池的上游生效，当前为 Freebuff）
 curl http://127.0.0.1:9090/v1/chat/completions \
-  -H "X-Upstream-Account: token-2" \
   -H "Content-Type: application/json" \
-  -d '{"model":"<freebuff 模型 id>","messages":[{"role":"user","content":"hi"}]}'
+  -H "x-upstream-provider: freebuff" \
+  -H "x-upstream-account: token-2" \
+  -d '{"model":"glm-5.2","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-账号 ID 取自仪表盘「账号」页或 `GET /api/providers/<provider>/accounts`（Freebuff 形如 `token-2`）。**指定的账号不存在或已暂停时不会让请求失败**：网关回退到常规轮询，并在日志里留一行告警写明回退原因（`preferred account … not found / is paused`）。该头只对按账号调度的上游生效（当前为 Freebuff），其余 Provider 忽略它、行为与从前完全一致。
+把**单次请求**钉到某个账号上，用于比较账号之间的额度 / 延迟，或在某个账号异常时手动把流量固定在健康的那一个。
+账号 ID 取自仪表盘「账号」页或 `GET /api/providers/<provider>/accounts`（Freebuff 形如 `token-2`）。
+**指定的账号不存在或已暂停时不会让请求失败**：网关回退到常规轮询，并在日志里留一行告警写明回退原因
+（`preferred account … not found / is paused`）。该头只对按账号调度的上游生效（当前为 Freebuff），其余 Provider 忽略它、行为与从前完全一致。
+
+响应头 `x-actual-upstream` 回报该请求**实际命中的上游**（发生降级切换时也会如实回写）。
+路由规则可在面板设置页调整，或直接读写管理面 API（需 `x-admin-token`）：
+
+```bash
+curl http://127.0.0.1:9090/api/routing/rules -H "x-admin-token: $ADMIN_TOKEN"
+curl -X POST http://127.0.0.1:9090/api/routing/rules -H "x-admin-token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"fallbackStrategy":"auto","defaultProvider":"freebuff"}'
+```
 
 ## 🚨 错误码与重试语义
 <a id="errors"></a>
@@ -457,9 +486,16 @@ with a built-in Chinese dashboard, usage & cost analytics, multi-account quota r
 
 ### <a id="status-en"></a>Project status
 
-**Current version: v5.0.4** (2026-10-08) — the product version line starts at v5.0.0; do not mix it with the
+**Current version: v5.0.7** (2026-10-08) — the product version line starts at v5.0.0; do not mix it with the
 upstream `commandcode-proxy` v4.22.x. Full release history: [CHANGELOG](CHANGELOG.md) and
-[Releases](https://github.com/wjf1/multi-upstream-gateway/releases).
+[Releases](https://github.com/wjf1/multi-upstream-gateway/releases). This is a patch release that wires the
+WorkBuddy credit mirror shipped by T302 into the panel (**closing out the F07 credit-bar UI** — the WorkBuddy
+card on the "Multi-upstream accounts" page now shows a per-account credit progress bar, expiring credits, and
+the paused / disabled / cooling badges, plus a "refresh credits" button; two semantic red lines are enforced
+in the renderer: **unknown ≠ 0** and **an untrusted mirror is flagged in red**). The previous v5.0.6 landed the
+P1 task cards (T301~T308) plus the T203/T302 leftovers, and fixed the launch contract between the gateway
+and the **real** WorkBuddy Go sidecar binary (the binary only accepts `-config <path>`, and an empty-pool
+`/healthz` 503 is no longer mistaken for a crashed process).
 
 **The P0 semantic port (Phases A–F) is complete and deployed** (2026-10-07): engineering base, audit-batch-B security semantics,
 new modules (provider contract layer, unified config, credential encryption, rate limiting, risk gate, Freebuff), seam wiring,
@@ -482,8 +518,10 @@ dashboard port and a full regression/phase gate (**658 tests green, 65.87% cover
 
 The Provider contract lives in `src/providers/core/` (`interface` / `router` / `registry`); six-step routing + three-source
 namespacing now serve `/v1/chat/completions` and `/v1/messages`. The dashboard gained an **Upstreams** tab (hot enable/disable
-toggles, default-provider switching, sidecar process view, overview alert banner). Remaining for P1: T214 (phase gate) and
-registered follow-ups (UnifiedConfigStore switch-over, legacy plaintext-line cleanup).
+toggles, default-provider switching, sidecar process view, overview alert banner) plus **Logs** and **Settings** tabs.
+**Automatic degradation & cascade protection (T303)**, **three-mode routing strategy with forced accounts (T304)**, and **WorkBuddy OAuth authorization & token watch (T301)** have shipped.
+Remaining for P1: T214 (phase gate — automated checks all green; three external blockers remain: a real Freebuff token, the WorkBuddy
+sidecar binary, and owner sign-off).
 
 ### Features
 
@@ -505,6 +543,12 @@ registered follow-ups (UnifiedConfigStore switch-over, legacy plaintext-line cle
 - **SSRF guard, fail-closed** — strict upstream URL allowlist, **redirect blocking** (`redirect: 'manual'` everywhere; opt-in `UPSTREAM_REDIRECT=follow` re-validates every hop, never follows into private/metadata addresses, strips credentials across hosts), **DNS-rebinding guard** (`DNS_REBINDING_GUARD=on` resolves & validates every upstream hostname per request), **log secret redaction** (`LOG_REDACTION=on` masks Bearer/api-key/sk- tokens in logs) — see the bilingual [Upstream URL safety](#security) section
 - **Structured error codes** — 17 stable codes with actionable hints, surfaced as OpenAI `error.type/code` or Anthropic `error.type` (table below)
 - Windows toast notifications for quota exhaustion / account switch / engine pause — native, zero dependencies, 30-min dedupe, with **self-diagnosis** of the system-wide notification switch; disable via `COMMANDCODE_NOTIFY=0`
+- **Automatic degradation & cascade protection (T303)** — a 30s probe loop flags unusable upstreams as `degraded` (visible in the status API and dashboard); two 429s inside a 30s sliding window pull the provider out of rotation and skip that candidate; a global in-flight queue cap (`queueMaxDepth`, default 128) returns `503` + `Retry-After` so an upstream avalanche cannot take the gateway down with it; switched traffic is ramped in gradually (10% in minute 1, +10%/min thereafter) instead of slamming the new provider
+- **Three-mode routing strategy & forced accounts (T304)** — `strict` (never degrade; a failure is a failure) / `auto` (switch to the next enabled upstream in the priority list before the first byte) / `same-model` (degrade only if the candidate serves a model of the same name); **once the first byte of a streaming response has been sent, cross-upstream switching is strictly forbidden** to keep the protocol stream clean. The `x-upstream-account` header forces a specific account from the pool, and the resolution chain (route decision > header > credential tail) is written to the audit log. Step-6 session stickiness and step-3 prefix routing can each be disabled. Rules hot-apply via `GET/POST /api/routing/rules` and persist into the `routing` shard of `config.json`.
+- **WorkBuddy OAuth authorization & token watch (T301)** — the WorkBuddy card on the accounts page now performs **OAuth account onboarding** in place (pick the China / global realm → the panel opens the authorization window → polls until complete), so you never leave the gateway dashboard. Authorization uses Tencent's own two-step `state` flow (not RFC 8628) served by the sidecar's native panel API; **the gateway keeps only `uid/nickname/realm/credits` and never holds an OAuth token** (no token field exists in the response type).
+  Tokens enter **pre-refresh 1 hour ahead** of expiry (the Go sidecar hard-coded 10 minutes), failures retry with **exponential backoff 1s → 2s → 4s**, and an account that still fails is flagged **"pending refresh"** with a red badge on its row plus a single Webhook alert — turning what used to be a silent failure on the sidecar side into an explicit, visible state. The read-only view and the authorization flow are exposed as `GET /api/upstreams/workbuddy/tokens`, `POST /api/upstreams/workbuddy/login/start`, and `GET /api/upstreams/workbuddy/login/poll?state=`.
+- **Balance refresh & pool-state persistence (T302)** — WorkBuddy account credits (including expiring allowance and earliest expiry) and **pool state** (paused / disabled / cooling) are persisted to `data/state.json`: the in-memory sample is updated on every refresh while **disk writes are throttled to every 5 minutes** (no extra resident timer). Writes use a **temp-file + rename atomic replace** guarded by a file lock (`open(...,'wx')` acquisition with a stale-lock timeout fallback), and **no IO happens inside the lock**. After a `kill -9` the ledger hydrates from the file on restart and matches field for field. If the file is corrupt (not JSON / version mismatch) the **original file is not overwritten**: the state is marked degraded, an alert fires, and the ledger is rebuilt from the sidecar `/status` (usage records hold only the consumption-side native amount and cannot back out a remaining balance, so they are not used as a rebuild source). When the balance cannot be read the **ledger is never zeroed** ("unreadable" ≠ "zero balance"): the failure only bumps a counter, cleared on recovery. The admin plane exposes `GET /api/upstreams/workbuddy/balance` (read-only mirror) and `POST /api/upstreams/workbuddy/balance/refresh` (force refresh; returns `503` rather than reporting a false success when the sidecar is unavailable).
+- **WorkBuddy sidecar launch contract (aligned with the real binary)** — the gateway no longer passes `--listen/--auth-dir/--api-key` to the sidecar (the real Go binary only accepts `-config <path>` and exits 2 on any unknown flag); instead it **writes the config file itself**, defaulting to `workbuddy-sidecar/config.json` next to the state file (override with `WORKBUDDY_SIDECAR_CONFIG` or `providers.workbuddy.sidecar.configPath`). It sets `listen` / `api_key` / `auth_dir` / `state_file`, **deep-merges so hot-editable keys survive** (temp file + rename), and **skips spawning entirely if the config cannot be written**. Probing is now **three-state**, matching the real `/healthz` contract (`200` = servable, `503` = pool not servable): an **empty-pool cold start is no longer mistaken for a crash** (which used to leave the provider permanently dead even after a successful OAuth login), so an HTTP response marks the process `running` with `healthy=false`, and it turns healthy automatically once the pool fills. Verify a deployment end to end with `npx tsx scripts/probe-workbuddy-live.ts <sidecar.exe> [port]` (config write → spawn → probe).
 
 **Dashboard & usage insight**
 
