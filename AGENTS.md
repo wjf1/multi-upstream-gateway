@@ -55,3 +55,5 @@ CI 流程：ubuntu + windows 双矩阵（Windows 是主要部署形态，必须�
 3. **测试隔离**：`COMMANDCODE_CONFIG_PATH` 等环境变量必须在**动态 import 之前**设置（配置路径是模块加载时求值的）；禁止先静态 import 再依赖 env 生效。
 4. **并发写入者在场时禁止 `git add -A`**（会把他人的在制品一并提交）：提交前 `git status --short` 复核，只 add 明确路径；门禁断言禁用恒真链（`| tail -1 && echo 通过` 永远「通过」），按错误计数或退出码判定。
 5. **lint 不忽略 `scripts/**/*.mjs`**：已显式配置 Node 全局，不要在脚本里写 `/* global ... */`（会报 `no-redeclare`）。
+6. **`boot()` 类 spawn 测试有已知竞态**：`tests/admin-boundary.test.ts` 的 B3 用例看到横幅首行 `is ACTIVE` 就 SIGKILL，而要断言的 `Admin token:` 行打印在其之后，高负载下偶发失败——移植 / 修改该测试时应改为等待更靠后的横幅标记。
+7. **覆盖率阈值锁在 65**（当前 statements 约 67）：`test:coverage` 有独立 `pretest:coverage`（npm 的 pre 钩子只对同名脚本生效），覆盖率跌回阈值下 CI 会红，属预期行为。
