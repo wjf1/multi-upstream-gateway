@@ -331,7 +331,7 @@ Anthropic 出口（`/v1/messages`）：
 | `HEALTH_CHECK_INTERVAL_MS` | `300000` | 通道健康检查探活周期（纯旁路，连续失败仅日志告警）；设 `0` 关闭 |
 | `WEBHOOK_URL` | 未设置=关闭 | 告警 Webhook：当日成本/错误率超阈值时 POST JSON（飞书/钉钉/Slack 机器人通用）；配套 `WEBHOOK_COST_USD`、`WEBHOOK_ERROR_RATE`、`WEBHOOK_TIMEOUT_MS`、`WEBHOOK_CHECK_INTERVAL_MS` |
 | `PROMPT_VERSIONS` | 未设置=关闭 | 设 `on` 启用 Prompt 版本管理（`/api/prompts/*`：保存自动快照、按时间戳回滚；`PROMPTS_DIR` 改存储目录） |
-| `RATE_LIMIT_RPM` / `RATE_LIMIT_TPM` | 未设置=关闭 | 每分钟请求数 / token 数上限（60s 滑动窗口，超限 429 + `Retry-After`） |
+| `RATE_LIMIT_RPM` / `RATE_LIMIT_TPM` | 未设置=关闭 | **单客户端**每分钟请求数 / token 数上限（60s 滑动窗口，按凭据尾 4 位分桶，超限 429 + `Retry-After`）；全局与 per-provider 维度走 `config.json` 的 `rateLimit.global` / `rateLimit.perProvider` 分片（判定路径合一后同一份配置不再被两套桶重复计数） |
 | `MODEL_ALLOWLIST` / `MODEL_BLOCKLIST` | 未设置=关闭 | 模型访问控制（精确 id、大小写不敏感；allowlist 优先，命中拦截 403） |
 | `AUDIT_LOG` | `on` | 审计日志（minimal：只记 ts/route/model/tokens/status/duration 元数据，**绝不记消息正文**）；`off` 关闭，`AUDIT_LOG_PATH` 改落盘路径 |
 | `USAGE_STORAGE_BACKEND` | `jsonl` | 用量存储后端（为 SQLite 预留接口，当前仅支持 `jsonl`） |

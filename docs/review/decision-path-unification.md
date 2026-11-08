@@ -1,6 +1,6 @@
 # 判定路径合一：评审材料（modelAccess / 限流）
 
-> **状态：材料已备，待负责人裁决。** 对应 `PLAN-STATE.md` 登记的「判定路径合一……需独立评审」。
+> **状态：方案 2 已裁决（2026-11-08），modelAccess 侧与限流侧均已落地，实施记录见 §6。** 对应 `PLAN-STATE.md` 登记的「判定路径合一……需独立评审」。
 > 本文只陈述**现状事实**与**候选方案**，不含任何行为改动 —— 合一动作会改变错误码与环境变量语义，
 > 属需要决策的破坏性变更，故先出材料。
 
@@ -77,3 +77,20 @@ B 按凭据尾号）、滑动窗口实现与日志均独立。实际生效边界
    预判与实际决策不一致时会把请求计进错误的桶。
 2. `rateLimit` 分片同时驱动 A 的 per-provider 桶与 B 的凭据桶，合一后是否只保留 per-provider 维度？
 3. 是否有外部集成方已经依赖 `MODEL_ACCESS_DENIED`（本仓库为公开仓库，需确认无下游硬依赖后再改码）。
+
+## 6. 实施记录（2026-11-08）
+
+**裁决**：方案 2（合一到分片，保留通配）由负责人拍板；随后分两批落地。
+
+- **modelAccess 侧：已落地**——`modelAccess` 分片唯一源（全局 preHandler 守卫与路由内守卫同读一份），
+  匹配统一「精确 + 尾部通配」，`MODEL_ACCESS_*` 降为弃用兼容通道（第三优先级 + 一次性弃用告警），
+  拒绝码统一 `MODEL_NOT_IN_PLAN`（`MODEL_ACCESS_DENIED` 转兼容别名）。R2 消除。
+- **限流侧：按维度拆分消费落地**——`rateLimit.global` / `perProvider` 由全局 preHandler 限流器唯一执行；
+  路由内 per-client 桶（凭据尾 4 位）改读新增 `rateLimit.perClient` 分片；`RATE_LIMIT_RPM` / `RATE_LIMIT_TPM`
+  env 语义重定义为单客户端上限。同一份 `global` 配置不再被两套桶重复计数。R1 消除。
+  全局 preHandler 的 input 粗估同步改为文本字段口径（不序列化整个 body，base64 不计入）。
+- **§5.1 处置**：保持预判（`predictProviderForRateLimit`）——preHandler 时点路由决策尚未产生，「换真实
+  decision.provider」需要把限流挪进 handler，属架构级调整，登记为已知限制与后续待办。
+- **§5.2 处置**：不裁维度——`global`（A）/ `perProvider`（A）/ `perClient`（B，新分片）三个维度各自独立
+  配置，每份配置只有一个消费者。
+- **§5.3 处置**：`MODEL_ACCESS_DENIED` 保留兼容别名（errors.ts / README 已注明），无下游破坏。

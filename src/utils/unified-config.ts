@@ -134,6 +134,12 @@ export const RateLimitConfigSchema = z
     perProvider: z
       .record(z.union([RateBucketSchema, z.literal('inherit')]))
       .default({}),
+    /**
+     * per-client 桶（判定路径合一·限流侧新增维度）：按客户端凭据尾 4 位分桶，
+     * 由路由内守卫执行；`global` / `perProvider` 由全局 preHandler 限流器执行，
+     * 同一份配置不再被两套桶重复计数（见 docs/review/decision-path-unification.md）。
+     */
+    perClient: RateBucketSchema.partial({ rpm: true, tpm: true }).default({}),
   })
   .default({});
 

@@ -6,8 +6,12 @@
 //   无定时器，测试与进程退出零干扰。
 // - key：客户端 API key 末 4 位（Bearer / x-api-key），无凭据回落 'global'。
 //   只存尾号，绝不存全量密钥。
-// - env 均在调用时读取：RATE_LIMIT_RPM（每分钟请求数）、RATE_LIMIT_TPM（每分钟
-//   token 数）。两者都未设置 = 功能完全关闭：不拦截、不记账、零 IO。
+// - 配置源（判定路径合一·限流侧）：本桶只消费 `config.json` 的 `rateLimit.perClient`
+//   分片——限流执行按维度拆分，`global` / `perProvider` 由全局 preHandler 限流器
+//   执行，`perClient` 由本路由内守卫执行，同一份配置不再被两套桶重复计数（见
+//   docs/review/decision-path-unification.md）。分片未配置时回退 env：RATE_LIMIT_RPM
+//   （单客户端每分钟请求数）、RATE_LIMIT_TPM（每分钟 token 数）。两者都未设置 =
+//   功能完全关闭：不拦截、不记账、零 IO。
 // - TPM 口径：入口按消息文本字段粗估 input（复用 estimateTextTokens，不序列化
 //   整个 body —— 图片 base64 一旦计入，一张截图就能把 TPM 顶穿）；流结束后的
 //   实际 output tokens 由 recordRequestOutput 在请求收敛点补记。粗估只含文本
@@ -72,15 +76,17 @@ export function rateLimitKeyOf(req: { headers: unknown }): string {
 }
 
 /**
- * 全局桶配置源（T213b 收口）：config.json 的 `rateLimit.global` 分片（经
- * UnifiedConfigStore，热重载）非空时优先；否则回退 env（RATE_LIMIT_RPM/TPM，
- * 调用时读取）。两个源都是「未设置 = 不限流」。
+ * per-client 桶配置源（判定路径合一·限流侧）：config.json 的 `rateLimit.perClient`
+ * 分片（经 UnifiedConfigStore，热重载）非空时优先；否则回退 env（RATE_LIMIT_RPM/TPM，
+ * 调用时读取，语义为**单客户端**上限）。`rateLimit.global` 不再被本桶消费——它由
+ * 全局 preHandler 限流器唯一执行，消除「一份配置、两套执行」的双重计数（R1）。
+ * 两个源都是「未设置 = 不限流」。
  */
-function effectiveGlobalLimits(): { rpm?: number; tpm?: number } {
+function effectivePerClientLimits(): { rpm?: number; tpm?: number } {
   const store = getUnifiedConfigStore();
   if (store) {
     try {
-      const g = store.get().rateLimit?.global;
+      const g = store.get().rateLimit?.perClient;
       if (g && (g.rpm !== undefined || g.tpm !== undefined)) return { rpm: g.rpm, tpm: g.tpm };
     } catch { /* store 未加载：回退 env */ }
   }
@@ -102,7 +108,7 @@ function sweepAll(now: number): void {
  * estimatedTokens 为本次请求的 input 预估；允许时计入窗口。
  */
 export function checkRateLimit(key: string, estimatedTokens = 0): RateLimitVerdict {
-  const { rpm, tpm } = effectiveGlobalLimits();
+  const { rpm, tpm } = effectivePerClientLimits();
   if (rpm === undefined && tpm === undefined) return { allowed: true };
 
   const now = Date.now();
@@ -170,7 +176,7 @@ function estimateBodyTokens(body: unknown): number {
  * 返回 true 表示已拒绝并写完响应，handler 应立即 return。
  */
 export function guardRateLimit(req: FastifyRequest, reply: FastifyReply): boolean {
-  const { rpm, tpm } = effectiveGlobalLimits();
+  const { rpm, tpm } = effectivePerClientLimits();
   if (rpm === undefined && tpm === undefined) return false;
   const key = rateLimitKeyOf(req);
   const verdict = checkRateLimit(key, estimateBodyTokens(req.body));

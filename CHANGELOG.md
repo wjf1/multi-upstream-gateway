@@ -14,6 +14,14 @@
   一次弃用告警，计划下一个大版本移除）；拒绝码统一为 `MODEL_NOT_IN_PLAN`，`MODEL_ACCESS_DENIED` 保留为
   兼容别名（errors.ts 提示与 README 错误码表已注明）。限流执行合一（R1）涉及预判桶与分桶维度的设计取舍，
   见评审材料 §5 三个未确认事项，另行排期。
+- **判定路径合一（方案 2 落地，限流侧）** —— 消除 R1「一个配置、两套执行」：限流按**维度拆分消费者**——
+  `rateLimit.global` / `rateLimit.perProvider` 分片由全局 preHandler 限流器（全局桶 + per-provider 桶）唯一执行，
+  路由内 per-client 桶（凭据尾 4 位分桶）改读新增的 `rateLimit.perClient` 分片；env `RATE_LIMIT_RPM` /
+  `RATE_LIMIT_TPM` 语义重定义为**单客户端**上限（README 配置表已注明）。同一份 `rateLimit.global` 不再被
+  两套桶重复计数，实际限流边界 = 配置值本身。另把全局 preHandler 的 input 粗估从「序列化整个 body」改为
+  「只数 system / messages 文本字段」（与 per-client 桶同口径）——图片 base64 不再计入，一张截图不会凭空
+  顶穿 TPM。§5.1（预判桶改真实 decision.provider）保持预判现状：preHandler 时点路由决策尚未产生，登记为
+  已知限制（实施记录见评审材料 §6）。
 
 ## [5.0.7] - 2026-10-08
 

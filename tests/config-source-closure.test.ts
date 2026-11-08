@@ -109,9 +109,9 @@ describe('modelAccess：store 优先 / env 回退', () => {
   });
 });
 
-describe('rateLimit.global：store 优先 / env 回退（路由级桶）', () => {
-  it('store 分片注入后按 config.json 的 rpm 限流', async () => {
-    writeConfig({ providers: {}, rateLimit: { global: { rpm: 2 } } });
+describe('rateLimit.perClient：store 优先 / env 回退（路由级桶，判定路径合一后）', () => {
+  it('store 分片注入后按 config.json 的 perClient.rpm 限流', async () => {
+    writeConfig({ providers: {}, rateLimit: { perClient: { rpm: 2 } } });
     await bootstrapConfigStore();
 
     expect(checkRateLimit('k1', 0).allowed).toBe(true);
@@ -120,6 +120,15 @@ describe('rateLimit.global：store 优先 / env 回退（路由级桶）', () =>
     expect(third.allowed).toBe(false);
     expect(third.retryAfterSec).toBeGreaterThan(0);
     expect(checkRateLimit('k2', 0).allowed).toBe(true); // per-key 桶互不影响
+  });
+
+  it('合一契约：global 分片不再驱动路由级桶（由全局 preHandler 限流器唯一执行）', async () => {
+    writeConfig({ providers: {}, rateLimit: { global: { rpm: 2 } } });
+    await bootstrapConfigStore();
+    // 同 key 三连发：若路由级桶仍消费 global，第三次必拒；现在必须全放行
+    expect(checkRateLimit('k9', 0).allowed).toBe(true);
+    expect(checkRateLimit('k9', 0).allowed).toBe(true);
+    expect(checkRateLimit('k9', 0).allowed).toBe(true);
   });
 
   it('store 分片为空 → env 回退；两者皆无 → 恒放行', async () => {

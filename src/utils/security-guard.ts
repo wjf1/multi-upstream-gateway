@@ -329,17 +329,27 @@ function sendRateLimited(
 }
 
 /**
- * 请求体大小的输入 token 估算（与 usage 缺失兜底同口径：4 字符 ≈ 1 token，
- * CJK 逐字计 1）。本地实现以避免 security-guard → adapters → config 循环导入。
+ * 请求 input token 粗估（限流记账口径，与路由内 per-client 桶的文本字段口径一致）：
+ * 只数 system / messages 的文本字段，**不序列化整个 body** —— 图片 base64 一旦
+ * 计入，一张截图就能把 TPM 顶穿。本地 CJK 感知实现（CJK 逐字计 1，其余 4 字符
+ * ≈ 1 token），以避免 security-guard → adapters → config 的循环导入。
  */
 function estimateTokensForRateLimit(body: unknown): number {
-  if (body === null || body === undefined) return 0;
-  let text: string;
-  try {
-    text = JSON.stringify(body);
-  } catch {
-    return 0;
+  if (body === null || body === undefined || typeof body !== 'object') return 0;
+  const b = body as Record<string, unknown>;
+  const chunks: string[] = [];
+  const push = (s: unknown): void => {
+    if (typeof s === 'string' && s) chunks.push(s);
+  };
+  if (typeof b.system === 'string') push(b.system);
+  else if (Array.isArray(b.system)) for (const part of b.system as unknown[]) push((part as { text?: unknown })?.text);
+  const messages = Array.isArray(b.messages) ? b.messages : [];
+  for (const m of messages as unknown[]) {
+    const msg = m as { content?: unknown };
+    if (typeof msg?.content === 'string') push(msg.content);
+    else if (Array.isArray(msg?.content)) for (const p of msg.content) push((p as { text?: unknown })?.text);
   }
+  const text = chunks.join('\n');
   if (!text) return 0;
   const cjk = (text.match(/[\u3400-\u9FFF\uF900-\uFAFF\u3040-\u30FF\uAC00-\uD7AF]/g) || []).length;
   return cjk + Math.ceil((text.length - cjk) / 4);
