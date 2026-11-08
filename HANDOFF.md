@@ -99,6 +99,7 @@
 - SSOT 链：执行依据方案 → `PLAN-STATE.md` → `CHANGELOG.md` → commit body（DoD 证据）。
 
 ## 4. 最近一轮变更与交付成果
+- **2026-11-08（未发版）**：判定路径合一方案 2 的 modelAccess 侧落地（详见 CHANGELOG [Unreleased]）：config.json 的 modelAccess 分片成为唯一配置源（全局 preHandler 守卫与路由内守卫同读一份），匹配语义统一为「精确 + 尾部通配」，旧 env 通道 MODEL_ACCESS_* 降为弃用兼容（第三优先级 + 一次性弃用告警），拒绝码统一 MODEL_NOT_IN_PLAN（MODEL_ACCESS_DENIED 转兼容别名）。验证：typecheck/lint 零错，94 文件 1154 测试全绿（含 6 个新增通配/兼容用例）。限流执行合一（R1）待评审材料 §5.1/§5.2 设计确认后另行排期。
 
 - **WorkBuddy sidecar 真机链路打通（2026-10-08，T310 演练产出，两处契约缺陷修复）**：
   - **背景**：负责人签字确认 `DECISION: continue` 并授权安装 Go 工具链后，构建出真实 sidecar 二进制

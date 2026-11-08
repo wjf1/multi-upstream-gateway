@@ -3,7 +3,7 @@
 // -----------------------------------------------------------------------------
 // registerSecurityGuards 是 /v1/* 的纵深防御入口：
 //   onRequest  —— 请求 ID 生成与传播（X-Request-Id 响应头）；
-//   preHandler —— modelAccess allow/block（403 MODEL_ACCESS_DENIED）+ 全局与
+//   preHandler —— modelAccess allow/block（403 MODEL_NOT_IN_PLAN，路径合一后统一码）+ 全局与
 //                 per-provider 限流（429 + Retry-After;T213 前按 header/前缀预判）;
 //   onResponse —— 请求完成日志（带 requestId,经 sanitizeLog）。
 // 验收用例复刻任务卡:带错误 Bearer 发起一次请求,断言日志捕获中无 `Bearer sk-`
@@ -142,12 +142,12 @@ describe('registerSecurityGuards 集成', () => {
     expect(id).toMatch(/^[0-9a-f-]{36}$/);
   });
 
-  it('modelAccess:blocklist 命中 → 403 MODEL_ACCESS_DENIED,OpenAI 信封 type=permission_error', async () => {
+  it('modelAccess:blocklist 命中 → 403 MODEL_NOT_IN_PLAN,OpenAI 信封 type=permission_error', async () => {
     app = buildApp({ modelAccess: { allowlist: [], blocklist: ['forbidden-model'] } });
     const res = await post(app, '/v1/chat/completions', { model: 'forbidden-model' });
     expect(res.statusCode).toBe(403);
     const payload = res.json();
-    expect(payload.error.code).toBe('MODEL_ACCESS_DENIED');
+    expect(payload.error.code).toBe('MODEL_NOT_IN_PLAN');
     expect(payload.error.type).toBe('permission_error');
   });
 
@@ -158,7 +158,7 @@ describe('registerSecurityGuards 集成', () => {
     const payload = res.json();
     expect(payload.type).toBe('error');
     expect(payload.error.type).toBe('permission_error');
-    expect(payload.error.code).toBe('MODEL_ACCESS_DENIED');
+    expect(payload.error.code).toBe('MODEL_NOT_IN_PLAN');
   });
 
   it('modelAccess:allowlist 命中放行', async () => {

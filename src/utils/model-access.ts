@@ -16,6 +16,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { ErrorCode, ProxyError } from './errors.js';
 import { auditReject } from './audit-log.js';
 import { getUnifiedConfigStore } from './config-store-runtime.js';
+import { logger } from './logger.js';
 
 function parseList(name: string): string[] {
   return (process.env[name] ?? '')
@@ -24,12 +25,27 @@ function parseList(name: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * 尾部通配匹配（判定路径合一后的统一语义）：`glm-5*` 前缀命中 `glm-5.3`；
+ * 不含 `*` 为精确匹配；大小写不敏感、容忍模式两侧空格。
+ */
+export function patternMatches(model: string, pattern: string): boolean {
+  const p = pattern.trim().toLowerCase();
+  if (p.endsWith('*')) return model.toLowerCase().startsWith(p.slice(0, -1));
+  return model.toLowerCase() === p;
+}
+
 /** 访问判定：allowlist 优先，其次 blocklist；均未设置全放行。大小写不敏感。 */
 /**
- * 配置源（T213b 收口）：config.json 的 `modelAccess` 分片（经 UnifiedConfigStore，
- * 热重载）**非空时优先**；为空/未装配时回退 env（MODEL_ALLOWLIST / MODEL_BLOCKLIST，
- * 调用时读取，改了即生效）。两个源语义同构（精确匹配、大小写不敏感）。
+ * 配置源（判定路径合一，方案 2 落地）：config.json 的 `modelAccess` 分片（经
+ * UnifiedConfigStore，热重载）为**唯一配置源**；为空/未装配时按序回退 env——
+ * 先 `MODEL_ALLOWLIST` / `MODEL_BLOCKLIST`（路由守卫通道），再弃用的
+ * `MODEL_ACCESS_ALLOW` / `MODEL_ACCESS_BLOCK`（旧全局守卫通道，首次命中时打
+ * 一次弃用告警，计划下一个大版本移除）。三个通道的匹配语义统一为「精确 +
+ * 尾部通配」（`glm-5*`），见 patternMatches。
  */
+let warnedLegacyModelAccessEnv = false;
+
 function effectiveLists(): { allow: string[]; block: string[] } {
   const store = getUnifiedConfigStore();
   if (store) {
@@ -41,18 +57,30 @@ function effectiveLists(): { allow: string[]; block: string[] } {
       }
     } catch { /* store 未加载：回退 env */ }
   }
-  return { allow: parseList('MODEL_ALLOWLIST'), block: parseList('MODEL_BLOCKLIST') };
+  if (process.env.MODEL_ALLOWLIST || process.env.MODEL_BLOCKLIST) {
+    return { allow: parseList('MODEL_ALLOWLIST'), block: parseList('MODEL_BLOCKLIST') };
+  }
+  if (process.env.MODEL_ACCESS_ALLOW || process.env.MODEL_ACCESS_BLOCK) {
+    if (!warnedLegacyModelAccessEnv) {
+      warnedLegacyModelAccessEnv = true;
+      logger.warn(
+        '[modelAccess] MODEL_ACCESS_ALLOW / MODEL_ACCESS_BLOCK 已弃用：请改用 config.json 的 modelAccess 分片（或 MODEL_ALLOWLIST / MODEL_BLOCKLIST）；该兼容通道计划在下一个大版本移除。',
+      );
+    }
+    return { allow: parseList('MODEL_ACCESS_ALLOW'), block: parseList('MODEL_ACCESS_BLOCK') };
+  }
+  return { allow: [], block: [] };
 }
 
 export function checkModelAccess(model: string): { allowed: boolean; reason?: string } {
   const { allow, block } = effectiveLists();
   if (allow.length === 0 && block.length === 0) return { allowed: true };
-  const m = String(model ?? '').trim().toLowerCase();
+  const m = String(model ?? '').trim();
   if (allow.length > 0) {
-    if (m && allow.includes(m)) return { allowed: true };
+    if (m && allow.some((p) => patternMatches(m, p))) return { allowed: true };
     return { allowed: false, reason: `not in MODEL_ALLOWLIST (${allow.join(', ')})` };
   }
-  if (block.includes(m)) {
+  if (block.some((p) => patternMatches(m, p))) {
     return { allowed: false, reason: `blocked by MODEL_BLOCKLIST (${block.join(', ')})` };
   }
   return { allowed: true };

@@ -96,8 +96,8 @@ const HINTS: Record<ErrorCodeName, string> = {
   MODEL_AMBIGUOUS:
     'The bare model name matches more than one provider. Prefix it with the provider namespace, e.g. "codebuddy/<model>".',
   MODEL_ACCESS_DENIED:
-    'The requested model is denied by the gateway model access policy (blocklist hit, or not on the allowlist). ' +
-    'Adjust the modelAccess section of config.json, or the MODEL_ACCESS_ALLOW / MODEL_ACCESS_BLOCK environment variables.',
+    'Compatibility alias of MODEL_NOT_IN_PLAN (model access paths were unified). ' +
+    'Adjust the modelAccess section of config.json; the MODEL_ACCESS_ALLOW / MODEL_ACCESS_BLOCK environment variables are deprecated.',
 
 };
 

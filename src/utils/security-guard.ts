@@ -27,6 +27,7 @@ import { ErrorCode, ProxyError } from './errors.js';
 import { resolveRequestId } from './request-context.js';
 import { sanitizeLog } from './sanitize.js';
 import { logger } from './logger.js';
+import { checkModelAccess } from './model-access.js';
 import { getDefaultRateLimiter, type RateLimiter, type RateLimitDecision } from './rate-limiter.js';
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0:0:0:0:0:0:0:1']);
@@ -366,18 +367,29 @@ export function registerSecurityGuards(fastify: FastifyInstance, opts: SecurityG
     const body = req.body as { model?: string } | undefined;
     const model = typeof body?.model === 'string' ? body.model.trim() : '';
 
-    // ① modelAccess（T106 风险门之后的第二道内容面闸门）。opts.modelAccess 为
-    // null = 显式禁用（跳过判定）；未提供 = env 兜底解析。
-    const modelAccess = opts.modelAccess !== undefined ? opts.modelAccess : resolveModelAccessConfigFromEnv();
-    if (modelAccess && model && !isModelAllowed(model, modelAccess)) {
-      const err = new ProxyError(
-        ErrorCode.MODEL_ACCESS_DENIED,
-        `Model "${model}" is denied by the gateway model access policy.`,
-        { context: { model } },
-      );
-      return reply
-        .status(err.status)
-        .send(isAnthropicPath(req.url) ? err.anthropicPayload() : { error: err.openAIPayload() });
+    // ① modelAccess（T106 风险门之后的第二道内容面闸门）。判定路径合一（方案 2，
+    // 2026-11-08 裁决）：默认走 model-access.checkModelAccess —— config.json 的
+    // modelAccess 分片为唯一配置源（分片 > MODEL_ALLOWLIST/BLOCKLIST > 弃用的
+    // MODEL_ACCESS_*，后者带弃用告警），匹配统一为「精确 + 尾部通配」，拒绝码
+    // 统一为 MODEL_NOT_IN_PLAN（MODEL_ACCESS_DENIED 保留为兼容别名）。
+    // opts.modelAccess 为 null = 显式禁用（跳过判定）；注入配置对象仅测试夹具使用。
+    if (opts.modelAccess !== null && model) {
+      const verdict =
+        opts.modelAccess !== undefined
+          ? isModelAllowed(model, opts.modelAccess)
+            ? { allowed: true as const }
+            : { allowed: false as const, reason: 'denied by injected modelAccess config' }
+          : checkModelAccess(model);
+      if (!verdict.allowed) {
+        const err = new ProxyError(
+          ErrorCode.MODEL_NOT_IN_PLAN,
+          `Model "${model}" is rejected by the gateway access policy${verdict.reason ? `: ${verdict.reason}` : ''}.`,
+          { context: { model } },
+        );
+        return reply
+          .status(err.status)
+          .send(isAnthropicPath(req.url) ? err.anthropicPayload() : { error: err.openAIPayload() });
+      }
     }
 
     // ② 限流：全局桶 → per-provider 桶（预判；互不误伤）。

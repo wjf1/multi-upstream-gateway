@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Fastify from 'fastify';
 import { checkModelAccess, guardModelAccess } from '../src/utils/model-access.js';
 
-const ENV_KEYS = ['MODEL_ALLOWLIST', 'MODEL_BLOCKLIST', 'AUDIT_LOG'] as const;
+const ENV_KEYS = ['MODEL_ALLOWLIST', 'MODEL_BLOCKLIST', 'MODEL_ACCESS_ALLOW', 'MODEL_ACCESS_BLOCK', 'AUDIT_LOG'] as const;
 let saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -99,6 +99,46 @@ describe('allowlist 优先：设了 allowlist 就不再看 blocklist', () => {
 
   it('不在 allowlist 的模型一律拒绝（即便不在 blocklist）', () => {
     expect(checkModelAccess('b-model').allowed).toBe(false);
+  });
+});
+
+describe('尾部通配（判定路径合一后的统一语义）', () => {
+  beforeEach(() => { process.env.MODEL_ALLOWLIST = 'glm-5*, claude-sonnet-5'; });
+
+  it('allowlist 通配模式命中前缀即放行', () => {
+    expect(checkModelAccess('glm-5.3').allowed).toBe(true);
+    expect(checkModelAccess('glm-5-air').allowed).toBe(true);
+  });
+
+  it('通配未命中仍拒绝；精确项不受影响', () => {
+    expect(checkModelAccess('gpt-9').allowed).toBe(false);
+    expect(checkModelAccess('claude-sonnet-5').allowed).toBe(true);
+  });
+
+  it('blocklist 通配命中即拒', () => {
+    process.env.MODEL_ALLOWLIST = '';
+    process.env.MODEL_BLOCKLIST = 'internal/*';
+    expect(checkModelAccess('internal/secret-x').allowed).toBe(false);
+    expect(checkModelAccess('public-model').allowed).toBe(true);
+  });
+});
+
+describe('MODEL_ACCESS_* 弃用兼容通道（合一回退第三级）', () => {
+  it('MODEL_ALLOWLIST 未设时回退 MODEL_ACCESS_*，且同样支持通配', () => {
+    process.env.MODEL_ACCESS_ALLOW = 'glm-5*';
+    expect(checkModelAccess('glm-5.3').allowed).toBe(true);
+    expect(checkModelAccess('gpt-9').allowed).toBe(false);
+  });
+
+  it('MODEL_ALLOWLIST 优先于弃用的 MODEL_ACCESS_*', () => {
+    process.env.MODEL_ALLOWLIST = 'a-model';
+    process.env.MODEL_ACCESS_ALLOW = 'b-model';
+    expect(checkModelAccess('a-model').allowed).toBe(true);
+    expect(checkModelAccess('b-model').allowed).toBe(false);
+  });
+
+  it('两通道皆空 = 全放行（默认零破坏）', () => {
+    expect(checkModelAccess('anything').allowed).toBe(true);
   });
 });
 

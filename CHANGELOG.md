@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **判定路径合一（方案 2 落地，modelAccess 侧）** —— 消除评审材料
+  [docs/review/decision-path-unification.md](docs/review/decision-path-unification.md) 的 R2「设了却没生效」：
+  `config.json` 的 `modelAccess` 分片成为**唯一配置源**，全局 preHandler 守卫与路由内守卫改读同一份配置；
+  匹配语义统一为「精确 + 尾部通配」（`glm-5*`），既有精确名单行为不变（通配是精确的超集，零破坏）；
+  旧 env 通道 `MODEL_ACCESS_ALLOW` / `MODEL_ACCESS_BLOCK` 降为**弃用兼容通道**（优先级最后、首次命中打
+  一次弃用告警，计划下一个大版本移除）；拒绝码统一为 `MODEL_NOT_IN_PLAN`，`MODEL_ACCESS_DENIED` 保留为
+  兼容别名（errors.ts 提示与 README 错误码表已注明）。限流执行合一（R1）涉及预判桶与分桶维度的设计取舍，
+  见评审材料 §5 三个未确认事项，另行排期。
+
 ## [5.0.7] - 2026-10-08
 
 > 补丁版：把 T302 已交付却一直没渲染的 WorkBuddy 积分镜像接到面板上（F07 的最后一小块），并修掉一条

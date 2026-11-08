@@ -274,8 +274,8 @@ Anthropic 出口（`/v1/messages`）：
 | `INVALID_CREDENTIAL` | 401 | Key 失效或被吊销 |
 | `PROXY_AUTH_REQUIRED` | 401 | 未携带匹配的 `PROXY_API_KEY` |
 | `RATE_LIMIT` | 429 | 5 小时/周额度耗尽，或余额不足 |
-| `MODEL_NOT_IN_PLAN` | 403 | 模型超出当前套餐档位，或被网关的模型访问策略拒绝（`config.json` 的 `modelAccess` 分片 / `MODEL_ALLOWLIST`，精确匹配） |
-| `MODEL_ACCESS_DENIED` | 403 | 被网关的模型访问策略拒绝（`MODEL_ACCESS_ALLOW` / `MODEL_ACCESS_BLOCK` 环境变量，支持 `glm-5*` 尾部通配） |
+| `MODEL_NOT_IN_PLAN` | 403 | 模型超出当前套餐档位，或被网关的模型访问策略拒绝（`config.json` 的 `modelAccess` 分片 / `MODEL_ALLOWLIST`，精确 + 尾部通配） |
+| `MODEL_ACCESS_DENIED` | 403 | （兼容别名）已并入 `MODEL_NOT_IN_PLAN`；旧全局守卫通道的拒绝码，`MODEL_ACCESS_ALLOW` / `MODEL_ACCESS_BLOCK` 环境变量仍可读但已弃用（首次命中打弃用告警） |
 | `MODEL_NOT_FOUND` | 404 | 模型 id 不存在（刷新目录后重试） |
 | `UNSUPPORTED_OPTION` / `UNSUPPORTED_CONTENT` | 400 | 请求形态或内容无法翻译到上游 wire |
 | `REQUEST_TIMEOUT` / `STREAM_IDLE_TIMEOUT` | 504 | 请求超时 / 流中途静默被看门狗中止 |
@@ -288,7 +288,7 @@ Anthropic 出口（`/v1/messages`）：
 | `BLOCKED_HOST` | 500 | 上游地址被 SSRF 防护拒绝 |
 | `INTERNAL_ERROR` | 500 | 网关内部异常 |
 
-> 说明：模型访问策略目前有**两条执行路径**——env `MODEL_ACCESS_*`（全局守卫，支持尾部通配）与 `config.json` 的 `modelAccess` 分片 / `MODEL_ALLOWLIST`（路由守卫，精确匹配），拒绝码分别为 `MODEL_ACCESS_DENIED` 与 `MODEL_NOT_IN_PLAN`。两套路径的合一评审（三个候选方案与建议）见 [docs/review/decision-path-unification.md](docs/review/decision-path-unification.md)。
+> 说明：模型访问策略已完成**判定路径合一（方案 2）**——`config.json` 的 `modelAccess` 分片是唯一配置源（热重载），全局 preHandler 守卫与路由内守卫读同一份配置；匹配语义统一为「精确 + 尾部通配」（`glm-5*`）；拒绝码统一为 `MODEL_NOT_IN_PLAN`，`MODEL_ACCESS_DENIED` 保留为兼容别名。env 回退顺序：`MODEL_ALLOWLIST` / `MODEL_BLOCKLIST` → 弃用的 `MODEL_ACCESS_ALLOW` / `MODEL_ACCESS_BLOCK`（首次命中打弃用告警，计划下一个大版本移除）。合一评审背景见 [docs/review/decision-path-unification.md](docs/review/decision-path-unification.md)。
 
 **重试语义**：`408/409/425/429/500/502/503/504` 按指数退避重试（上限 `upstream.maxRetries`）；一旦命中终止性计费/套餐标记（`model_not_in_plan`、`premium_credits_exhausted`、`insufficient credits`）**立即失败、绝不重试**——重试只会白耗额度。**请求形态本身不合法同样不重试**：上游校验层拒绝的请求（如 `Too big: expected number to be <=200000`、`unrecognized_keys`、`invalid_type`、`context length exceeded`）重试只是把同一份请求再撞一次校验——实测此前会打满 `maxRetries` 次、多花约 1.5s 退避。否决表见 `src/adapters/commandcode/upstream.ts` 的 `DETERMINISTIC_REQUEST_SHAPE`。重试耗尽后仍保留上游真实状态码与错误码，不会包装成"网络故障"。
 
