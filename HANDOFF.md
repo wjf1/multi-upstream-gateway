@@ -717,7 +717,7 @@
     **登记的遗留（合并云端后口径）**：判定路径合一（modelAccess / 限流的两套执行路径）—— 评审材料已备
     （`docs/review/decision-path-unification.md`：现状事实表、三条真实风险、三个候选方案与建议），
     **方案 1（纯文档收尾）已完成**（README 已补 `MODEL_ACCESS_DENIED` 行 `8b8c447` + 错误码表下双路径
-    说明与材料链接），**方案 2（合一到分片保留通配，建议方向）/ 方案 3（只留精确）待负责人裁决**；
+    说明与材料链接），**方案 2（合一到分片保留通配）已裁决：2026-11-08 负责人拍板按建议方向继续，待排期实施；方案 3（只留精确）废弃**；
     限流 / modelAccess 双轨配置源与 legacy 扁平分支明文行 —— ✅ 已由 `T213b` 收口；
     T203 账号池遗留 `preferredAccountId` / `onRetry` 透传 —— ✅ 已收口（云端 `X-Upstream-Account` 端到端接线）；
     `updateConfig` 热改 Token —— ✅ 已收口（热重载按 env 补入新 Token，删除刻意留给面板）；
