@@ -49,13 +49,17 @@ Freebuff 模块已移植入树但**尚未接入运行时**，详见[项目状态
 ## 🚦 项目状态
 <a id="status"></a>
 
-**当前版本：v5.0.7**（2026-10-08）—— 版本线自 v5.0.0 起另起产品序列，勿与上游 `commandcode-proxy` 的
+**当前版本：v5.1.0**（2026-11-12）—— 版本线自 v5.0.0 起另起产品序列，勿与上游 `commandcode-proxy` 的
 v4.22.x 混用；完整发布记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/wjf1/multi-upstream-gateway/releases)。
-本版为补丁版：把 T302 已交付的 WorkBuddy 积分镜像接到面板上（**F07 积分条 UI 收口**——「多上游账号」页的
+本版为**配置语义版**：把评审材料登记的 R1/R2 两处「一个配置、两套执行」合一——
+`modelAccess` 分片成为模型访问控制的唯一配置源（匹配语义统一为「精确 + 尾部通配」，
+`MODEL_ACCESS_ALLOW` / `MODEL_ACCESS_BLOCK` 降为弃用兼容通道），限流按维度拆分消费者
+（`rateLimit.global` / `perProvider` 由全局 preHandler 唯一执行，per-client 桶改读 `rateLimit.perClient`，
+`RATE_LIMIT_RPM` / `RATE_LIMIT_TPM` 语义重定义为**单客户端**上限）。**行为变化**：同一份 `rateLimit.global`
+不再被两套桶重复计数，实际限流边界等于配置值本身；input 粗估只数文本字段、图片 base64 不再计入 TPM。
+前一版 v5.0.7 是补丁版：把 T302 已交付的 WorkBuddy 积分镜像接到面板上（**F07 积分条 UI 收口**——「多上游账号」页的
 WorkBuddy 卡片现在会显示每号余量进度条、即将过期积分与「暂停 / 停用 / 冷却中」三态徽章，并提供「刷新积分」
-按钮；**未知 ≠ 0**、**镜像不可信时显式标红**两条语义红线在渲染层落实）。前一版 v5.0.6 收口了 P1 任务卡
-（T301~T308）与 T203/T302 遗留，并修复 WorkBuddy sidecar 与真实 Go 二进制之间的启动契约断点
-（启动参数只认 `-config`、空池 `/healthz` 503 不再被误判为崩溃）。
+按钮；**未知 ≠ 0**、**镜像不可信时显式标红**两条语义红线在渲染层落实）。
 
 **P0 语义移植（Phase A~F）已完成并部署**（2026-10-07）：
 
