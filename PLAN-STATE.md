@@ -3,6 +3,9 @@
 > **执行依据**：`docs/master-plan-v1.2.md`（v1.2.3 起含基准勘误修订）。
 > **工程仓库（唯一工作副本）**：`C:\Users\admin\Doubao\chats\2026-09-03\new-chat-5\commandcode-proxy`
 > —— v4.22.4，git 分支 `feat/p0-port`，与上游 `wjf1/commandcode-proxy` main 同步（HEAD `87b1a05`）。
+> **⚠️ 路径失效注记（2026-11-15 复核）**：上述工作副本目录已删除，但 P0-PORT~T310 全部成果
+> 已合入本产品仓库 `main`（sidecar 真机链路、93 文件 / 1131 用例门禁记录见 HANDOFF §4），
+> 后续工作以本仓库为唯一工作副本，不再依赖上述路径。
 >
 > 规则：第一个依赖全部满足且未勾选的任务卡开工；DoD 全部验证后才可勾选；无法验证写 `BLOCKED: <原因>`。
 > 门禁：`npm run verify`（= build + test）全绿 + `npm run typecheck`（src+tests 双工程）+ `npm run lint` 零输出。
