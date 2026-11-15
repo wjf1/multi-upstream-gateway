@@ -34,6 +34,7 @@ Freebuff 模块已移植入树但**尚未接入运行时**，详见[项目状态
 - [多上游路线图](#roadmap)
 - [界面截图](#screenshots)
 - [功能特性](#features)（协议兼容 / 可靠性与安全 / 多上游与合规硬化 / 仪表盘与用量洞察 / 工程与运维）
+- [定位对比](#compare)（与 one-api / new-api / LiteLLM 的分工与差异）
 - [快速开始](#quickstart)
 - [用法](#usage)
 - [错误码与重试语义](#errors)
@@ -169,6 +170,24 @@ P1 剩余：T214（P1 阶段门，自动化项已全绿，剩 3 项外部 blocke
   令牌**提前 1 小时**进入预刷（Go sidecar 原为硬编码 10 分钟），刷新失败按 **1s → 2s → 4s 指数退避重试**，最终仍失败则把账号标为**「待刷新」**并在账号行显示红色徽章、同时推送一次 Webhook 告警——把 sidecar 侧的「静默失效」变成显式可见状态。只读视图与授权编排暴露为 `GET /api/upstreams/workbuddy/tokens`、`POST /api/upstreams/workbuddy/login/start`、`GET /api/upstreams/workbuddy/login/poll?state=`。
 - **余额刷新与池状态持久化（T302）** — WorkBuddy 的账号积分余额（含可过期额度与最早到期时间）与**池状态**（暂停 / 禁用 / 冷却）经 `data/state.json` 持久化：内存样本每次刷新都更新，**落盘按 5 分钟节流**（不新增常驻定时器）；写入走**临时文件 + rename 原子替换**并加文件锁（`open(...,'wx')` 抢占 + 残留锁超时兜底），**锁内不做 IO**。进程 `kill -9` 后重启，账本从文件水合、逐字段一致。文件损坏（非 JSON / 版本不符）时**不覆盖原文件**并把状态标为降级 + 告警，随后从 sidecar `/status` 重建（usage 记录里只有消费侧原生量，反推不出剩余余额，故不作重建源）。余额读不到时**绝不清零账本**（读不到 ≠ 余额为 0），失败只记计数并在恢复后解除。管理面暴露 `GET /api/upstreams/workbuddy/balance`（只读镜像）与 `POST /api/upstreams/workbuddy/balance/refresh`（强制刷新，sidecar 不可用时返回 `503` 而非谎报成功）。
 - **WorkBuddy sidecar 启动契约（真实二进制对齐）** — 网关不再向 sidecar 传 `--listen/--auth-dir/--api-key`（真实 Go 二进制只认 `-config <path>`，未知标志会直接 `exit 2`），而是**自己落盘配置文件**：默认落在状态文件同级的 `workbuddy-sidecar/config.json`（可用 `WORKBUDDY_SIDECAR_CONFIG` 或 `providers.workbuddy.sidecar.configPath` 指定），写入 `listen` / `api_key` / `auth_dir` / `state_file`，**深合并保留面板可热改的其它键**，临时文件 + rename 原子替换；**写不进去就不 spawn**。另按真实 `/healthz` 语义（`200` 可服务 / `503` 池不可服务）把探活改为**三态**：**空池冷启动不再被判崩溃**（否则 provider 会被永久判死，用户授权成功后也不恢复），HTTP 有响应即置 `running`、`healthy=false`，池补齐后自动转健康。部署前可用 `npx tsx scripts/probe-workbuddy-live.ts <sidecar.exe> [port]` 做真机自检（配置落盘 → spawn → 探活全路径）。
+
+---
+
+## 🆚 定位对比
+<a id="compare"></a>
+
+和常被一起提起的同类项目比一比，方便对号入座。下表为**定性描述**（只表述各家主打方向，具体能力以各项目文档为准）：
+
+| 维度 | **multi-upstream-gateway（本仓库）** | one-api | new-api | LiteLLM |
+|---|---|---|---|---|
+| 定位 | **本地个人自用网关**：把个人订阅/账号变成双协议 API，本机直连 | 侧重**自建多租户 API 分发平台**：渠道管理 + 令牌分发与计费 | one-api 的二次开发版本，主打**分发/计费能力的增强**（更多渠道与运营特性） | 侧重**应用侧 LLM 网关 / SDK**：统一接入多家模型供应商 + 路由与观测 |
+| 上游接入方式 | **账号 / OAuth 凭证 + 账号池轮换**（订阅账号直连上游） | API key 渠道 | API key 渠道 | API key（按模型供应商逐一配置） |
+| 协议出口 | **OpenAI + Anthropic 双协议**（同一入口服务两类客户端） | OpenAI 兼容为主 | OpenAI 兼容为主 | OpenAI 兼容为主（内含对多家供应商的协议翻译） |
+| 部署形态 | 本机运行 / 单文件可执行 / 免安装（Node 或独立 exe） | 自托管服务（常以 Docker 部署） | 自托管服务（常以 Docker 部署） | Python 服务 / SDK（proxy 或库内嵌） |
+| 适用场景 | 把个人订阅账号变成双协议 API，供本地 IDE / Agent 工具直连 | 团队 / 多用户的 API 网关与计费分发 | 团队 / 多用户网关 + 更丰富的运营计费能力 | 应用层统一多家模型、智能路由与用量观测 |
+
+> **与兄弟仓库的分工**：本仓库定位**通用多上游网关**；[workbuddy2api-panel](https://github.com/wjf1/workbuddy2api-panel)
+> 是 **CodeBuddy 账号池专用运维面板**（账号池调度 / 签到保活 / 计费视图）——一个管「多上游统一入口」，一个管「单上游账号池运维」。
 
 ---
 
@@ -580,6 +599,20 @@ sidecar binary, and owner sign-off).
 - Offline-capable dashboard: tailwind / font-awesome / chart.js fully localized, no public CDN dependency
 - Anthropic SDK compatibility: `POST /v1/messages/count_tokens` (local CJK-aware estimate); OpenAI `stream_options.include_usage` on the final chunk
 - Daily budget alerts (`DAILY_BUDGET_USD`) and a GitHub Releases update badge; usage export to CSV
+
+### How it compares
+
+How this repo differs from projects it is usually compared with. **Qualitative only** — each column describes the project's primary focus; consult their docs for exact capabilities:
+
+| Dimension | **multi-upstream-gateway (this repo)** | one-api | new-api | LiteLLM |
+|---|---|---|---|---|
+| Positioning | **Local personal gateway**: turn personal subscription accounts into a dual-protocol API | Self-hosted **multi-tenant API distribution platform**: channel management, token issuance and billing | A fork of one-api focused on **enhanced distribution/billing** (more channels and ops features) | **Application-side LLM gateway / SDK**: unified access to many model providers with routing and observability |
+| Upstream access | **Accounts / OAuth credentials + account-pool rotation** (subscription accounts connect directly) | API-key channels | API-key channels | API keys (configured per provider) |
+| Protocol surface | **OpenAI + Anthropic dual protocol** from one endpoint | OpenAI-compatible first | OpenAI-compatible first | OpenAI-compatible first (translates to many providers) |
+| Deployment | Runs locally / single-file executable, no install (Node or standalone exe) | Self-hosted service (typically Docker) | Self-hosted service (typically Docker) | Python service / SDK (proxy or in-process) |
+| Best for | Exposing personal subscription accounts as a dual-protocol API for local IDEs / agent tools | Team API gateway with billing and distribution | Team gateway with richer operational/billing features | Unifying providers, routing and usage tracking at the application layer |
+
+> **Sibling-repo division of labor**: this repo is the general multi-upstream gateway; [workbuddy2api-panel](https://github.com/wjf1/workbuddy2api-panel) is a dedicated ops panel for the CodeBuddy account pool (pool scheduling / keep-alive check-ins / billing views) — one owns the "multi-upstream unified entry", the other the "single-upstream account-pool ops".
 
 ### Quick Start
 

@@ -13,6 +13,14 @@
   时跳过，避免把当前 main 代码错附到旧 Release），checkout 锚定 tag 源码。
   （`.github/workflows/release.yml`）
 
+### 变更
+
+- **README 新增「🆚 定位对比」小节**：中英双语并列对比表（multi-upstream-gateway / one-api / new-api /
+  LiteLLM，维度：定位、上游接入方式、协议出口、部署形态、适用场景），以定性措辞表述各家主打方向、
+  不涉及具体数字；同节注明与兄弟仓库 [workbuddy2api-panel](https://github.com/wjf1/workbuddy2api-panel)
+  的分工边界——本仓库管「多上游统一入口」，后者管「单上游账号池运维」（账号池调度 / 签到保活 / 计费视图）。
+  README 目录同步新增「定位对比」条目。
+
 ### 安全
 
 - **补齐社区健康文件**：新增 `SECURITY.md`（私密漏洞上报通道 + 「本机服务定位 / 上游凭证保管 / 协议转换面不可信输入」安全边界说明）、`.github/ISSUE_TEMPLATE/`（bug / feature 模板与 config.yml）与 `PULL_REQUEST_TEMPLATE.md`（含测试、CHANGELOG、敏感信息自检清单）——GitHub 社区健康度从 42% 补齐至四件套完整。
